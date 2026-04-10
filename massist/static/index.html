@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LiveKit Voice Agent</title>
+    <!-- LiveKit JS SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f2f5;
+            color: #333;
+        }
+        .container {
+            text-align: center;
+            background: white;
+            padding: 3rem;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+            max-width: 400px;
+            width: 100%;
+        }
+        h1 {
+            margin-top: 0;
+            font-size: 1.5rem;
+            color: #1a1a1a;
+        }
+        button {
+            font-size: 1.1rem;
+            font-weight: 500;
+            padding: 12px 24px;
+            margin-top: 1.5rem;
+            cursor: pointer;
+            border: none;
+            background: #2563eb;
+            color: white;
+            border-radius: 6px;
+            transition: all 0.2s ease;
+            width: 100%;
+        }
+        button:hover {
+            background: #1d4ed8;
+            transform: translateY(-1px);
+        }
+        button:disabled {
+            background: #94a3b8;
+            cursor: not-allowed;
+            transform: none;
+        }
+        button.disconnect {
+            background: #ef4444;
+        }
+        button.disconnect:hover {
+            background: #dc2626;
+        }
+        #status {
+            margin-top: 1.5rem;
+            font-size: 0.95rem;
+            color: #64748b;
+            min-height: 1.5rem;
+        }
+        .mic-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #ef4444;
+            margin-right: 8px;
+            animation: pulse 1.5s infinite;
+            display: none;
+        }
+        @keyframes pulse {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Voice Agent</h1>
+        <div id="status">
+            <span class="mic-indicator" id="micIndicator"></span>
+            <span id="statusText">Ready to connect</span>
+        </div>
+        <button id="startBtn">Start Conversation</button>
+    </div>
+
+    <!-- Application script -->
+    <script src="/static/app.js"></script>
+</body>
+</html>

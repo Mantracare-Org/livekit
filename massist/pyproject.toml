@@ -14,6 +14,9 @@ dependencies = [
     "livekit-plugins-noise-cancellation~=0.2",
     "python-dotenv",
     "numpy<2.0.0",
+    "fastapi",
+    "uvicorn",
+    "livekit-api"
 ]
 
 [dependency-groups]
