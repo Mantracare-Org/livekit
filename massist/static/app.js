@@ -9,10 +9,12 @@ async function startConversation() {
         startBtn.disabled = true;
         statusText.textContent = "Requesting session...";
 
+        const voiceSelect = document.getElementById('voiceSelect');
+        const voice_id = voiceSelect ? voiceSelect.value : null;
+
         // 1 & 2: Call backend to get room details and token
-        const response = await fetch('/session/start', { 
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
+        const response = await fetch('/session/start?voice_id=' + encodeURIComponent(voice_id || ""), { 
+            method: 'POST'
         });
         
         if (!response.ok) {

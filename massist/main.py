@@ -32,13 +32,15 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 async def get_frontend():
     return FileResponse("static/index.html")
 
+from typing import Optional
+
 class SessionResponse(BaseModel):
     room: str
     token: str
     url: str
 
 @app.post("/session/start", response_model=SessionResponse)
-async def start_session():
+async def start_session(voice_id: Optional[str] = None):
     livekit_url = os.getenv("LIVEKIT_URL")
     api_key = os.getenv("LIVEKIT_API_KEY")
     api_secret = os.getenv("LIVEKIT_API_SECRET")
@@ -69,10 +71,14 @@ async def start_session():
         # Convert wss:// to https:// for API calls
         api_url = livekit_url.replace("wss://", "https://").replace("ws://", "http://")
         async with api.LiveKitAPI(api_url, api_key, api_secret) as lkapi:
+            # We can explicitly create room first to set the room metadata, which is very reliable for the agent to access
+            await lkapi.room.create_room(api.CreateRoomRequest(name=room_name, metadata=voice_id if voice_id else ""))
+
             await lkapi.agent_dispatch.create_dispatch(
                 api.CreateAgentDispatchRequest(
                     agent_name="massist",
-                    room=room_name
+                    room=room_name,
+                    metadata=voice_id if voice_id else ""
                 )
             )
         print(f"Agent 'massist' dispatched to room '{room_name}'")
