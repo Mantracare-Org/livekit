@@ -204,6 +204,15 @@ wheels = [
 ]
 
 [[package]]
+name = "blinker"
+version = "1.9.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/21/28/9b3f50ce0e048515135495f198351908d99540d69bfdc8c1d15b73dc55ce/blinker-1.9.0.tar.gz", hash = "sha256:b4ce2265a7abece45e7cc896e98dbebe6cead56bcf805a3d23136d145f5445bf", size = 22460, upload-time = "2024-11-08T17:25:47.436Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/10/cb/f2ad4230dc2eb1a74edf38f1a38b9b52277f75bef262d8908e60d957e13c/blinker-1.9.0-py3-none-any.whl", hash = "sha256:ba0efaa9080b619ff2f3459d1d500c57bddea4a6b424b60a91141db6fd2f08bc", size = 8458, upload-time = "2024-11-08T17:25:46.184Z" },
+]
+
+[[package]]
 name = "certifi"
 version = "2026.2.25"
 source = { registry = "https://pypi.org/simple" }
@@ -426,6 +435,23 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d6/17/6e8890271880903e3538660a21d63a6c1fea969ac71d0d6b608b78727fa9/filelock-3.28.0.tar.gz", hash = "sha256:4ed1010aae813c4ee8d9c660e4792475ee60c4a0ba76073ceaf862bd317e3ca6", size = 56474, upload-time = "2026-04-14T22:54:33.625Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3b/21/2f728888c45033d34a417bfcd248ea2564c9e08ab1bfd301377cf05d5586/filelock-3.28.0-py3-none-any.whl", hash = "sha256:de9af6712788e7171df1b28b15eba2446c69721433fa427a9bee07b17820a9db", size = 39189, upload-time = "2026-04-14T22:54:32.037Z" },
+]
+
+[[package]]
+name = "flask"
+version = "3.1.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "blinker" },
+    { name = "click" },
+    { name = "itsdangerous" },
+    { name = "jinja2" },
+    { name = "markupsafe" },
+    { name = "werkzeug" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/26/00/35d85dcce6c57fdc871f3867d465d780f302a175ea360f62533f12b27e2b/flask-3.1.3.tar.gz", hash = "sha256:0ef0e52b8a9cd932855379197dd8f94047b359ca0a78695144304cb45f87c9eb", size = 759004, upload-time = "2026-02-19T05:00:57.678Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7f/9c/34f6962f9b9e9c71f6e5ed806e0d0ff03c9d1b0b2340088a0cf4bce09b18/flask-3.1.3-py3-none-any.whl", hash = "sha256:f4bcbefc124291925f1a26446da31a5178f9483862233b23c0c96a20701f670c", size = 103424, upload-time = "2026-02-19T05:00:56.027Z" },
 ]
 
 [[package]]
@@ -724,6 +750,15 @@ wheels = [
 ]
 
 [[package]]
+name = "itsdangerous"
+version = "2.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9c/cb/8ac0172223afbccb63986cc25049b154ecfb5e85932587206f42317be31d/itsdangerous-2.2.0.tar.gz", hash = "sha256:e0050c0b7da1eea53ffaf149c0cfbb5c6e2e2b69c4bef22c81fa6eb73e5f6173", size = 54410, upload-time = "2024-04-16T21:28:15.614Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/04/96/92447566d16df59b2a776c0fb82dbc4d9e07cd95062562af01e408583fc4/itsdangerous-2.2.0-py3-none-any.whl", hash = "sha256:c6242fc49e35958c8b15141343aa660db5fc54d4f13a1db01a3f5891b98700ef", size = 16234, upload-time = "2024-04-16T21:28:14.499Z" },
+]
+
+[[package]]
 name = "jinja2"
 version = "3.1.6"
 source = { registry = "https://pypi.org/simple" }
@@ -849,23 +884,23 @@ name = "livekit-agent"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "flask" },
     { name = "livekit-agents", extra = ["silero", "turn-detector"] },
-    { name = "livekit-plugins-ai-coustics" },
+    { name = "livekit-api" },
     { name = "livekit-plugins-assemblyai" },
     { name = "livekit-plugins-cartesia" },
-    { name = "livekit-plugins-noise-cancellation" },
     { name = "livekit-plugins-openai" },
     { name = "python-dotenv" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "livekit-agents", extras = ["silero", "turn-detector"], specifier = "~=1.4" },
-    { name = "livekit-plugins-ai-coustics" },
-    { name = "livekit-plugins-assemblyai" },
-    { name = "livekit-plugins-cartesia" },
-    { name = "livekit-plugins-noise-cancellation", specifier = "~=0.2" },
-    { name = "livekit-plugins-openai" },
+    { name = "flask", specifier = ">=3.1.3" },
+    { name = "livekit-agents", extras = ["silero", "turn-detector"], specifier = "~=1.5" },
+    { name = "livekit-api", specifier = ">=1.1.0" },
+    { name = "livekit-plugins-assemblyai", specifier = "~=1.5" },
+    { name = "livekit-plugins-cartesia", specifier = "~=1.5" },
+    { name = "livekit-plugins-openai", specifier = "~=1.5" },
     { name = "python-dotenv" },
 ]
 
@@ -971,23 +1006,6 @@ wheels = [
 ]
 
 [[package]]
-name = "livekit-plugins-ai-coustics"
-version = "0.2.7"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "livekit" },
-    { name = "livekit-agents" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/5e/77/f145ccbdc7941669cf4941a1c5dbd687d455128fa51cac8356b9aac74d23/livekit_plugins_ai_coustics-0.2.7.tar.gz", hash = "sha256:28fd2850347c07e0e6100ec5c48f93fa7c826563f400ad293b59e6f514430c4b", size = 16347, upload-time = "2026-03-26T16:29:57.241Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/fe/95/f0722de905d3543575b8736a3cd70e14791264692862f6a661a5245d3743/livekit_plugins_ai_coustics-0.2.7-cp310-abi3-macosx_10_9_x86_64.whl", hash = "sha256:180e6dabd3c58cf9822900b66ca8c12f3fca082bd2ac75c8169de6c8aa0b0739", size = 79961958, upload-time = "2026-03-26T16:29:29.888Z" },
-    { url = "https://files.pythonhosted.org/packages/d5/c1/11acf850467e9864f92355280ec42b32f12618ec0da713ddd1481a5d4e88/livekit_plugins_ai_coustics-0.2.7-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:7ecae18f887851ab17ab9e54fd2ad0a830d12f6a16f53dc05b156ac99f885ea5", size = 80265663, upload-time = "2026-03-26T16:29:35.672Z" },
-    { url = "https://files.pythonhosted.org/packages/3a/3d/74d7747cb63c41c3063f5af1010611eedf7b6d8696f32116901c6456d5dd/livekit_plugins_ai_coustics-0.2.7-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:6e9b465cddd49a0ef499fed1d7545aa18db70992b02cdfe271a8166440891672", size = 79802396, upload-time = "2026-03-26T16:29:41.516Z" },
-    { url = "https://files.pythonhosted.org/packages/0a/de/600d2d3ce73c08a1c7e983ff405bab65e2a853c8be67277f0fc6313abb93/livekit_plugins_ai_coustics-0.2.7-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:4f1f068b0bb2a1c6102486f788d808eb65bc67057c0a0d6bf9507d882446b315", size = 80126041, upload-time = "2026-03-26T16:29:47.737Z" },
-    { url = "https://files.pythonhosted.org/packages/37/24/4977e0a9f82273083470e48267bc1fbf7aa7a59db1b3dce01574f9333b2b/livekit_plugins_ai_coustics-0.2.7-cp310-abi3-win_amd64.whl", hash = "sha256:b3ba0215b78c5384b60fe25cdaf408e1e285cb83acf09573a5174f38fb4568f2", size = 79530452, upload-time = "2026-03-26T16:29:54.117Z" },
-]
-
-[[package]]
 name = "livekit-plugins-assemblyai"
 version = "1.5.4"
 source = { registry = "https://pypi.org/simple" }
@@ -1009,21 +1027,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ce/de/726e223c70bf50d447b99ae0b6b9f73129a526d815d17b23f70115e9db90/livekit_plugins_cartesia-1.5.4.tar.gz", hash = "sha256:a381933e7d9010bb244c6924779a0d30a02600e499808c0690a2adeb68ed0c25", size = 12784, upload-time = "2026-04-16T04:51:14.046Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d1/7d/0109a01c9a42adaed2640dbcc85e843883cd3e1912679c3d15c8457a3cf6/livekit_plugins_cartesia-1.5.4-py3-none-any.whl", hash = "sha256:55318eb15b2e834bacc613734e5f4b36bae5ce44084dabf3608ba53ecc7e98ae", size = 15704, upload-time = "2026-04-16T04:51:12.672Z" },
-]
-
-[[package]]
-name = "livekit-plugins-noise-cancellation"
-version = "0.2.5"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "livekit" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/36/2a/2782bc35b0fee188d362a4628f1c0595a61fe76d56c527bc5de4df8fddfc/livekit_plugins_noise_cancellation-0.2.5-py3-none-macosx_10_9_x86_64.whl", hash = "sha256:b327424a70a4d4f2ce9a52144fa62f68372b644951a738b12c104cb4f2a15b6b", size = 66066815, upload-time = "2025-06-30T14:49:39.833Z" },
-    { url = "https://files.pythonhosted.org/packages/1b/75/3758aeba5964b826482786c044866e353823d6d5ff1736106584ae7d3b06/livekit_plugins_noise_cancellation-0.2.5-py3-none-macosx_11_0_arm64.whl", hash = "sha256:584211137dc732ac882fb11a40c35888250c74a8806e46a21ce1fd57a05c1c1e", size = 64608005, upload-time = "2025-06-30T14:49:44.471Z" },
-    { url = "https://files.pythonhosted.org/packages/90/2e/cf86f21b338c6571b95e18bd9d96b33d64bf2fb1123f796cc7033bda821d/livekit_plugins_noise_cancellation-0.2.5-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:47050db446693e1a260339f5c45b025cd2b6030516a80e976d90ebaa4eef687c", size = 70218295, upload-time = "2025-06-30T14:49:49.304Z" },
-    { url = "https://files.pythonhosted.org/packages/c7/b8/2f7a56b1c15220988fb4ac3e73483cf611a7547ab16b867b25d373eddbc7/livekit_plugins_noise_cancellation-0.2.5-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:535e510d92e0a36e33f60c2ddd4de0da3cbfd21fe02d767f5839b421b5bea9fb", size = 73324763, upload-time = "2025-06-30T14:49:54.032Z" },
-    { url = "https://files.pythonhosted.org/packages/9f/4d/37be8da861607f392d07bb0f1c6b57c635db249095084abcbfaaaab6d7b5/livekit_plugins_noise_cancellation-0.2.5-py3-none-win_amd64.whl", hash = "sha256:5879d28120a6b47a7d557832d9432683710987f79e9b514171898be36534380b", size = 65757107, upload-time = "2025-06-30T14:49:59.053Z" },
 ]
 
 [[package]]
@@ -2460,6 +2463,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/86/eb/20b6cdf273913d0ad05a6a14aed4b9a85591c18a987a3d47f20fa13dcc47/websockets-15.0.1-cp313-cp313-win32.whl", hash = "sha256:ba9e56e8ceeeedb2e080147ba85ffcd5cd0711b89576b83784d8605a7df455fa", size = 176393, upload-time = "2025-03-05T20:02:53.814Z" },
     { url = "https://files.pythonhosted.org/packages/1b/6c/c65773d6cab416a64d191d6ee8a8b1c68a09970ea6909d16965d26bfed1e/websockets-15.0.1-cp313-cp313-win_amd64.whl", hash = "sha256:e09473f095a819042ecb2ab9465aee615bd9c2028e4ef7d933600a8401c79561", size = 176837, upload-time = "2025-03-05T20:02:55.237Z" },
     { url = "https://files.pythonhosted.org/packages/fa/a8/5b41e0da817d64113292ab1f8247140aac61cbf6cfd085d6a0fa77f4984f/websockets-15.0.1-py3-none-any.whl", hash = "sha256:f7a866fbc1e97b5c617ee4116daaa09b722101d4a3c170c787450ba409f9736f", size = 169743, upload-time = "2025-03-05T20:03:39.41Z" },
+]
+
+[[package]]
+name = "werkzeug"
+version = "3.1.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "markupsafe" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/dd/b2/381be8cfdee792dd117872481b6e378f85c957dd7c5bca38897b08f765fd/werkzeug-3.1.8.tar.gz", hash = "sha256:9bad61a4268dac112f1c5cd4630a56ede601b6ed420300677a869083d70a4c44", size = 875852, upload-time = "2026-04-02T18:49:14.268Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/93/8c/2e650f2afeb7ee576912636c23ddb621c91ac6a98e66dc8d29c3c69446e1/werkzeug-3.1.8-py3-none-any.whl", hash = "sha256:63a77fb8892bf28ebc3178683445222aa500e48ebad5ec77b0ad80f8726b1f50", size = 226459, upload-time = "2026-04-02T18:49:12.72Z" },
 ]
 
 [[package]]

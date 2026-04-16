@@ -10,32 +10,36 @@ Welcome to the [LKT-LiveKit](https://github.com/FardeenSK004/livekit) workspace,
 
 ## 🤖 Projects
 
-### [massist](./massist)
-
-**The Intelligent Voice Assistant**
-
-A state-of-the-art voice assistant built on the LiveKit Agents framework. It features a fully reactive voice pipeline with sub-second latency and high-fidelity audio processing.
+### Pro Call Agent
+A high-performance voice agent optimized for professional assistance.
 
 #### 🛠 Technology Stack
-
-- **STT:** [Deepgram Nova-3](https://developers.deepgram.com/) (Multilingual)
-- **LLM:** [OpenAI GPT-5.2 Chat](https://openai.com/)
+- **STT:** [AssemblyAI Universal-3 Pro](https://www.assemblyai.com/)
+- **LLM:** [OpenAI GPT-4o-Mini](https://openai.com/)
 - **TTS:** [Cartesia Sonic-3](https://cartesia.ai/)
-- **Audio:** `ai-coustics` enhancement & intelligent noise cancellation
-- **VAD:** Silero & Multilingual turn detection
+- **Turn Detection:** Multilingual Model + Silero VAD
 
-#### 🚀 Quick Start
+---
 
-```bash
-# Navigate to the agent
-cd massist
+## 🌐 Localhost Interface
+Interact with the agent directly from your browser at `http://localhost:5000`.
 
-# Install with UV (recommended)
-uv sync
+### 🚀 Running the Interface
+You need to keep **two processes** running:
 
-# Initialize models
-uv run python src/agent.py download-files
+1. **Start the Agent Worker:**
+   ```bash
+   uv run python agent.py dev
+   ```
 
-# Start the interactive console
-uv run python src/agent.py console
-```
+2. **Start the UI Server:**
+   ```bash
+   uv run python ui_server.py
+   ```
+
+### ✨ Features
+- **Premium Dark Mode:** Modern glassmorphism UI.
+- **Real-time Transcripts:** View the AI's partial transcripts as it speaks.
+- **Visual Indicators:** Mic state and speaker activity tracking.
+- **Zero Configuration:** Automatically uses credentials from `.env.local`.
+
