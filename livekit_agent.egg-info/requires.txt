@@ -1,0 +1,7 @@
+livekit-agents[silero,turn-detector]~=1.4
+livekit-plugins-openai
+livekit-plugins-assemblyai
+livekit-plugins-cartesia
+livekit-plugins-ai-coustics
+livekit-plugins-noise-cancellation~=0.2
+python-dotenv

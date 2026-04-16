@@ -1,15 +1,23 @@
 [project]
-name = "livekit"
+name = "livekit-agent"
 version = "0.1.0"
-description = "Add your description here"
+description = "A professional voice agent built with LiveKit"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "deepgram-sdk>=6.1.1",
-    "dotenv>=0.9.9",
-    "numpy>=2.4.4",
-    "openai>=2.31.0",
-    "pyaudio>=0.2.14",
-    "sounddevice>=0.5.5",
-    "websocket-client>=1.9.0",
+    "livekit-agents[silero,turn-detector]~=1.4",
+    "livekit-plugins-openai",
+    "livekit-plugins-assemblyai",
+    "livekit-plugins-cartesia",
+    "livekit-plugins-ai-coustics",
+    "livekit-plugins-noise-cancellation~=0.2",
+    "python-dotenv",
 ]
+
+[tool.setuptools.packages.find]
+include = ["api*"] # Only look for our code if we had any packages
+exclude = ["static*", "templates*", "massist*"]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
