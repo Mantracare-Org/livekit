@@ -1,0 +1,15 @@
+[project]
+name = "livekit"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "deepgram-sdk>=6.1.1",
+    "dotenv>=0.9.9",
+    "numpy>=2.4.4",
+    "openai>=2.31.0",
+    "pyaudio>=0.2.14",
+    "sounddevice>=0.5.5",
+    "websocket-client>=1.9.0",
+]
