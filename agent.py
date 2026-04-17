@@ -9,8 +9,9 @@ from livekit.agents import (
 )
 from livekit.plugins import assemblyai, openai, cartesia, silero
 
-# Load environment variables from .env.local
-load_dotenv(".env.local")
+# Load environment variables
+load_dotenv()          # Load .env (OpenAI, etc.)
+load_dotenv(".env.local", override=True)  # Load .env.local (LiveKit, etc.) and override if needed
 
 logger = logging.getLogger("agent")
 
@@ -28,23 +29,24 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         vad=silero.VAD.load(
             min_speech_duration=0.1,
-            min_silence_duration=0.2,
+            min_silence_duration=0.3,
         ),
-        stt=openai.STT(),
+        stt=openai.STT(language="en", detect_language=True),
         llm=openai.LLM(model="gpt-4o-mini"),
-        tts=cartesia.TTS(model="sonic-3", voice="9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"),
+        tts=cartesia.TTS(model="sonic-3", voice="95d51f79-c397-46f9-b49a-23763d3eaa2d", speed=1.2, language=None),
     )
 
     agent = Agent(
-        instructions="""You are an elite, professional call center representative. 
-        Your goal is to provide seamless, high-quality assistance. 
-        - Speak naturally and conversationally.
-        - Keep your responses concise and to the point.
-        - If you don't know something, be honest and professional.
-        - Be polite, patient, and proactive in solving the user's needs.
+        instructions="""You are a helpful voice AI assistant. The user is interacting with you via voice.
+            Your responses are concise, to the point, and without any complex formatting or punctuation.
+            
+            LANGUAGE LOGIC:
+            - By default, speak in English.
+            - If and ONLY if the user speaks in Hindi, you must respond in Hindi.
+            - Always match the user's language if they switch to Hindi, but revert to English if they switch back.
         """,
-        min_endpointing_delay=0.7,
-        max_endpointing_delay=1.5,
+        min_endpointing_delay=1.2,
+        max_endpointing_delay=2.5,
     )
 
     await session.start(agent=agent, room=ctx.room)

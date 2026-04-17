@@ -5,17 +5,16 @@ description = "A professional voice agent built with LiveKit"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "livekit-api",
+    "livekit-api>=1.1.0",
     "livekit-agents[silero,turn-detector]~=1.4",
     "livekit-plugins-openai",
     "livekit-plugins-assemblyai",
     "livekit-plugins-cartesia",
     "livekit-plugins-ai-coustics",
     "livekit-plugins-noise-cancellation~=0.2",
-    "flask",
-    "python-dotenv",
     "flask>=3.1.3",
-    "livekit-api>=1.1.0",
+    "python-dotenv",
+
 ]
 
 [tool.setuptools.packages.find]

@@ -4,13 +4,15 @@ Version: 0.1.0
 Summary: A professional voice agent built with LiveKit
 Requires-Python: >=3.11
 Description-Content-Type: text/markdown
-Requires-Dist: livekit-agents[silero,turn-detector]~=1.5
-Requires-Dist: livekit-plugins-openai~=1.5
-Requires-Dist: livekit-plugins-assemblyai~=1.5
-Requires-Dist: livekit-plugins-cartesia~=1.5
-Requires-Dist: python-dotenv
-Requires-Dist: flask>=3.1.3
 Requires-Dist: livekit-api>=1.1.0
+Requires-Dist: livekit-agents[silero,turn-detector]~=1.4
+Requires-Dist: livekit-plugins-openai
+Requires-Dist: livekit-plugins-assemblyai
+Requires-Dist: livekit-plugins-cartesia
+Requires-Dist: livekit-plugins-ai-coustics
+Requires-Dist: livekit-plugins-noise-cancellation~=0.2
+Requires-Dist: flask>=3.1.3
+Requires-Dist: python-dotenv
 
 # LKT Workspace
 

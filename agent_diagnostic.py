@@ -10,8 +10,9 @@ from livekit.agents import (
 )
 from livekit.plugins import assemblyai, openai, cartesia, silero
 
-# Load environment variables from .env.local
-load_dotenv(".env.local")
+# Load environment variables
+load_dotenv()          # Load .env (OpenAI, etc.)
+load_dotenv(".env.local", override=True)  # Load .env.local (LiveKit, etc.) and override if needed
 
 # Set up VERBOSE logging to catch everything
 logging.basicConfig(level=logging.DEBUG)
@@ -38,7 +39,7 @@ async def entrypoint(ctx: JobContext):
             vad=silero.VAD.load(),
             stt=assemblyai.STT(model="universal-3-pro"),
             llm=openai.LLM(model="gpt-4o-mini"),
-            tts=cartesia.TTS(model="sonic-3", voice="9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"),
+            tts=cartesia.TTS(model="sonic-3", voice="faf0731e-dfb9-4cfc-8119-259a79b27e12"),
         )
 
         agent = Agent(
