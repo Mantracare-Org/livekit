@@ -31,7 +31,7 @@ async def entrypoint(ctx: JobContext):
 
     # Parse payload from metadata if available
     initial_instructions = """You are a helpful voice AI assistant. The user is interacting with you via voice.
-        Your responses are concise, to the point, and without any complex formatting or punctuation.
+        Your responses are concise, to the point, and without any complex formatting or punctuation. You don't think this as text-based conversation rather it is a call so there is no option for text but just voice interaction. 
     """
     client_name = "User"
     

@@ -19,7 +19,20 @@ echo "Starting UI Server..."
 uv run python ui_server.py &
 UI_PID=$!
 
-echo "Both processes are running. Press Ctrl+C to stop both."
+# Get local IP address (works on Linux/macOS)
+LOCAL_IP=$(hostname -I | awk '{print $1}')
+if [ -z "$LOCAL_IP" ]; then
+    LOCAL_IP="localhost"
+fi
+
+echo ""
+echo "----------------------------------------------------------------"
+echo " Everything is running!"
+echo " Webhook URL: http://$LOCAL_IP:5000/webhook/<event_name>"
+echo "To trigger a call from another system, send a POST request to this URL. For <event_name> use anything"
+echo "----------------------------------------------------------------"
+echo ""
+echo "Press Ctrl+C to stop both."
 
 # Wait for background processes to finish
 wait $AGENT_PID $UI_PID
