@@ -110,29 +110,73 @@ def create_call_webhook(event_name):
     call_id = payload.get("call_id") or payload.get("event_id") or int(time.time())
     room_name = f"call_{call_id}"
     
-    async def trigger_dispatch():
+    # Construct phone number in E.164 format
+    country_code = payload.get("client_country_code", "").strip("+")
+    client_phone = payload.get("client_phone", "").strip()
+    
+    if client_phone.startswith("+"):
+        phone_number = client_phone
+    elif country_code and client_phone:
+        phone_number = f"+{country_code}{client_phone}"
+    else:
+        phone_number = client_phone # Fallback
+    
+    if not phone_number:
+        return jsonify({"error": "No client_phone provided in payload"}), 400
+
+    async def trigger_dispatch_and_call():
         try:
+            lk_url = os.getenv("LIVEKIT_URL")
+            if lk_url.startswith("wss://"):
+                api_url = lk_url.replace("wss://", "https://")
+            elif lk_url.startswith("ws://"):
+                api_url = lk_url.replace("ws://", "http://")
+            else:
+                api_url = lk_url
+
+            logger.info(f"Connecting to LiveKit API at {api_url}")
             lkapi = api.LiveKitAPI(
-                url=os.getenv("LIVEKIT_URL"),
+                url=api_url,
                 api_key=api_key,
                 api_secret=api_secret
             )
-            # Create dispatch with payload as metadata
-            await lkapi.agent_dispatch.create_dispatch(
+            
+            # 1. Create agent dispatch for the room
+            logger.info(f"Step 1: Creating agent dispatch for room {room_name}")
+            dispatch = await lkapi.agent_dispatch.create_dispatch(
                 api.CreateAgentDispatchRequest(
                     room=room_name,
                     agent_name="mantra-agent",
                     metadata=json.dumps(payload)
                 )
             )
+            logger.info(f"Dispatch created: {dispatch.id}")
+            
+            # 2. Initiate SIP outbound call
+            trunk_id = os.getenv("SIP_TRUNK_ID")
+            logger.info(f"Step 2: Initiating SIP call to {phone_number} via trunk {trunk_id}")
+            sip_part = await lkapi.sip.create_sip_participant(
+                api.CreateSIPParticipantRequest(
+                    sip_trunk_id=trunk_id,
+                    sip_call_to=phone_number,
+                    room_name=room_name,
+                    participant_identity=f"sip_{call_id}",
+                    participant_name="SIP Caller"
+                )
+            )
+            logger.info(f"SIP Participant created: {sip_part.participant_identity}")
+            
             await lkapi.aclose()
-            logger.info(f"Successfully dispatched agent to room {room_name}")
+            logger.info(f"Successfully triggered call and agent for room {room_name}")
         except Exception as e:
-            logger.error(f"Dispatch failed: {e}")
+            import traceback
+            logger.error(f"Failed to trigger call/dispatch: {e}\n{traceback.format_exc()}")
+            if 'lkapi' in locals():
+                await lkapi.aclose()
             raise e
 
     try:
-        asyncio.run(trigger_dispatch())
+        asyncio.run(trigger_dispatch_and_call())
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
