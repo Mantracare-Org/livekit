@@ -1,5 +1,7 @@
 import os
 import logging
+import json
+
 from flask import Flask, jsonify, send_from_directory
 import asyncio
 from livekit import api
@@ -21,48 +23,70 @@ def static_files(path):
     """Serve static assets."""
     return send_from_directory("static", path)
 
-@app.route("/token")
-def get_token():
-    """Generate a signed LiveKit JWT for the participant."""
+@app.route("/dispatch-test", methods=["POST"])
+def dispatch_test():
+    """
+    Manually trigger an agent dispatch with a custom payload.
+    """
+    from flask import request
+    payload = request.json
+
+    if not payload:
+        return jsonify({"error": "No payload provided"}), 400
+    
+    logger.info(f"Manual dispatch request with payload: {json.dumps(payload, indent=2)}")
+    
     api_key = os.getenv("LIVEKIT_API_KEY")
     api_secret = os.getenv("LIVEKIT_API_SECRET")
     
-    if not api_key or not api_secret:
-        return jsonify({"error": "LiveKit credentials not found in .env.local"}), 500
-
-    token = api.AccessToken(api_key, api_secret) \
-        .with_identity("LocalUser") \
-        .with_name("Local User") \
-        .with_grants(api.VideoGrants(
-            room_join=True,
-            room_create=True,
-            room="default-room",
-            can_publish=True,
-            can_subscribe=True,
-            can_publish_data=True,
-        ))
+    # Generate a unique room name for this test session
+    import time
+    room_name = f"test_{int(time.time())}"
     
-    # EXPLICIT DISPATCH: Force the agent to join the room
     async def trigger_dispatch():
         try:
-            lkapi = api.LiveKitAPI(api_key=api_key, api_secret=api_secret)
+            lkapi = api.LiveKitAPI(
+                url=os.getenv("LIVEKIT_URL"),
+                api_key=api_key,
+                api_secret=api_secret
+            )
+            # Create dispatch with payload as metadata
             await lkapi.agent_dispatch.create_dispatch(
                 api.CreateAgentDispatchRequest(
-                    room="default-room",
-                    agent_name="mantra-agent"
+                    room=room_name,
+                    agent_name="mantra-agent",
+                    metadata=json.dumps(payload)
                 )
             )
             await lkapi.aclose()
+            logger.info(f"Successfully dispatched agent to room {room_name}")
         except Exception as e:
-            print(f"Dispatch failed: {e}")
+            logger.error(f"Dispatch failed: {e}")
+            raise e
 
-    # Run the dispatch trigger in the background
-    asyncio.run(trigger_dispatch())
+    try:
+        asyncio.run(trigger_dispatch())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    # Generate token for the user to join the same room
+    token = api.AccessToken(api_key, api_secret) \
+        .with_identity("Tester") \
+        .with_name("Manual Tester") \
+        .with_grants(api.VideoGrants(
+            room_join=True,
+            room=room_name,
+            can_publish=True,
+            can_subscribe=True,
+        ))
 
     return jsonify({
+        "status": "success",
+        "room": room_name,
         "token": token.to_jwt(),
         "url": os.getenv("LIVEKIT_URL"),
     })
+
 
 @app.route("/config")
 def get_config():

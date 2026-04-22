@@ -8,8 +8,6 @@ let room;
 let isMicOn = true;
 
 // Elements
-const connectBtn = document.getElementById('connect-btn');
-const disconnectBtn = document.getElementById('disconnect-btn');
 const micBtn = document.getElementById('mic-btn');
 const micOnIcon = document.getElementById('mic-on');
 const micOffIcon = document.getElementById('mic-off');
@@ -18,24 +16,87 @@ const statusText = document.getElementById('status-text');
 const chatContent = document.getElementById('chat-content');
 const visualizer = document.getElementById('visualizer');
 
+// Payload UI Elements
+const testPanel = document.getElementById('test-panel');
+const tabBtns = document.querySelectorAll('.tab-btn');
+const tabContents = document.querySelectorAll('.tab-content');
+
+// Structured Inputs
+const inputClientName = document.getElementById('input-client-name');
+const inputCallId = document.getElementById('input-call-id');
+const inputLeadId = document.getElementById('input-lead-id');
+const inputPrompt = document.getElementById('input-prompt');
+
+// Raw Inputs
+const payloadRaw = document.getElementById('payload-raw');
+const parseRawBtn = document.getElementById('parse-raw-btn');
+
+// Control Buttons
+const startSessionBtn = document.getElementById('start-session-btn');
+const disconnectBtn = document.getElementById('disconnect-btn');
+
+// Tab Switching Logic
+tabBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+        const tabId = btn.dataset.tab;
+        tabBtns.forEach(b => b.classList.remove('active'));
+        tabContents.forEach(c => c.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById(`tab-${tabId}`).classList.add('active');
+    });
+});
+
+// Parse Raw JSON Logic
+parseRawBtn.addEventListener('click', () => {
+    try {
+        const rawValue = payloadRaw.value.trim();
+        if (!rawValue) return;
+        
+        const data = JSON.parse(rawValue);
+        
+        // Extract fields
+        if (data.client_name) inputClientName.value = data.client_name;
+        if (data.call_id) inputCallId.value = data.call_id;
+        if (data.lead_id) inputLeadId.value = data.lead_id;
+        if (data.prompt) inputPrompt.value = data.prompt;
+        
+        // Switch to structured tab
+        tabBtns[0].click();
+        addSystemMessage('✅ Payload parsed successfully into fields.');
+    } catch (e) {
+        alert('❌ Invalid JSON: ' + e.message);
+    }
+});
+
 async function connect() {
     try {
+        statusText.innerText = 'Initializing...';
+        startSessionBtn.disabled = true;
+        
+        // Construct payload from structured fields
+        const payload = {
+            client_name: inputClientName.value || 'User',
+            call_id: inputCallId.value || '99999',
+            lead_id: inputLeadId.value || '12345',
+            prompt: inputPrompt.value || 'You are a helpful assistant.'
+        };
+
+        // 1. Post to dispatch-test
+        const response = await fetch('/dispatch-test', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+        
+        const data = await response.json();
+        
+        if (data.error) throw new Error(data.error);
+        const serverUrl = data.url;
+        if (!serverUrl) throw new Error("LIVEKIT_URL not found on server");
+
         statusText.innerText = 'Connecting...';
-        connectBtn.disabled = true;
-
-        // 1. Fetch token and config
-        const [tokenRes, configRes] = await Promise.all([
-            fetch('/token'),
-            fetch('/config')
-        ]);
-        const tokenData = await tokenRes.json();
-        const configData = await configRes.json();
-        console.log('Token fetched:', !!tokenData.token);
-        console.log('Server URL:', configData.url);
-
-        if (tokenData.error) throw new Error(tokenData.error);
-        const serverUrl = configData.url;
-        if (!serverUrl) throw new Error("LIVEKIT_URL not found");
 
         // 2. Initialize Room
         room = new Room({
@@ -43,69 +104,12 @@ async function connect() {
             dynacast: true,
         });
 
-        // 3. Set up listeners BEFORE connecting
-        room.on(RoomEvent.Connected, () => {
-            console.log('✅ Connected to room');
-            statusDot.classList.add('active');
-            statusText.innerText = 'Connected';
-            addSystemMessage('Connected to room. Waiting for agent...');
-            connectBtn.classList.add('hidden');
-            disconnectBtn.classList.remove('hidden');
-            micBtn.classList.remove('hidden');
-        });
-
-        room.on(RoomEvent.Disconnected, () => {
-            console.log('❌ Disconnected');
-            statusDot.classList.remove('active');
-            statusText.innerText = 'Disconnected';
-            addSystemMessage('Disconnected from room.');
-            connectBtn.classList.remove('hidden');
-            disconnectBtn.classList.add('hidden');
-            micBtn.classList.add('hidden');
-            connectBtn.disabled = false;
-            visualizer.classList.add('hidden');
-        });
-
-        room.on(RoomEvent.ParticipantConnected, (participant) => {
-            console.log('👤 Participant joined:', participant.identity);
-            addSystemMessage(`Agent "${participant.identity}" joined the room.`);
-        });
-
-        room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
-            console.log(`🎵 Track subscribed: ${track.kind} from ${participant.identity} (${participant.isAgent ? 'Agent' : 'User'})`);
-            if (track.kind === Track.Kind.Audio) {
-                // attach() returns an <audio> element — it MUST be added to the DOM to play
-                const audioElement = track.attach();
-                document.body.appendChild(audioElement);
-                addSystemMessage(`Agent "${participant.identity}" has started speaking.`);
-            }
-        });
-
-        room.on(RoomEvent.TrackUnsubscribed, (track) => {
-            // Clean up attached elements
-            track.detach().forEach(el => el.remove());
-        });
-
-        room.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
-            const agentSpeaking = speakers.some(
-                s => s.identity !== room.localParticipant.identity
-            );
-            visualizer.classList.toggle('hidden', !agentSpeaking);
-        });
-
-        room.on(RoomEvent.DataReceived, (payload, participant) => {
-            try {
-                const text = new TextDecoder().decode(payload);
-                const data = JSON.parse(text);
-                handleIncomingData(data);
-            } catch (e) {
-                // not JSON, ignore
-            }
-        });
+        // 3. Set up listeners
+        setupRoomListeners();
 
         // 4. Connect to room
-        console.log('Connecting to', serverUrl);
-        await room.connect(serverUrl, tokenData.token);
+        console.log('Connecting to', serverUrl, 'Room:', data.room);
+        await room.connect(serverUrl, data.token);
         console.log('Room state:', room.state);
 
         // 5. Publish microphone
@@ -113,13 +117,18 @@ async function connect() {
         isMicOn = true;
         updateMicUI();
 
+        // Hide test panel on success
+        testPanel.classList.add('hidden');
+
     } catch (error) {
-        console.error('Failed to connect:', error);
+        console.error('Failed to trigger/connect:', error);
         statusText.innerText = 'Error';
         addSystemMessage(`Error: ${error.message}`);
-        connectBtn.disabled = false;
+    } finally {
+        startSessionBtn.disabled = false;
     }
 }
+
 
 async function disconnect() {
     if (room) {
@@ -180,6 +189,65 @@ function handleIncomingData(data) {
 }
 
 // Event Listeners
-connectBtn.addEventListener('click', connect);
+startSessionBtn.addEventListener('click', connect);
 disconnectBtn.addEventListener('click', disconnect);
 micBtn.addEventListener('click', toggleMic);
+
+function setupRoomListeners() {
+    room.on(RoomEvent.Connected, () => {
+        console.log('✅ Connected to room');
+        statusDot.classList.add('active');
+        statusText.innerText = 'Connected';
+        addSystemMessage('Connected. Agent is being dispatched...');
+        disconnectBtn.classList.remove('hidden');
+        micBtn.classList.remove('hidden');
+    });
+
+    room.on(RoomEvent.Disconnected, () => {
+        console.log('❌ Disconnected');
+        statusDot.classList.remove('active');
+        statusText.innerText = 'Disconnected';
+        addSystemMessage('Session ended.');
+        disconnectBtn.classList.add('hidden');
+        micBtn.classList.add('hidden');
+        testPanel.classList.remove('hidden');
+        visualizer.classList.add('hidden');
+    });
+
+
+    room.on(RoomEvent.ParticipantConnected, (participant) => {
+        console.log('👤 Participant joined:', participant.identity);
+        addSystemMessage(`Agent "${participant.identity}" joined.`);
+    });
+
+    room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+        console.log(`🎵 Track subscribed: ${track.kind} from ${participant.identity}`);
+        if (track.kind === Track.Kind.Audio) {
+            const audioElement = track.attach();
+            document.body.appendChild(audioElement);
+        }
+    });
+
+    room.on(RoomEvent.TrackUnsubscribed, (track) => {
+        track.detach().forEach(el => el.remove());
+    });
+
+    room.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
+        const agentSpeaking = speakers.some(
+            s => s.identity !== room.localParticipant.identity
+        );
+        visualizer.classList.toggle('hidden', !agentSpeaking);
+    });
+
+    room.on(RoomEvent.DataReceived, (payload, participant) => {
+        try {
+            const text = new TextDecoder().decode(payload);
+            const data = JSON.parse(text);
+            handleIncomingData(data);
+        } catch (e) {
+            // not JSON, ignore
+        }
+    });
+}
+
+
