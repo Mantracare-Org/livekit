@@ -15,8 +15,8 @@ echo "Starting LiveKit Agent (dev mode)..."
 uv run python agent.py dev &
 AGENT_PID=$!
 
-echo "Starting UI Server..."
-uv run python ui_server.py &
+echo "Starting UI Server (FastAPI)..."
+uv run uvicorn ui_server:app --host 0.0.0.0 --port 5000 &
 UI_PID=$!
 
 # Get local IP address (works on Linux/macOS)
