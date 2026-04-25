@@ -12,11 +12,11 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 echo "Starting LiveKit Agent (dev mode)..."
-uv run python agent.py dev &
+uv run python -m mantra.agent dev &
 AGENT_PID=$!
 
 echo "Starting UI Server (FastAPI)..."
-uv run uvicorn ui_server:app --host 0.0.0.0 --port 5000 &
+uv run python -m mantra.ui_server &
 UI_PID=$!
 
 # Get local IP address (works on Linux/macOS)

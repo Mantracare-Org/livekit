@@ -20,8 +20,13 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["api*"]
-exclude = ["static*", "templates*", "massist*"]
+where = ["."]
+include = ["mantra*"]
+exclude = ["static*", "recordings*", "massist*"]
+
+[project.scripts]
+mantra-agent = "mantra.agent:run_agent"
+mantra-ui = "mantra.ui_server:main"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

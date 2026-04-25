@@ -2,13 +2,11 @@ import os
 import logging
 import json
 import time
-import asyncio
 import traceback
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 from livekit import api
 from dotenv import load_dotenv
 
@@ -16,12 +14,15 @@ from dotenv import load_dotenv
 load_dotenv(".env.local")
 
 app = FastAPI()
-logger = logging.getLogger("ui_server")
+logger = logging.getLogger("mantra.ui_server")
 logger.setLevel(logging.INFO)
 
+# Get the directory of the current file
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+
 # Mount static files
-# We will serve index.html separately so we can mount static for assets
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Persistent LiveKit API client — created once, reused across requests
 lk_client: api.LiveKitAPI = None
@@ -57,7 +58,7 @@ async def shutdown_event():
 @app.get("/")
 async def index():
     """Serve the main UI."""
-    return FileResponse(os.path.join("static", "index.html"))
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
 @app.post("/dispatch-test")
 async def dispatch_test(request: Request):
@@ -200,7 +201,10 @@ async def get_config():
         "url": os.getenv("LIVEKIT_URL")
     })
 
-if __name__ == "__main__":
+def main():
     import uvicorn
     print("UI Server starting on http://0.0.0.0:5000")
-    uvicorn.run("ui_server:app", host="0.0.0.0", port=5000, reload=True)
+    uvicorn.run("mantra.ui_server:app", host="0.0.0.0", port=5000, reload=True)
+
+if __name__ == "__main__":
+    main()

@@ -51,18 +51,19 @@ The agent is integrated with a SIP-based outbound system. Trigger calls by sendi
 
 ### Local Development
 
-To run the full stack locally:
+1. **Install Dependencies:**
+   ```bash
+   pip install -e .
+   ```
 
-1. **Start the Integrated Dev Environment:**
-
+2. **Start the Agent and Server:**
    ```bash
    ./dev.sh
    ```
+   *This script runs both the Voice Agent and the UI Server.*
 
-   _This automatically starts both the Agent Worker and the UI Server._
-
-2. **Access the Interface:**
-   Visit `http://localhost:5000` to monitor logs and interact manually.
+3. **Access the Interface:**
+   Visit `http://localhost:5000` to monitor and trigger tests.
 
 ---
 
