@@ -14,6 +14,7 @@ from livekit.agents import (
     AgentSession,
     JobContext,
     cli,
+    llm,
 )
 from livekit.agents import TurnHandlingOptions
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
@@ -106,6 +107,82 @@ class SessionRecorder:
         
         logger.info(f"Saved combined recording ({len(track_arrays)} tracks, {max_len / self.SAMPLE_RATE:.1f}s) to {output_path}")
         return output_path
+
+    def save_transcript(self, history: list):
+        """Save the conversation transcript to a text file."""
+        output_path = os.path.join(self.recording_dir, "transcript.txt")
+        try:
+            with open(output_path, "w") as f:
+                for msg in history:
+                    # Handle role which might be an enum or string
+                    role = msg.role
+                    if hasattr(role, 'name'):
+                        role = role.name
+                    elif hasattr(role, 'value'):
+                        role = role.value
+                    
+                    # Handle content which might be a list or string
+                    content = msg.content
+                    if isinstance(content, list):
+                        content = " ".join([str(c) for c in content])
+                        
+                    if content:
+                        f.write(f"{str(role).upper()}: {content}\n")
+            logger.info(f"Saved transcript to {output_path}")
+        except Exception as e:
+            logger.error(f"Error saving transcript: {e}")
+
+    async def generate_and_save_summary(self, llm_engine: openai.LLM, history: list):
+        """Use the LLM to generate a summary based on the history and save it."""
+        output_path = os.path.join(self.recording_dir, "summary.txt")
+        
+        summary_prompt = """Based on the following conversation transcript, generate a structured internal summary as requested:
+
+POST-CALL INTERNAL SUMMARY (REQUIRED OUTPUT)
+After call ends, generate structured internal notes:
+Appointment Status: Confirmed / Rescheduled / Uncertain
+Attendance Likelihood: High / Medium / Low
+Follow-up Required: Yes / No
+Follow-up Date & Time (if any)
+Pending Items (if any)
+Rescheduling Needed: Yes / No
+Overall Patient Sentiment: Calm / Neutral / Anxious
+Do NOT assume emotions.
+Only write what was expressed.
+
+Give me the general summary of the conversation and after that the structured internal summary.
+TRANSCRIPT:
+"""
+        for msg in history:
+            role = msg.role
+            if hasattr(role, 'name'):
+                role = role.name
+            elif hasattr(role, 'value'):
+                role = role.value
+            
+            content = msg.content
+            if isinstance(content, list):
+                content = " ".join([str(c) for c in content])
+                
+            summary_prompt += f"{str(role).upper()}: {content}\n"
+            
+        try:
+            # Create a simple chat context for the summary
+            messages = [
+                llm.ChatMessage(role="system", content=["You are a helpful assistant that summarizes medical appointment calls."]),
+                llm.ChatMessage(role="user", content=[summary_prompt])
+            ]
+            
+            # llm.chat returns a stream, we need to collect it
+            stream = llm_engine.chat(chat_ctx=llm.ChatContext(items=messages))
+            response = await stream.collect()
+            summary_text = response.text
+            
+            with open(output_path, "w") as f:
+                f.write(summary_text)
+            logger.info(f"Saved summary to {output_path}")
+        except Exception as e:
+            logger.error(f"Error generating/saving summary: {e}")
 
 
 @server.rtc_session(agent_name="mantra-agent")
@@ -242,11 +319,20 @@ Follow these specific instructions:
     
     await session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
     
-    # Wait for session to end, then save combined recording
+    # Wait for session to end, then save everything
     @session.on("close")
     def on_session_close():
         recorder.save_combined()
-        logger.info("Session closed, recording saved.")
+        
+        # Save transcript
+        # session.history is a ChatContext, use .messages() to get the list of ChatMessage
+        history = session.history.messages()
+        recorder.save_transcript(history)
+        
+        # Generate and save summary in background
+        asyncio.create_task(recorder.generate_and_save_summary(session.llm, history))
+        
+        logger.info("Session closed, recording and transcripts saved.")
 
 if __name__ == "__main__":
     cli.run_app(server)
@@ -254,7 +340,6 @@ if __name__ == "__main__":
 #TODO 
 """
 1. Transcript 
-2. Recording 
 3. Summary 
 4. If next call when ( date and time ( in string format ) ) 
 5. {Decide next stage - this can be send to webhook}
