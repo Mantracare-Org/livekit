@@ -154,23 +154,40 @@ Follow these specific instructions:
     if ctx.job.metadata:
         try:
             payload = json.loads(ctx.job.metadata)
+            
+            # 1. Handle main prompt
             if "prompt" in payload:
                 # Remove the impatient "not responding" rule which causes repetitive loops
                 clean_prompt = payload["prompt"].replace("If the client is not responding, ask questions like 'hope you are hearing me', etc.", "")
                 initial_instructions += "\n" + clean_prompt
+            
             if "client_name" in payload:
                 client_name = payload["client_name"]
+
+            # 2. Extract ALL other features as context for the LLM
+            context_header = "\n\n--- ADDITIONAL CALL CONTEXT ---\n"
+            context_body = ""
             
-            # Inject client_custom_fields into the instructions so the agent knows appointment details
-            custom_fields = payload.get("client_custom_fields", {})
-            if custom_fields:
-                fields_text = "\n\nPATIENT-SPECIFIC DETAILS FOR THIS CALL:\n"
-                for key, value in custom_fields.items():
-                    readable_key = key.replace("_", " ").title()
-                    fields_text += f"- {readable_key}: {value}\n"
-                initial_instructions += fields_text
+            for key, value in payload.items():
+                if key == "prompt":
+                    continue
+                
+                readable_key = key.replace("_", " ").title()
+                
+                if isinstance(value, dict):
+                    context_body += f"{readable_key}:\n"
+                    for k, v in value.items():
+                        rk = k.replace("_", " ").title()
+                        context_body += f"  - {rk}: {v}\n"
+                elif isinstance(value, list):
+                    context_body += f"- {readable_key}: {', '.join(map(str, value))}\n"
+                else:
+                    context_body += f"- {readable_key}: {value}\n"
             
-            logger.info(f"Loaded custom prompt for {client_name}")
+            if context_body:
+                initial_instructions += context_header + context_body
+            
+            logger.info(f"Loaded full context for {client_name}")
         except Exception as e:
             logger.error(f"Failed to parse metadata: {e}")
 
