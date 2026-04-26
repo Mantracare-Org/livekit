@@ -5,18 +5,19 @@ This is an MCP (Model Context Protocol) server that provides tools to interact w
 ## Local Setup
 
 1. **Install Dependencies**:
+
    ```bash
    uv add "mcp[cli]" asyncpg python-dotenv
    ```
 
 2. **Environment Variables**:
-   Ensure your `.env.local` (or `.env`) has the following:
+
    ```env
-   POSTGRES_USER=user
-   POSTGRES_PASSWORD=admin@77413
-   POSTGRES_DB=main_db
-   POSTGRES_PORT=5433
-   POSTGRES_HOST=localhost
+   POSTGRES_USER=${POSTGRES_USER}
+   POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+   POSTGRES_DB=${POSTGRES_DB}
+   POSTGRES_PORT=${POSTGRES_PORT}
+   POSTGRES_HOST=${POSTGRES_HOST}
    ```
 
 3. **Run the Server**:

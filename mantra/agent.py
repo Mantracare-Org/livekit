@@ -184,7 +184,8 @@ Follow these specific instructions:
             # Prepare data for DB
             try:
                 payload = json.loads(ctx.job.metadata) if ctx.job.metadata else {}
-            except:
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse metadata: {e}")
                 payload = {}
                 
             log_data = {
