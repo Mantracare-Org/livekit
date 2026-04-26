@@ -17,6 +17,8 @@ dependencies = [
     "uvicorn[standard]>=0.34.0",
     "python-dotenv",
     "torch",
+    "mcp[cli]",
+    "asyncpg",
 ]
 
 [tool.setuptools.packages.find]

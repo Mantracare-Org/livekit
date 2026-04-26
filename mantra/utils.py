@@ -7,6 +7,8 @@ import asyncio
 from livekit import rtc
 from livekit.agents import llm
 from livekit.plugins import openai
+from mcp import ClientSession
+from mcp.client.stdio import stdio_client, StdioServerParameters
 
 logger = logging.getLogger("mantra.utils")
 
@@ -21,6 +23,8 @@ class SessionRecorder:
         self.recording_dir = recording_dir
         self._tracks: dict[str, list[bytes]] = {}  # track_id -> list of frame bytes
         self._recording_tasks: list[asyncio.Task] = []
+        self.start_time = datetime.datetime.now()
+        self.end_time = None
     
     def start_recording(self, track: rtc.Track, label: str):
         """Start recording a track with the given label (e.g. 'agent', 'user')."""
@@ -87,11 +91,13 @@ class SessionRecorder:
             wav.writeframes(mixed.tobytes())
         
         logger.info(f"Saved combined recording ({len(track_arrays)} tracks, {max_len / self.SAMPLE_RATE:.1f}s) to {output_path}")
+        self.end_time = datetime.datetime.now()
         return output_path
 
     def save_transcript(self, history: list):
         """Save the conversation transcript to a text file."""
         output_path = os.path.join(self.recording_dir, "transcript.txt")
+        full_transcript = ""
         try:
             with open(output_path, "w") as f:
                 for msg in history:
@@ -108,10 +114,14 @@ class SessionRecorder:
                         content = " ".join([str(c) for c in content])
                         
                     if content:
-                        f.write(f"{str(role).upper()}: {content}\n")
+                        text = f"{str(role).upper()}: {content}\n"
+                        f.write(text)
+                        full_transcript += text
             logger.info(f"Saved transcript to {output_path}")
+            return full_transcript
         except Exception as e:
             logger.error(f"Error saving transcript: {e}")
+            return ""
 
     async def generate_and_save_summary(self, llm_engine: openai.LLM, history: list):
         """Use the LLM to generate a summary based on the history and save it."""
@@ -162,5 +172,26 @@ TRANSCRIPT:
             with open(output_path, "w") as f:
                 f.write(summary_text)
             logger.info(f"Saved summary to {output_path}")
+            return summary_text
         except Exception as e:
             logger.error(f"Error generating/saving summary: {e}")
+            return ""
+
+async def push_to_mcp_server(log_data: dict):
+    """Connect to the MCP server and push call log data."""
+    server_params = StdioServerParameters(
+        command="python3",
+        args=[os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "mcp", "server.py"))],
+        env=os.environ.copy()
+    )
+    
+    try:
+        async with stdio_client(server_params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                result = await session.call_tool("insert_call_log", arguments={"log_data": log_data})
+                logger.info(f"MCP Server Response: {result}")
+                return result
+    except Exception as e:
+        logger.error(f"Error pushing to MCP server: {e}")
+        return None

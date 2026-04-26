@@ -18,8 +18,8 @@ from livekit.agents import TurnHandlingOptions
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from livekit.plugins import assemblyai, openai, cartesia, silero, deepgram
 
-# Import our custom recorder
-from mantra.utils import SessionRecorder
+# Import our custom recorder and MCP helper
+from mantra.utils import SessionRecorder, push_to_mcp_server
 
 # Load environment variables
 load_dotenv()          # Load .env (OpenAI, etc.)
@@ -166,17 +166,49 @@ Follow these specific instructions:
     # Wait for session to end, then save everything
     @session.on("close")
     def on_session_close():
-        recorder.save_combined()
-        
-        # Save transcript
-        # session.history is a ChatContext, use .messages() to get the list of ChatMessage
-        history = session.history.messages()
-        recorder.save_transcript(history)
-        
-        # Generate and save summary in background
-        asyncio.create_task(recorder.generate_and_save_summary(session.llm, history))
-        
-        logger.info("Session closed, recording and transcripts saved.")
+        async def finalize():
+            recording_path = recorder.save_combined()
+            
+            # Save transcript and get text
+            history = session.history.messages()
+            transcript_text = recorder.save_transcript(history)
+            
+            # Generate summary and get text
+            summary_text = await recorder.generate_and_save_summary(session.llm, history)
+            
+            # Calculate duration
+            duration = 0
+            if recorder.start_time and recorder.end_time:
+                duration = int((recorder.end_time - recorder.start_time).total_seconds())
+            
+            # Prepare data for DB
+            try:
+                payload = json.loads(ctx.job.metadata) if ctx.job.metadata else {}
+            except:
+                payload = {}
+                
+            log_data = {
+                "org_id": payload.get("org_id", 1),
+                "process_id": payload.get("process_id"),
+                "stage_id": payload.get("stage_id"),
+                "call_transcript": transcript_text,
+                "recording_url": recording_path,
+                "call_duration_seconds": duration,
+                "ai_summary": summary_text,
+                "call_status": "completed",
+                "call_type": payload.get("call_type"),
+                "ai_call_id": ctx.job.id,
+                "lead_id": payload.get("lead_id"),
+                "metadata": json.dumps(payload),
+                "updated_at": datetime.datetime.now().isoformat()
+            }
+            
+            # Push to DB via MCP
+            logger.info("Pushing call log to database via MCP...")
+            await push_to_mcp_server(log_data)
+            logger.info("Session closed and data pushed to DB.")
+
+        asyncio.create_task(finalize())
 
 def run_agent():
     cli.run_app(server)
