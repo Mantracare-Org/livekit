@@ -12,3 +12,4 @@ python-dotenv
 torch
 mcp[cli]
 asyncpg
+colorama>=0.4.6

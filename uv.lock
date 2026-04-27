@@ -1116,6 +1116,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "asyncpg" },
+    { name = "colorama" },
     { name = "fastapi" },
     { name = "livekit-agents", extra = ["silero", "turn-detector"] },
     { name = "livekit-api" },
@@ -1134,6 +1135,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "asyncpg" },
+    { name = "colorama", specifier = ">=0.4.6" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "livekit-agents", extras = ["silero", "turn-detector"], specifier = "~=1.4" },
     { name = "livekit-api", specifier = ">=1.1.0" },

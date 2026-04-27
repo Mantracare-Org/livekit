@@ -19,6 +19,7 @@ dependencies = [
     "torch",
     "mcp[cli]",
     "asyncpg",
+    "colorama>=0.4.6",
 ]
 
 [tool.setuptools.packages.find]

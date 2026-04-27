@@ -8,6 +8,7 @@ from livekit import rtc
 from livekit.agents import llm
 from livekit.plugins import openai
 from mcp import ClientSession
+import json
 from mcp.client.stdio import stdio_client, StdioServerParameters
 
 logger = logging.getLogger("mantra.utils")
@@ -95,9 +96,9 @@ class SessionRecorder:
         return output_path
 
     def save_transcript(self, history: list):
-        """Save the conversation transcript to a text file."""
+        """Save the conversation transcript to a text file and return structured list."""
         output_path = os.path.join(self.recording_dir, "transcript.txt")
-        full_transcript = ""
+        structured_transcript = []
         try:
             with open(output_path, "w") as f:
                 for msg in history:
@@ -114,14 +115,17 @@ class SessionRecorder:
                         content = " ".join([str(c) for c in content])
                         
                     if content:
+                        role_label = "bot" if str(role).lower() == "assistant" else "user"
+                        structured_transcript.append({role_label: content})
+                        
                         text = f"{str(role).upper()}: {content}\n"
                         f.write(text)
-                        full_transcript += text
+            
             logger.info(f"Saved transcript to {output_path}")
-            return full_transcript
+            return json.dumps(structured_transcript)
         except Exception as e:
             logger.error(f"Error saving transcript: {e}")
-            return ""
+            return "[]"
 
     async def generate_and_save_summary(self, llm_engine: openai.LLM, history: list):
         """Use the LLM to generate a summary based on the history and save it."""
@@ -140,6 +144,10 @@ Rescheduling Needed: Yes / No
 Overall Patient Sentiment: Calm / Neutral / Anxious
 Do NOT assume emotions.
 Only write what was expressed.
+
+ADDITIONAL DATA (STRICT):
+Sentiment Score: [A number between 0.0 and 1.0, where 1.0 is extremely positive/calm and 0.0 is extremely negative/anxious]
+Next Call Date: [YYYY-MM-DD HH:MM:SS format if a follow-up was agreed, otherwise "None"]
 
 Give me the general summary of the conversation and after that the structured internal summary.
 TRANSCRIPT:
@@ -177,6 +185,37 @@ TRANSCRIPT:
             logger.error(f"Error generating/saving summary: {e}")
             return ""
 
+    @staticmethod
+    def parse_summary_data(summary_text: str):
+        """Extract sentiment score and next call date from the generated summary."""
+        sentiment_score = 0.5  # Default neutral
+        next_call_on = None
+        
+        try:
+            for line in summary_text.split("\n"):
+                line = line.strip()
+                if "Sentiment Score:" in line:
+                    parts = line.split(":")
+                    if len(parts) > 1:
+                        try:
+                            # Extract number, handling potential markdown or trailing text
+                            score_str = parts[1].strip().split()[0]
+                            sentiment_score = float(score_str)
+                        except (ValueError, IndexError):
+                            pass
+                elif "Next Call Date:" in line:
+                    parts = line.split(":")
+                    if len(parts) > 1:
+                        date_str = line.replace("Next Call Date:", "").strip()
+                        # Remove markdown artifacts like bullet points, asterisks
+                        clean_date = date_str.strip().strip("*-• ").strip()
+                        if clean_date and clean_date.lower() not in ["none", "n/a", "null", "na", "not applicable", "not specified"] and len(clean_date) > 5:
+                            next_call_on = clean_date
+        except Exception as e:
+            logger.error(f"Error parsing summary data: {e}")
+            
+        return sentiment_score, next_call_on
+
 async def push_to_mcp_server(log_data: dict):
     """Connect to the MCP server and push call log data."""
     server_params = StdioServerParameters(
@@ -190,8 +229,16 @@ async def push_to_mcp_server(log_data: dict):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 result = await session.call_tool("insert_call_log", arguments={"log_data": log_data})
-                logger.info(f"MCP Server Response: {result}")
-                return result
+                
+                # Extract text content from MCP response
+                response_text = ""
+                if hasattr(result, 'content') and result.content:
+                    response_text = result.content[0].text
+                else:
+                    response_text = str(result)
+                    
+                logger.info(f"MCP Server Response: {response_text}")
+                return response_text
     except Exception as e:
         logger.error(f"Error pushing to MCP server: {e}")
         return None

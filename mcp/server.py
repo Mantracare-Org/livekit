@@ -3,6 +3,7 @@ import os
 from typing import Any, List, Optional
 from mcp.server.fastmcp import FastMCP
 import asyncpg
+import datetime
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -122,11 +123,45 @@ async def insert_call_log(log_data: dict) -> str:
         # Construct the query dynamically based on log_data keys
         columns = ", ".join(log_data.keys())
         placeholders = ", ".join(f"${i+1}" for i in range(len(log_data)))
-        values = list(log_data.values())
+        values = []
+        for val in log_data.values():
+            if isinstance(val, str):
+                try:
+                    # Attempt to parse ISO format strings into datetime objects
+                    if len(val) >= 10 and (val[4] == "-" and val[7] == "-"):
+                        values.append(datetime.datetime.fromisoformat(val.replace("Z", "+00:00")))
+                    elif val.strip().strip("*-• ").lower() in ["none", "null", "n/a", "na", ""] or "none" in val.lower():
+                        values.append(None)
+                    else:
+                        values.append(val)
+                except (ValueError, TypeError):
+                    # If it looked like a date but failed to parse, use None
+                    values.append(None)
+            else:
+                values.append(val)
         
         query = f"INSERT INTO call_logs ({columns}) VALUES ({placeholders}) RETURNING id"
         
-        row = await conn.fetchrow(query, *values)
+        try:
+            row = await conn.fetchrow(query, *values)
+        except asyncpg.exceptions.ForeignKeyViolationError as fk_err:
+            # If lead_id caused the violation, retry without it
+            if "lead_id" in str(fk_err) and "lead_id" in log_data:
+                print(f"Foreign Key violation on lead_id={log_data['lead_id']}. Retrying without lead_id...")
+                # Find and remove lead_id from keys and values by index
+                keys_list = list(log_data.keys())
+                idx = keys_list.index("lead_id")
+                keys_list.pop(idx)
+                values.pop(idx)
+                # Rebuild query
+                columns = ", ".join(keys_list)
+                placeholders = ", ".join(f"${i+1}" for i in range(len(keys_list)))
+                retry_query = f"INSERT INTO call_logs ({columns}) VALUES ({placeholders}) RETURNING id"
+                row = await conn.fetchrow(retry_query, *values)
+                await conn.close()
+                return f"Successfully inserted call log with ID: {row['id']} (lead_id omitted due to FK violation)"
+            raise fk_err
+            
         await conn.close()
         
         return f"Successfully inserted call log with ID: {row['id']}"

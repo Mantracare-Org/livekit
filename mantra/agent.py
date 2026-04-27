@@ -3,7 +3,11 @@ import json
 import asyncio
 import os
 import datetime
+from colorama import Fore, Style, init
 from dotenv import load_dotenv
+
+# Initialize colorama
+init(autoreset=True)
 
 from livekit import rtc
 from livekit.agents import (
@@ -188,16 +192,22 @@ Follow these specific instructions:
                 logger.error(f"Failed to parse metadata: {e}")
                 payload = {}
                 
+            # Parse additional data from summary
+            sentiment_score, next_call_on = SessionRecorder.parse_summary_data(summary_text)
+            
             log_data = {
-                "org_id": payload.get("org_id", 1),
+                "org_id": payload.get("org_id"),
                 "process_id": payload.get("process_id"),
                 "stage_id": payload.get("stage_id"),
                 "call_transcript": transcript_text,
                 "recording_url": recording_path,
                 "call_duration_seconds": duration,
                 "ai_summary": summary_text,
-                "call_status": "completed",
-                "call_type": payload.get("call_type"),
+                "sentiment_score": sentiment_score,
+                "created_at": datetime.datetime.now().isoformat(),
+                "next_call_on": next_call_on,
+                "call_status": "Completed", # Match user example case
+                "call_type": payload.get("call_type", "OUTBOUND"),
                 "ai_call_id": ctx.job.id,
                 "lead_id": payload.get("lead_id"),
                 "metadata": json.dumps(payload),
@@ -205,8 +215,25 @@ Follow these specific instructions:
             }
             
             # Push to DB via MCP
-            logger.info("Pushing call log to database via MCP...")
-            await push_to_mcp_server(log_data)
+            print(f"\n{Fore.CYAN}{Style.BRIGHT}----------------------------------------------------------------")
+            print(f"{Fore.CYAN}{Style.BRIGHT} PUSHING CALL LOG TO DATABASE VIA MCP")
+            print(f"{Fore.CYAN} Call ID: {ctx.job.id}")
+            print(f"{Fore.CYAN} Lead ID: {log_data['lead_id']}")
+            print(f"{Fore.CYAN} Duration: {duration}s")
+            print(f"{Fore.CYAN} Sentiment Score: {sentiment_score}")
+            print(f"{Fore.CYAN}{Style.BRIGHT}----------------------------------------------------------------\n")
+            
+            result = await push_to_mcp_server(log_data)
+            
+            # MCP server returns a string. If it starts with "Error", it failed.
+            if result and not str(result).startswith("Error"):
+                print(f"{Fore.GREEN}{Style.BRIGHT}✓ Database Update Successful")
+                logger.info(f"MCP Server Response: {result}")
+            else:
+                print(f"{Fore.RED}{Style.BRIGHT}✗ Database Update Failed")
+                print(f"{Fore.RED} Reason: {result}")
+                logger.error(f"Database insertion failed: {result}")
+                
             logger.info("Session closed and data pushed to DB.")
 
         asyncio.create_task(finalize())

@@ -18,6 +18,7 @@ Requires-Dist: python-dotenv
 Requires-Dist: torch
 Requires-Dist: mcp[cli]
 Requires-Dist: asyncpg
+Requires-Dist: colorama>=0.4.6
 
 # LKT Workspace
 
