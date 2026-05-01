@@ -36,5 +36,8 @@ COPY --from=build --chown=appuser:appuser /app /app
 WORKDIR /app
 USER appuser
 
+# Download required models so they are cached in the image
+RUN uv run python -m mantra.agent download-files
+
 # Run the Agent by default
 CMD ["uv", "run", "python", "-m", "mantra.agent", "start"]

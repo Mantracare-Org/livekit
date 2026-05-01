@@ -122,10 +122,10 @@ class SessionRecorder:
                         f.write(text)
             
             logger.info(f"Saved transcript to {output_path}")
-            return json.dumps(structured_transcript)
+            return structured_transcript
         except Exception as e:
             logger.error(f"Error saving transcript: {e}")
-            return "[]"
+            return []
 
     async def generate_and_save_summary(self, llm_engine: openai.LLM, history: list):
         """Use the LLM to generate a summary based on the history and save it."""
@@ -148,6 +148,9 @@ Only write what was expressed.
 ADDITIONAL DATA (STRICT):
 Sentiment Score: [A number between 0.0 and 1.0, where 1.0 is extremely positive/calm and 0.0 is extremely negative/anxious]
 Next Call Date: [YYYY-MM-DD HH:MM:SS format if a follow-up was agreed, otherwise "None"]
+Appointment Date & Time: [Extracted appointment date and time from the conversation, otherwise "None"]
+Doctor: [Extracted doctor name from the conversation, otherwise "None"]
+Hospital Location: [Extracted hospital location from the conversation, otherwise "None"]
 
 Give me the general summary of the conversation and after that the structured internal summary.
 TRANSCRIPT:
@@ -187,9 +190,14 @@ TRANSCRIPT:
 
     @staticmethod
     def parse_summary_data(summary_text: str):
-        """Extract sentiment score and next call date from the generated summary."""
+        """Extract sentiment score, next call date, and custom fields from the generated summary."""
         sentiment_score = 0.5  # Default neutral
         next_call_on = None
+        custom_fields = {
+            "appointment_date_time": "",
+            "doctor": "",
+            "hospital_location": ""
+        }
         
         try:
             for line in summary_text.split("\n"):
@@ -211,10 +219,28 @@ TRANSCRIPT:
                         clean_date = date_str.strip().strip("*-• ").strip()
                         if clean_date and clean_date.lower() not in ["none", "n/a", "null", "na", "not applicable", "not specified"] and len(clean_date) > 5:
                             next_call_on = clean_date
+                elif "Appointment Date & Time:" in line:
+                    parts = line.split(":", 1)
+                    if len(parts) > 1:
+                        val = parts[1].strip().strip("*-• \"'")
+                        if val.lower() not in ["none", "n/a", "null", "na", "", "not applicable", "not specified"]:
+                            custom_fields["appointment_date_time"] = val
+                elif "Doctor:" in line:
+                    parts = line.split(":", 1)
+                    if len(parts) > 1:
+                        val = parts[1].strip().strip("*-• \"'")
+                        if val.lower() not in ["none", "n/a", "null", "na", "", "not applicable", "not specified"]:
+                            custom_fields["doctor"] = val
+                elif "Hospital Location:" in line:
+                    parts = line.split(":", 1)
+                    if len(parts) > 1:
+                        val = parts[1].strip().strip("*-• \"'")
+                        if val.lower() not in ["none", "n/a", "null", "na", "", "not applicable", "not specified"]:
+                            custom_fields["hospital_location"] = val
         except Exception as e:
             logger.error(f"Error parsing summary data: {e}")
             
-        return sentiment_score, next_call_on
+        return sentiment_score, next_call_on, custom_fields
 
 async def push_to_mcp_server(log_data: dict):
     """Connect to the MCP server and push call log data."""

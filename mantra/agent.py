@@ -193,48 +193,59 @@ Follow these specific instructions:
                 payload = {}
                 
             # Parse additional data from summary
-            sentiment_score, next_call_on = SessionRecorder.parse_summary_data(summary_text)
+            sentiment_score, next_call_on, parsed_custom_fields = SessionRecorder.parse_summary_data(summary_text)
             
-            log_data = {
-                "org_id": payload.get("org_id"),
-                "process_id": payload.get("process_id"),
-                "stage_id": payload.get("stage_id"),
-                "call_transcript": transcript_text,
-                "recording_url": recording_path,
-                "call_duration_seconds": duration,
-                "ai_summary": summary_text,
-                "sentiment_score": sentiment_score,
-                "created_at": datetime.datetime.now().isoformat(),
-                "next_call_on": next_call_on,
-                "call_status": "Completed", # Match user example case
-                "call_type": payload.get("call_type", "OUTBOUND"),
-                "ai_call_id": ctx.job.id,
-                "lead_id": payload.get("lead_id"),
-                "metadata": json.dumps(payload),
-                "updated_at": datetime.datetime.now().isoformat()
+            # Combine payload's client_custom_fields with parsed ones
+            client_custom_fields = payload.get("client_custom_fields", {})
+            for k, v in parsed_custom_fields.items():
+                if v:  # Only update if the parsed value is not empty
+                    client_custom_fields[k] = v
+            
+            # Determine call status based on duration and participants
+            call_status = "Completed"
+            if not list(ctx.room.remote_participants.values()):
+                call_status = "Unanswered"
+            elif duration < 10:
+                call_status = "Incomplete"
+            
+            # Prepare webhook payload
+            webhook_payload = {
+                "event": "CALL_DATA_UPDATE",
+                "data": {
+                    "client_id": payload.get("lead_id"),
+                    "call_id": payload.get("call_id"),
+                    "call_status": call_status,
+                    "call_transcript": transcript_text,
+                    "ai_summary": summary_text,
+                    "recording_url": recording_path,
+                    "call_duration_seconds": duration,
+                    "next_call_on": next_call_on,
+                    "ai_call_id": ctx.job.id,
+                    "new_stage_id": payload.get("stage_id"),
+                    "process_id": payload.get("process_id"),
+                    "notes": "",
+                    "metadata": payload.get("metadata", {}),
+                    "client_custom_fields": client_custom_fields,
+                    "call_custom_fields": payload.get("call_custom_fields", {}),
+                    "url": ""
+                }
             }
             
-            # Push to DB via MCP
+            # Save the webhook payload locally
+            webhook_path = os.path.join(recording_dir, "webhook_payload.json")
+            with open(webhook_path, "w", encoding="utf-8") as f:
+                json.dump(webhook_payload, f, indent=4, ensure_ascii=False)
+                
             print(f"\n{Fore.CYAN}{Style.BRIGHT}----------------------------------------------------------------")
-            print(f"{Fore.CYAN}{Style.BRIGHT} PUSHING CALL LOG TO DATABASE VIA MCP")
+            print(f"{Fore.CYAN}{Style.BRIGHT} GENERATED WEBHOOK PAYLOAD LOCALLY")
             print(f"{Fore.CYAN} Call ID: {ctx.job.id}")
-            print(f"{Fore.CYAN} Lead ID: {log_data['lead_id']}")
+            print(f"{Fore.CYAN} Lead ID: {webhook_payload['data']['client_id']}")
+            print(f"{Fore.CYAN} Status: {call_status}")
             print(f"{Fore.CYAN} Duration: {duration}s")
-            print(f"{Fore.CYAN} Sentiment Score: {sentiment_score}")
+            print(f"{Fore.CYAN} Payload saved to: {webhook_path}")
             print(f"{Fore.CYAN}{Style.BRIGHT}----------------------------------------------------------------\n")
             
-            result = await push_to_mcp_server(log_data)
-            
-            # MCP server returns a string. If it starts with "Error", it failed.
-            if result and not str(result).startswith("Error"):
-                print(f"{Fore.GREEN}{Style.BRIGHT}✓ Database Update Successful")
-                logger.info(f"MCP Server Response: {result}")
-            else:
-                print(f"{Fore.RED}{Style.BRIGHT}✗ Database Update Failed")
-                print(f"{Fore.RED} Reason: {result}")
-                logger.error(f"Database insertion failed: {result}")
-                
-            logger.info("Session closed and data pushed to DB.")
+            logger.info("Session closed and webhook payload generated.")
 
         asyncio.create_task(finalize())
 
