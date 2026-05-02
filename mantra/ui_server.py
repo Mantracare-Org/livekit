@@ -108,17 +108,18 @@ async def dispatch_test(request: Request):
     })
 
 
-@app.post("/webhook/{event_name}")
-async def create_call_webhook(event_name: str, request: Request):
+@app.post("/api/v1/webhooks/telephony")
+async def handle_outbound_call_webhook(request: Request):
     """
-    Webhook to trigger an agent dispatch for a telephony call.
-    Expects a JSON payload with call context.
+    Webhook handler to process telephony events and trigger outbound agent dispatch.
+    Expects a JSON payload containing the call context.
     """
     payload = await request.json()
 
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
     
+    event_name = payload.get("event_name", "telephony_dispatch")
     logger.info(f"Webhook received call request for event {event_name}: {json.dumps(payload, indent=2)}")
     
     # Use call_id from payload if available, otherwise use timestamp
