@@ -71,7 +71,7 @@ CORE BEHAVIOR:
 - Do NOT use markdown, bullet points, or special characters.
 - If the user pauses, wait patiently for them to finish.
 - ACTIVELY LISTEN: If the user asks a question (e.g., about directions, a bus stand, or any other detail), address it directly and helpfully BEFORE returning to the main topic. Never ignore the user's questions or blindly repeat your script.
-- RETAIN CONTEXT: Remember the user's previous answers. Do not repeatedly ask about the appointment if they are asking something else.
+- RETAIN CONTEXT & AVOID REPETITION: Remember the user's previous answers. Do NOT repeatedly ask the same questions. If they say no or want to focus on something else, acknowledge it and move on. DO NOT be pushy.
 
 Follow these specific instructions:
 """
@@ -80,6 +80,23 @@ Follow these specific instructions:
     if ctx.job.metadata:
         try:
             payload = json.loads(ctx.job.metadata)
+            
+            # Normalize client_custom_fileds to client_custom_fields
+            if "client_custom_fileds" in payload:
+                ccf = payload.pop("client_custom_fileds")
+                if isinstance(ccf, str):
+                    try:
+                        ccf = json.loads(ccf)
+                    except Exception:
+                        pass
+                payload["client_custom_fields"] = ccf
+            elif "client_custom_fields" in payload:
+                ccf = payload["client_custom_fields"]
+                if isinstance(ccf, str):
+                    try:
+                        payload["client_custom_fields"] = json.loads(ccf)
+                    except Exception:
+                        pass
             
             # 1. Handle main prompt
             if "prompt" in payload:
@@ -112,6 +129,12 @@ Follow these specific instructions:
             
             if context_body:
                 initial_instructions += context_header + context_body
+                
+            # Add an overriding rule at the very end so it takes precedence over the backend prompt
+            initial_instructions += "\n\n*** CRITICAL OVERRIDING RULES ***\n"
+            initial_instructions += "1. NEVER repeat the same question twice. If the user dodges the question or asks a counter-question, answer them and DO NOT repeat your previous question.\n"
+            initial_instructions += "2. DO NOT push for an appointment if the user hasn't explicitly agreed or if they are asking about other things. Let the conversation flow naturally.\n"
+            initial_instructions += "3. Answer user's questions DIRECTLY without appending a sales pitch or appointment request at the end of every turn.\n"
             
             logger.info(f"Loaded full context for {client_name}")
         except Exception as e:
@@ -128,7 +151,7 @@ Follow these specific instructions:
             interruption={
                 "mode": "adaptive",
                 "resume_false_interruption": True,
-                "false_interruption_timeout": 3.0,
+                "false_interruption_timeout": 1.5,
                 "min_words": 2,
             },
         ),
@@ -143,7 +166,7 @@ Follow these specific instructions:
         tts=cartesia.TTS(
             model="sonic-3",
             voice="95d51f79-c397-46f9-b49a-23763d3eaa2d",
-            speed=1.0,
+            speed=1.05,
             language="hi"
         ),
     )
@@ -202,11 +225,9 @@ Follow these specific instructions:
                 if v:  # Only update if the parsed value is not empty
                     client_custom_fields[k] = v
             
-            # Determine call status based on duration and participants
+            # Determine call status based on duration
             call_status = "Completed"
-            if not list(ctx.room.remote_participants.values()):
-                call_status = "Unanswered"
-            elif duration < 10:
+            if duration < 10:
                 call_status = "Incomplete"
             
             # Prepare webhook payload
