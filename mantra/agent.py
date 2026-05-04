@@ -44,7 +44,7 @@ async def entrypoint(ctx: JobContext):
 
     # Initialize recording
     session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    recording_dir = f"recordings/session_{session_id}_{ctx.room.name}"
+    recording_dir = f"/tmp/recordings/session_{session_id}_{ctx.room.name}"
     os.makedirs(recording_dir, exist_ok=True)
     logger.info(f"Recording session to {recording_dir}")
     

@@ -34,6 +34,7 @@ RUN adduser \
 
 COPY --from=build --chown=appuser:appuser /app /app
 WORKDIR /app
+RUN chown appuser:appuser /app
 USER appuser
 
 # Download required models so they are cached in the image
