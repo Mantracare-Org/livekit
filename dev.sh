@@ -12,11 +12,11 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 echo "Starting LiveKit Agent (dev mode)..."
-uv run python agent.py dev &
+uv run python -m mantra.agent dev &
 AGENT_PID=$!
 
 echo "Starting UI Server (FastAPI)..."
-uv run uvicorn ui_server:app --host 0.0.0.0 --port 5000 &
+uv run python -m mantra.ui_server &
 UI_PID=$!
 
 # Get local IP address (works on Linux/macOS)
@@ -28,8 +28,9 @@ fi
 echo ""
 echo "----------------------------------------------------------------"
 echo " Everything is running!"
-echo " Webhook URL: http://$LOCAL_IP:5000/webhook/<event_name>"
-echo "To trigger a call from another system, send a POST request to this URL. For <event_name> use anything"
+echo " Webhook URL: http://$LOCAL_IP:5000/api/v1/webhooks/telephony"
+echo "To trigger a call from another system, send a POST request to this URL."
+echo "Make sure to include \"event_name\" in your JSON payload."
 echo "----------------------------------------------------------------"
 echo ""
 echo "Press Ctrl+C to stop both."

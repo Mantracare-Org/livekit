@@ -17,11 +17,19 @@ dependencies = [
     "uvicorn[standard]>=0.34.0",
     "python-dotenv",
     "torch",
+    "mcp[cli]",
+    "asyncpg",
+    "colorama>=0.4.6",
 ]
 
 [tool.setuptools.packages.find]
-include = ["api*"]
-exclude = ["static*", "templates*", "massist*"]
+where = ["."]
+include = ["mantra*"]
+exclude = ["static*", "recordings*", "massist*"]
+
+[project.scripts]
+mantra-agent = "mantra.agent:run_agent"
+mantra-ui = "mantra.ui_server:main"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

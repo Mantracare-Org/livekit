@@ -2,13 +2,11 @@ import os
 import logging
 import json
 import time
-import asyncio
 import traceback
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 from livekit import api
 from dotenv import load_dotenv
 
@@ -16,12 +14,15 @@ from dotenv import load_dotenv
 load_dotenv(".env.local")
 
 app = FastAPI()
-logger = logging.getLogger("ui_server")
+logger = logging.getLogger("mantra.ui_server")
 logger.setLevel(logging.INFO)
 
+# Get the directory of the current file
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+
 # Mount static files
-# We will serve index.html separately so we can mount static for assets
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Persistent LiveKit API client — created once, reused across requests
 lk_client: api.LiveKitAPI = None
@@ -57,7 +58,7 @@ async def shutdown_event():
 @app.get("/")
 async def index():
     """Serve the main UI."""
-    return FileResponse(os.path.join("static", "index.html"))
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
 @app.post("/dispatch-test")
 async def dispatch_test(request: Request):
@@ -107,17 +108,18 @@ async def dispatch_test(request: Request):
     })
 
 
-@app.post("/webhook/{event_name}")
-async def create_call_webhook(event_name: str, request: Request):
+@app.post("/api/v1/webhooks/telephony")
+async def handle_outbound_call_webhook(request: Request):
     """
-    Webhook to trigger an agent dispatch for a telephony call.
-    Expects a JSON payload with call context.
+    Webhook handler to process telephony events and trigger outbound agent dispatch.
+    Expects a JSON payload containing the call context.
     """
     payload = await request.json()
 
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
     
+    event_name = payload.get("event_name", "telephony_dispatch")
     logger.info(f"Webhook received call request for event {event_name}: {json.dumps(payload, indent=2)}")
     
     # Use call_id from payload if available, otherwise use timestamp
@@ -200,7 +202,10 @@ async def get_config():
         "url": os.getenv("LIVEKIT_URL")
     })
 
-if __name__ == "__main__":
+def main():
     import uvicorn
     print("UI Server starting on http://0.0.0.0:5000")
-    uvicorn.run("ui_server:app", host="0.0.0.0", port=5000, reload=True)
+    uvicorn.run("mantra.ui_server:app", host="0.0.0.0", port=5000, reload=True)
+
+if __name__ == "__main__":
+    main()

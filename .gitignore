@@ -56,3 +56,6 @@ Thumbs.db
 .python-version
 livekit_agent.egg-info/
 PRD.md
+
+#Test Datas 
+recordings/
