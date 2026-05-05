@@ -1,0 +1,16 @@
+.venv
+__pycache__
+*.pyc
+.env
+.env.*
+!.env.example
+.git
+.gitignore
+recordings
+static/recordings
+node_modules
+.python-version
+Dockerfile
+.dockerignore
+# Exclude model cache if it exists locally to keep build context small
+.cache
