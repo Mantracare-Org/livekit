@@ -31,6 +31,14 @@ exclude = ["static*", "recordings*", "massist*"]
 mantra-agent = "mantra.agent:run_agent"
 mantra-ui = "mantra.ui_server:main"
 
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"

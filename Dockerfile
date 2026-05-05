@@ -25,6 +25,10 @@ FROM base
 
 ENV UV_COMPILE_BYTECODE=1
 ENV UV_SYSTEM_PYTHON=1
+# Set model cache directories to be inside /app
+ENV HF_HOME=/app/.cache/huggingface
+ENV TORCH_HOME=/app/.cache/torch
+ENV SILERO_VAD_CACHE=/app/.cache/silero
 
 ARG UID=10001
 RUN adduser \
@@ -35,21 +39,22 @@ RUN adduser \
     --uid "${UID}" \
     appuser
 
-# Copy the application from the build stage
+# Copy the application and virtualenv from the build stage
 COPY --from=build --chown=appuser:appuser /app /app
 WORKDIR /app
 
+# Ensure cache directory exists and is writable by appuser
+RUN mkdir -p /app/.cache && chown -R appuser:appuser /app/.cache
+
+USER appuser
+
 # Download required models so they are cached in the image
-# We do this as root to avoid permission issues with the cache dir, 
-# then we ensure everything is owned by appuser.
-RUN uv run python -m mantra.agent download-files && \
-    chown -R appuser:appuser /app
+# We run this as appuser so the cache is correctly owned and located
+RUN uv run python -m mantra.agent download-files
 
 # Copy and setup entrypoint
 COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
-
-USER appuser
 
 # Use entrypoint to switch between agent and ui
 ENTRYPOINT ["/app/entrypoint.sh"]
