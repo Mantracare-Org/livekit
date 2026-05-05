@@ -23,6 +23,9 @@ COPY . .
 # --- Production stage ---
 FROM base
 
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_SYSTEM_PYTHON=1
+
 ARG UID=10001
 RUN adduser \
     --disabled-password \
@@ -32,12 +35,22 @@ RUN adduser \
     --uid "${UID}" \
     appuser
 
+# Copy the application from the build stage
 COPY --from=build --chown=appuser:appuser /app /app
 WORKDIR /app
-USER appuser
 
 # Download required models so they are cached in the image
-RUN uv run python -m mantra.agent download-files
+# We do this as root to avoid permission issues with the cache dir, 
+# then we ensure everything is owned by appuser.
+RUN uv run python -m mantra.agent download-files && \
+    chown -R appuser:appuser /app
 
-# Run the Agent by default
-CMD ["uv", "run", "python", "-m", "mantra.agent", "start"]
+# Copy and setup entrypoint
+COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+USER appuser
+
+# Use entrypoint to switch between agent and ui
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["agent"]
