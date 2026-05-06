@@ -27,6 +27,7 @@ ENV UV_COMPILE_BYTECODE=1
 ENV UV_SYSTEM_PYTHON=1
 # Set model cache directories to be inside /app
 ENV HF_HOME=/app/.cache/huggingface
+ENV HF_HUB_CACHE=/app/.cache/huggingface
 ENV TORCH_HOME=/app/.cache/torch
 ENV SILERO_VAD_CACHE=/app/.cache/silero
 
