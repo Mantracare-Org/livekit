@@ -204,8 +204,8 @@ async def get_config():
 
 def main():
     import uvicorn
-    print("UI Server starting on http://0.0.0.0:5000")
-    uvicorn.run("mantra.ui_server:app", host="0.0.0.0", port=5000, reload=True)
+    logger.info("UI Server starting on http://0.0.0.0:8081")
+    uvicorn.run("mantra.ui_server:app", host="0.0.0.0", port=8081, reload=True)
 
 if __name__ == "__main__":
     main()

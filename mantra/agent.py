@@ -3,11 +3,8 @@ import json
 import asyncio
 import os
 import datetime
-from colorama import Fore, Style, init
+import sys
 from dotenv import load_dotenv
-
-# Initialize colorama
-init(autoreset=True)
 
 from livekit import rtc
 from livekit.agents import (
@@ -22,8 +19,8 @@ from livekit.agents import TurnHandlingOptions
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from livekit.plugins import assemblyai, openai, cartesia, silero, deepgram
 
-# Import our custom recorder and MCP helper
-from mantra.utils import SessionRecorder, push_to_mcp_server
+# Import our production helpers
+from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend
 
 # Load environment variables
 load_dotenv()          # Load .env (OpenAI, etc.)
@@ -42,13 +39,11 @@ async def entrypoint(ctx: JobContext):
     logger.info(f"Job ID: {ctx.job.id}")
     logger.info(f"Metadata: {ctx.job.metadata}")
 
-    # Initialize recording
+    # Session ID for S3 key naming
     session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    recording_dir = f"recordings/session_{session_id}_{ctx.room.name}"
-    os.makedirs(recording_dir, exist_ok=True)
-    logger.info(f"Recording session to {recording_dir}")
-    
-    recorder = SessionRecorder(recording_dir)
+
+    # Fully in-memory recorder — no disk I/O
+    recorder = SessionRecorder()
 
     @ctx.room.on("track_subscribed")
     def on_track_subscribed(track: rtc.Track, publication: rtc.TrackPublication, participant: rtc.RemoteParticipant):
@@ -191,36 +186,45 @@ Follow these specific instructions:
     
     await session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
     
-    # Wait for session to end, then save everything
+    # Wait for session to end, then finalize everything
     @session.on("close")
     def on_session_close():
         async def finalize():
-            recording_path = recorder.save_combined()
+            logger.info("Session closed — starting post-call processing...")
+
+            # 1. Build recording WAV in memory
+            wav_bytes = recorder.get_combined_wav_bytes()
             
-            # Save transcript and get text
+            # 2. Upload recording to S3
+            recording_url = ""
+            if wav_bytes:
+                s3_key = f"recordings/{session_id}_{ctx.room.name}.wav"
+                recording_url = upload_to_s3(wav_bytes, s3_key) or ""
+            
+            # 3. Build transcript in memory
             history = session.history.messages()
-            transcript_text = recorder.save_transcript(history)
+            transcript_data = SessionRecorder.build_transcript(history)
             
-            # Generate summary and get text
-            summary_text = await recorder.generate_and_save_summary(session.llm, history)
+            # 4. Generate summary in memory
+            summary_text = await SessionRecorder.generate_summary(session.llm, history)
             
-            # Calculate duration
+            # 5. Calculate duration
             duration = 0
             if recorder.start_time and recorder.end_time:
                 duration = int((recorder.end_time - recorder.start_time).total_seconds())
             
-            # Prepare data for DB
+            # 6. Parse call metadata
             try:
-                payload = json.loads(ctx.job.metadata) if ctx.job.metadata else {}
+                call_payload = json.loads(ctx.job.metadata) if ctx.job.metadata else {}
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse metadata: {e}")
-                payload = {}
+                call_payload = {}
                 
-            # Parse additional data from summary
+            # 7. Parse additional data from summary
             sentiment_score, next_call_on, parsed_custom_fields = SessionRecorder.parse_summary_data(summary_text)
             
             # Combine payload's client_custom_fields with parsed ones
-            client_custom_fields = payload.get("client_custom_fields", {})
+            client_custom_fields = call_payload.get("client_custom_fields", {})
             for k, v in parsed_custom_fields.items():
                 if v:  # Only update if the parsed value is not empty
                     client_custom_fields[k] = v
@@ -230,49 +234,68 @@ Follow these specific instructions:
             if duration < 10:
                 call_status = "Incomplete"
             
-            # Prepare webhook payload
+            # 8. Build webhook payload
             webhook_payload = {
                 "event": "CALL_DATA_UPDATE",
                 "data": {
-                    "client_id": payload.get("lead_id"),
-                    "call_id": payload.get("call_id"),
+                    "client_id": call_payload.get("lead_id"),
+                    "call_id": call_payload.get("call_id"),
                     "call_status": call_status,
-                    "call_transcript": transcript_text,
+                    "call_transcript": transcript_data,
                     "ai_summary": summary_text,
-                    "recording_url": recording_path,
+                    "recording_url": recording_url,
                     "call_duration_seconds": duration,
                     "next_call_on": next_call_on,
                     "ai_call_id": ctx.job.id,
-                    "new_stage_id": payload.get("stage_id"),
-                    "process_id": payload.get("process_id"),
+                    "new_stage_id": call_payload.get("stage_id"),
+                    "process_id": call_payload.get("process_id"),
                     "notes": "",
-                    "metadata": payload.get("metadata", {}),
+                    "metadata": call_payload.get("metadata", {}),
                     "client_custom_fields": client_custom_fields,
-                    "call_custom_fields": payload.get("call_custom_fields", {}),
+                    "call_custom_fields": call_payload.get("call_custom_fields", {}),
                     "url": ""
                 }
             }
             
-            # Save the webhook payload locally
-            webhook_path = os.path.join(recording_dir, "webhook_payload.json")
-            with open(webhook_path, "w", encoding="utf-8") as f:
-                json.dump(webhook_payload, f, indent=4, ensure_ascii=False)
-                
-            print(f"\n{Fore.CYAN}{Style.BRIGHT}----------------------------------------------------------------")
-            print(f"{Fore.CYAN}{Style.BRIGHT} GENERATED WEBHOOK PAYLOAD LOCALLY")
-            print(f"{Fore.CYAN} Call ID: {ctx.job.id}")
-            print(f"{Fore.CYAN} Lead ID: {webhook_payload['data']['client_id']}")
-            print(f"{Fore.CYAN} Status: {call_status}")
-            print(f"{Fore.CYAN} Duration: {duration}s")
-            print(f"{Fore.CYAN} Payload saved to: {webhook_path}")
-            print(f"{Fore.CYAN}{Style.BRIGHT}----------------------------------------------------------------\n")
+            # 9. Send to MantraAssist backend
+            delivered = await send_to_backend(webhook_payload)
             
-            logger.info("Session closed and webhook payload generated.")
+            logger.info(
+                f"Post-call processing complete | "
+                f"Call ID: {ctx.job.id} | "
+                f"Lead: {webhook_payload['data']['client_id']} | "
+                f"Status: {call_status} | "
+                f"Duration: {duration}s | "
+                f"S3: {'✓' if recording_url else '✗'} | "
+                f"Backend: {'✓' if delivered else '✗'}"
+            )
 
         asyncio.create_task(finalize())
+
+def download_files():
+    """Pre-download required models for production caching."""
+    logger.info("Pre-downloading Silero VAD model...")
+    try:
+        silero.VAD.load()
+    except Exception as e:
+        logger.error(f"Failed to pre-download Silero VAD: {e}")
+
+    logger.info("Pre-downloading Multilingual Turn Detector model (best effort)...")
+    try:
+        # This might fail due to lack of job context, but we try anyway
+        # to trigger any lazy-loading of models if possible.
+        MultilingualModel()
+    except Exception as e:
+        # We expect a RuntimeError: no job context found
+        logger.info(f"Note: MultilingualModel pre-download skipped or failed (this is usually fine): {e}")
+
+    logger.info("Pre-downloading completed.")
 
 def run_agent():
     cli.run_app(server)
 
 if __name__ == "__main__":
-    run_agent()
+    if len(sys.argv) > 1 and sys.argv[1] == "download-files":
+        download_files()
+    else:
+        run_agent()
