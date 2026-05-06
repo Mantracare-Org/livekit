@@ -28,7 +28,7 @@ fi
 echo ""
 echo "----------------------------------------------------------------"
 echo " Everything is running!"
-echo " Webhook URL: http://$LOCAL_IP:5000/api/v1/webhooks/telephony"
+echo " Webhook URL: http://$LOCAL_IP:8081/api/v1/webhooks/telephony"
 echo "To trigger a call from another system, send a POST request to this URL."
 echo "Make sure to include \"event_name\" in your JSON payload."
 echo "----------------------------------------------------------------"

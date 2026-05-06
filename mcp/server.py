@@ -5,9 +5,12 @@ from mcp.server.fastmcp import FastMCP
 import asyncpg
 import datetime
 from dotenv import load_dotenv
+import logging
 
 # Load environment variables
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 # Initialize FastMCP server
 mcp = FastMCP("Postgres-Database-Server")
@@ -31,7 +34,7 @@ async def get_db_connection():
         )
         return conn
     except Exception as e:
-        print(f"Error connecting to database: {e}")
+        logger.error(f"Error connecting to database: {e}")
         return None
 
 @mcp.tool()
@@ -147,7 +150,7 @@ async def insert_call_log(log_data: dict) -> str:
         except asyncpg.exceptions.ForeignKeyViolationError as fk_err:
             # If lead_id caused the violation, retry without it
             if "lead_id" in str(fk_err) and "lead_id" in log_data:
-                print(f"Foreign Key violation on lead_id={log_data['lead_id']}. Retrying without lead_id...")
+                logger.info(f"Foreign Key violation on lead_id={log_data['lead_id']}. Retrying without lead_id...")
                 # Find and remove lead_id from keys and values by index
                 keys_list = list(log_data.keys())
                 idx = keys_list.index("lead_id")
