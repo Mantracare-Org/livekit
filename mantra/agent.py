@@ -272,30 +272,8 @@ Follow these specific instructions:
 
         asyncio.create_task(finalize())
 
-def download_files():
-    """Pre-download required models for production caching."""
-    logger.info("Pre-downloading Silero VAD model...")
-    try:
-        silero.VAD.load()
-    except Exception as e:
-        logger.error(f"Failed to pre-download Silero VAD: {e}")
-
-    logger.info("Pre-downloading Multilingual Turn Detector model (best effort)...")
-    try:
-        # This might fail due to lack of job context, but we try anyway
-        # to trigger any lazy-loading of models if possible.
-        MultilingualModel()
-    except Exception as e:
-        # We expect a RuntimeError: no job context found
-        logger.info(f"Note: MultilingualModel pre-download skipped or failed (this is usually fine): {e}")
-
-    logger.info("Pre-downloading completed.")
-
 def run_agent():
     cli.run_app(server)
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "download-files":
-        download_files()
-    else:
-        run_agent()
+    run_agent()
