@@ -76,12 +76,21 @@ async def send_to_backend(payload: dict, max_retries: int = 3) -> bool:
     
     # 1. Prepare signing (HMAC-SHA256)
     timestamp = str(int(time.time()))
-    payload_json = json.dumps(payload, separators=(',', ':'))
-    data_to_sign = f"{payload_json}.{timestamp}"
+    
+    # Ensure payload matches the Postman 'raw' body logic
+    if not payload:
+        payload_str = '{}'
+    else:
+        # Use separators to get a compact string without extra spaces
+        payload_str = json.dumps(payload, separators=(',', ':'))
+    
+    # Concatenate payload and timestamp with a dot as per Postman logic
+    data_to_sign = f"{payload_str}.{timestamp}"
     
     headers = {
         "Content-Type": "application/json",
-        "x-mantra-timestamp": timestamp,
+        "x-timestamp": timestamp,
+        "x-source": "n8n",
     }
     
     if webhook_secret:
@@ -90,7 +99,7 @@ async def send_to_backend(payload: dict, max_retries: int = 3) -> bool:
             data_to_sign.encode('utf-8'),
             hashlib.sha256
         ).hexdigest()
-        headers["x-mantra-signature"] = signature
+        headers["x-signature"] = signature
         logger.info(f"Signing request with HMAC (timestamp: {timestamp})")
     else:
         logger.warning("MANTRAASSIST_WEBHOOK_SECRET not set — sending unsigned request")
@@ -100,7 +109,8 @@ async def send_to_backend(payload: dict, max_retries: int = 3) -> bool:
     for attempt in range(1, max_retries + 1):
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(url, json=payload, headers=headers)
+                # Send the manually stringified payload_str as 'content' to ensure signature match
+                resp = await client.post(url, content=payload_str, headers=headers)
                 resp.raise_for_status()
                 logger.info(f"Backend webhook delivered successfully (HTTP {resp.status_code})")
                 return True
@@ -209,11 +219,8 @@ class SessionRecorder:
         return wav_bytes
 
     @staticmethod
-    def build_transcript(history: list) -> list[dict]:
-        """Build a structured transcript from the conversation history.
-        
-        Returns a list like [{"bot": "Hello"}, {"user": "Hi"}, ...].
-        """
+    def build_transcript(history: list) -> str:
+        """Build a structured transcript and return it as a stringified JSON array."""
         structured: list[dict] = []
         try:
             for msg in history:
@@ -235,7 +242,8 @@ class SessionRecorder:
         except Exception as e:
             logger.error(f"Error building transcript: {e}")
 
-        return structured
+        # Return as a stringified JSON array
+        return json.dumps(structured)
 
     @staticmethod
     async def generate_summary(llm_engine: openai.LLM, history: list) -> str:
@@ -284,8 +292,19 @@ TRANSCRIPT:
             ]
             stream = llm_engine.chat(chat_ctx=llm.ChatContext(items=messages))
             response = await stream.collect()
-            logger.info("Summary generated successfully")
-            return response.text
+            
+            # Clean special characters and markdown formatting
+            import re
+            # Remove markdown chars like *, #, _, ~, `, [, ]
+            clean_text = re.sub(r'[*#_~`\[\]]', '', response.text)
+            # Keep standard ASCII only
+            clean_text = clean_text.encode('ascii', 'ignore').decode('ascii')
+            # Normalize internal spacing but PRESERVE newlines for parsing
+            lines = [" ".join(line.split()) for line in clean_text.splitlines() if line.strip()]
+            clean_text = "\n".join(lines)
+            
+            logger.info("Summary generated successfully and cleaned (preserving structure)")
+            return clean_text
         except Exception as e:
             logger.error(f"Error generating summary: {e}")
             return ""

@@ -60,6 +60,11 @@ async def index():
     """Serve the main UI."""
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
+@app.get("/health")
+async def health():
+    """Simple health check."""
+    return {"status": "ok", "service": "ui_server"}
+
 @app.post("/dispatch-test")
 async def dispatch_test(request: Request):
     """
@@ -204,8 +209,9 @@ async def get_config():
 
 def main():
     import uvicorn
-    logger.info("UI Server starting on http://0.0.0.0:8081")
-    uvicorn.run("mantra.ui_server:app", host="0.0.0.0", port=8081, reload=True)
+    port = int(os.getenv("PORT", "8081"))
+    logger.info(f"UI Server starting on http://0.0.0.0:{port}")
+    uvicorn.run("mantra.ui_server:app", host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
     main()
