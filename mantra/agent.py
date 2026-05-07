@@ -4,6 +4,17 @@ import asyncio
 import os
 import datetime
 import sys
+_is_inference = os.getenv("LIVEKIT_AGENTS_INFERENCE") == "1"
+_proc_type = "Inference Subprocess" if _is_inference else "Main Worker"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format=f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s",
+    stream=sys.stdout
+)
+logger = logging.getLogger("mantra.agent")
+logger.info("Initializing process...")
+
 from dotenv import load_dotenv
 
 from livekit import rtc
@@ -25,8 +36,6 @@ from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend
 # Load environment variables
 load_dotenv()          # Load .env (OpenAI, etc.)
 load_dotenv(".env.local", override=True)  # Load .env.local (LiveKit, etc.) and override if needed
-
-logger = logging.getLogger("mantra.agent")
 
 server = AgentServer()
 
@@ -273,7 +282,15 @@ Follow these specific instructions:
         asyncio.create_task(finalize())
 
 def run_agent():
-    cli.run_app(server)
+    _is_start_cmd = "start" in sys.argv
+    if _is_start_cmd:
+        logger.info("Mantra Agent Server is starting...")
+    
+    try:
+        cli.run_app(server)
+    except Exception as e:
+        logger.error(f"Failed to run agent server: {e}", exc_info=True)
+        raise
 
 if __name__ == "__main__":
     run_agent()
