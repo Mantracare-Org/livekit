@@ -44,6 +44,9 @@ RUN adduser \
 RUN apt-get update && apt-get install -y \
     libgomp1 \
     libglib2.0-0 \
+    libasound2 \
+    libatomic1 \
+    libportaudio2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the application and virtualenv from the build stage
