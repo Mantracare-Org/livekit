@@ -201,14 +201,26 @@ Follow these specific instructions:
         async def finalize():
             logger.info("Session closed — starting post-call processing...")
 
-            # 1. Build recording WAV in memory
-            wav_bytes = recorder.get_combined_wav_bytes()
+            # 0. Pre-load call metadata for predictable S3 naming and webhook
+            try:
+                call_payload = json.loads(ctx.job.metadata) if ctx.job.metadata else {}
+            except Exception as e:
+                logger.error(f"Failed to parse metadata in finalize: {e}")
+                call_payload = {}
+
+            # 1. Build recording MP3 in memory
+            mp3_bytes = recorder.get_combined_mp3_bytes()
             
             # 2. Upload recording to S3
             recording_url = ""
-            if wav_bytes:
-                s3_key = f"recordings/{session_id}_{ctx.room.name}.wav"
-                recording_url = upload_to_s3(wav_bytes, s3_key) or ""
+            if mp3_bytes:
+                call_id = call_payload.get("call_id")
+                if call_id:
+                    s3_key = f"recordings/{call_id}.mp3"
+                else:
+                    s3_key = f"recordings/{session_id}_{ctx.room.name}.mp3"
+                
+                recording_url = upload_to_s3(mp3_bytes, s3_key) or ""
             
             # 3. Build transcript in memory
             history = session.history.messages()
@@ -222,14 +234,7 @@ Follow these specific instructions:
             if recorder.start_time and recorder.end_time:
                 duration = int((recorder.end_time - recorder.start_time).total_seconds())
             
-            # 6. Parse call metadata
-            try:
-                call_payload = json.loads(ctx.job.metadata) if ctx.job.metadata else {}
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse metadata: {e}")
-                call_payload = {}
-                
-            # 7. Parse additional data from summary
+            # 6. Parse additional data from summary
             sentiment_score, next_call_on, parsed_custom_fields = SessionRecorder.parse_summary_data(summary_text)
             
             # Combine payload's client_custom_fields with parsed ones

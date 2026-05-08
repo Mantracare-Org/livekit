@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     python3-dev \
-  && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked
@@ -47,6 +47,7 @@ RUN apt-get update && apt-get install -y \
     libasound2 \
     libatomic1 \
     libportaudio2 \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the application and virtualenv from the build stage
