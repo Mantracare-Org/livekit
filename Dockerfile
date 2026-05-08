@@ -47,6 +47,7 @@ RUN apt-get update && apt-get install -y \
     libasound2 \
     libatomic1 \
     libportaudio2 \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the application and virtualenv from the build stage
