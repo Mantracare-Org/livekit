@@ -151,15 +151,28 @@ Follow these specific instructions:
     model_name = payload.get("model", "openai").lower() if 'payload' in locals() else "openai"
 
     if model_name == "google":
-        logger.info("Using Gemini (Google) LLM")
-        llm_engine = google.LLM(model="gemini-1.5-flash")
+        google_key = os.getenv("GOOGLE_API_KEY")
+        if not google_key:
+            logger.warning("GOOGLE_API_KEY not set — falling back to OpenAI")
+            llm_engine = openai.LLM(model="gpt-4o-mini")
+        else:
+            logger.info("Using Gemini (Google) LLM")
+            llm_engine = google.LLM(
+                model="gemini-2.5-flash",
+                api_key=google_key
+            )
     elif model_name == "deepseek":
-        logger.info("Using DeepSeek LLM")
-        llm_engine = openai.LLM(
-            model="deepseek-chat",
-            api_key=os.getenv("DEEPSEEK_API_KEY"),
-            base_url="https://api.deepseek.com"
-        )
+        deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+        if not deepseek_key:
+            logger.warning("DEEPSEEK_API_KEY not set — falling back to OpenAI")
+            llm_engine = openai.LLM(model="gpt-4o-mini")
+        else:
+            logger.info("Using DeepSeek LLM")
+            llm_engine = openai.LLM(
+                model="deepseek-v4-flash",
+                api_key=deepseek_key,
+                base_url="https://api.deepseek.com"
+            )
     else:
         logger.info("Using OpenAI LLM")
         llm_engine = openai.LLM(model="gpt-4o-mini")
