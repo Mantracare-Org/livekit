@@ -8,6 +8,7 @@ dependencies = [
     "livekit-api>=1.1.0",
     "livekit-agents[silero,turn-detector]~=1.4",
     "livekit-plugins-openai",
+    "livekit-plugins-google",
     "livekit-plugins-deepgram",
     "livekit-plugins-assemblyai",
     "livekit-plugins-cartesia",

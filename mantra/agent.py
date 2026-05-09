@@ -28,7 +28,7 @@ from livekit.agents import (
 )
 from livekit.agents import TurnHandlingOptions
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
-from livekit.plugins import assemblyai, openai, cartesia, silero, deepgram
+from livekit.plugins import assemblyai, openai, google, cartesia, silero, deepgram
 
 # Import our production helpers
 from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend
@@ -144,6 +144,20 @@ Follow these specific instructions:
         except Exception as e:
             logger.error(f"Failed to parse metadata: {e}")
 
+    # 3. Select LLM based on payload
+    try:
+        payload = json.loads(ctx.job.metadata) if ctx.job.metadata else {}
+        model_name = payload.get("model", "openai").lower()
+    except:
+        model_name = "openai"
+
+    if model_name == "google":
+        logger.info("Using Gemini (Google) LLM")
+        llm_engine = google.LLM(model="gemini-2.5-flash")
+    else:
+        logger.info("Using OpenAI LLM")
+        llm_engine = openai.LLM(model="gpt-4o-mini")
+
     session = AgentSession(
         turn_handling=TurnHandlingOptions(
             turn_detection=MultilingualModel(),
@@ -165,7 +179,7 @@ Follow these specific instructions:
         ),
         # Using Hindi STT as it's better at catching Hinglish/Indian English
         stt=deepgram.STT(model="nova-3", language="hi", smart_format=True, numerals=True),
-        llm=openai.LLM(model="gpt-4o-mini"),
+        llm=llm_engine,
         # Using Hindi-Multilingual TTS to support both languages natively
         tts=cartesia.TTS(
             model="sonic-3",
