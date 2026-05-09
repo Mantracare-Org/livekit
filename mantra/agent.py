@@ -4,6 +4,7 @@ import asyncio
 import os
 import datetime
 import sys
+# LLM Selection Logic
 _is_inference = os.getenv("LIVEKIT_AGENTS_INFERENCE") == "1"
 _proc_type = "Inference Subprocess" if _is_inference else "Main Worker"
 
@@ -41,6 +42,9 @@ server = AgentServer()
 
 @server.rtc_session(agent_name="mantra-agent")
 async def entrypoint(ctx: JobContext):
+    # Plain log to verify entrypoint is reached
+    logger.info(f"Entrypoint reached for room: {ctx.room.name}")
+    
     await ctx.connect()
 
     logger.info(f"--- Starting agent session ---")
@@ -139,21 +143,23 @@ Follow these specific instructions:
             initial_instructions += "1. NEVER repeat the same question twice. If the user dodges the question or asks a counter-question, answer them and DO NOT repeat your previous question.\n"
             initial_instructions += "2. DO NOT push for an appointment if the user hasn't explicitly agreed or if they are asking about other things. Let the conversation flow naturally.\n"
             initial_instructions += "3. Answer user's questions DIRECTLY without appending a sales pitch or appointment request at the end of every turn.\n"
-            
             logger.info(f"Loaded full context for {client_name}")
         except Exception as e:
             logger.error(f"Failed to parse metadata: {e}")
 
     # 3. Select LLM based on payload
-    try:
-        payload = json.loads(ctx.job.metadata) if ctx.job.metadata else {}
-        model_name = payload.get("model", "openai").lower()
-    except:
-        model_name = "openai"
+    model_name = payload.get("model", "openai").lower() if 'payload' in locals() else "openai"
 
     if model_name == "google":
         logger.info("Using Gemini (Google) LLM")
-        llm_engine = google.LLM(model="gemini-2.5-flash")
+        llm_engine = google.LLM(model="gemini-1.5-flash")
+    elif model_name == "deepseek":
+        logger.info("Using DeepSeek LLM")
+        llm_engine = openai.LLM(
+            model="deepseek-chat",
+            api_key=os.getenv("DEEPSEEK_API_KEY"),
+            base_url="https://api.deepseek.com"
+        )
     else:
         logger.info("Using OpenAI LLM")
         llm_engine = openai.LLM(model="gpt-4o-mini")
