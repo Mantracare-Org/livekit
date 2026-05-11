@@ -4,6 +4,12 @@ import asyncio
 import os
 import datetime
 import sys
+# import colorama
+# from colorama import Fore, Style
+
+# # Initialize colorama for cross-platform colored terminal logs
+# colorama.init(autoreset=True)
+# LLM Selection Logic
 _is_inference = os.getenv("LIVEKIT_AGENTS_INFERENCE") == "1"
 _proc_type = "Inference Subprocess" if _is_inference else "Main Worker"
 
@@ -28,10 +34,21 @@ from livekit.agents import (
 )
 from livekit.agents import TurnHandlingOptions
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
-from livekit.plugins import assemblyai, openai, cartesia, silero, deepgram
+from livekit.plugins import assemblyai, openai, google, cartesia, silero, deepgram
 
 # Import our production helpers
 from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend
+
+VOICE_MAPPING = {
+    "gemma": "62ae83ad-4f6a-430b-af41-a9bede9286ca",
+    "alistair": "c8f7835e-28a3-4f0c-80d7-c1302ac62aae",
+    "sunny": "156fb8d2-335b-4950-9cb3-a2d33befec77",
+    "tyler": "820a3788-2b37-4d21-847a-b65d8a68c99a",
+    "vikas": "adf97b9d-905c-41de-9fe9-afb387116d06",
+    "camila": "bef2ba57-5c10-433b-b215-3bef35110a81",
+    "renata": "d3793b7b-4996-409c-9d59-96dd09f47717",
+    "arushi": "95d51f79-c397-46f9-b49a-23763d3eaa2d"
+}
 
 # Load environment variables
 load_dotenv()          # Load .env (OpenAI, etc.)
@@ -41,6 +58,9 @@ server = AgentServer()
 
 @server.rtc_session(agent_name="mantra-agent")
 async def entrypoint(ctx: JobContext):
+    # Plain log to verify entrypoint is reached
+    logger.info(f"Entrypoint reached for room: {ctx.room.name}")
+    
     await ctx.connect()
 
     logger.info(f"--- Starting agent session ---")
@@ -139,10 +159,62 @@ Follow these specific instructions:
             initial_instructions += "1. NEVER repeat the same question twice. If the user dodges the question or asks a counter-question, answer them and DO NOT repeat your previous question.\n"
             initial_instructions += "2. DO NOT push for an appointment if the user hasn't explicitly agreed or if they are asking about other things. Let the conversation flow naturally.\n"
             initial_instructions += "3. Answer user's questions DIRECTLY without appending a sales pitch or appointment request at the end of every turn.\n"
-            
             logger.info(f"Loaded full context for {client_name}")
         except Exception as e:
             logger.error(f"Failed to parse metadata: {e}")
+
+    # 3. Select LLM and Voice based on payload
+    if 'payload' in locals():
+        # Handle nested ai_payload if present
+        ai_p = payload.get("ai_payload", {})
+        
+        # Priority for Model: ai_payload.ai_model -> payload.model -> default "openai"
+        model_name = ai_p.get("ai_model", payload.get("model", "openai")).lower()
+        
+        # Priority for Voice: ai_payload.voice_id -> payload.voice_id -> voice_name -> voice -> default "arushi"
+        voice_input = ai_p.get("voice_id", payload.get("voice_id", payload.get("voice_name", payload.get("voice", "arushi"))))
+        voice_id = VOICE_MAPPING.get(str(voice_input).lower(), voice_input)
+        
+        # Priority for Speed: ai_payload.voice_speed -> payload.voice_speed -> default 1.05
+        voice_speed = ai_p.get("voice_speed", payload.get("voice_speed", 1.05))
+    else:
+        model_name = "openai"
+        voice_input = "arushi"
+        voice_id = VOICE_MAPPING["arushi"]
+        voice_speed = 1.05
+
+    # Safe parsing and clamping for speed (0.1 to 2.0)
+    try:
+        voice_speed = float(voice_speed)
+        voice_speed = max(0.1, min(2.0, voice_speed))
+    except (ValueError, TypeError):
+        voice_speed = 1.05
+
+    # Explicit logs for call configuration
+    logger.info("--- CALL CONFIGURATION ---")
+    logger.info(f"Model: {model_name}")
+    logger.info(f"Voice: {voice_input} (ID: {voice_id})")
+    logger.info(f"Speed: {voice_speed}")
+    logger.info("--------------------------")
+
+    if model_name == "gemini":
+        logger.info("Using Gemini (Google) LLM")
+        llm_engine = google.LLM(model="gemini-2.5-flash")
+    elif model_name == "deepseek":
+        deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+        if not deepseek_key:
+            logger.warning("DEEPSEEK_API_KEY not set, falling back to OpenAI")
+            llm_engine = openai.LLM(model="gpt-4o-mini")
+        else:
+            logger.info("Using DeepSeek LLM")
+            llm_engine = openai.LLM(
+                model="deepseek-v4-flash",
+                api_key=deepseek_key,
+                base_url="https://api.deepseek.com"
+            )
+    else:
+        logger.info("Using OpenAI LLM")
+        llm_engine = openai.LLM(model="gpt-4o-mini")
 
     session = AgentSession(
         turn_handling=TurnHandlingOptions(
@@ -165,12 +237,12 @@ Follow these specific instructions:
         ),
         # Using Hindi STT as it's better at catching Hinglish/Indian English
         stt=deepgram.STT(model="nova-3", language="hi", smart_format=True, numerals=True),
-        llm=openai.LLM(model="gpt-4o-mini"),
+        llm=llm_engine,
         # Using Hindi-Multilingual TTS to support both languages natively
         tts=cartesia.TTS(
             model="sonic-3",
-            voice="95d51f79-c397-46f9-b49a-23763d3eaa2d",
-            speed=1.05,
+            voice=voice_id,
+            speed=voice_speed,
             language="hi"
         ),
     )
@@ -214,7 +286,8 @@ Follow these specific instructions:
             # 2. Upload recording to S3
             recording_url = ""
             if mp3_bytes:
-                call_id = call_payload.get("call_id")
+                # Priority: call_id -> voice_id
+                call_id = call_payload.get("call_id") or call_payload.get("voice_id")
                 if call_id:
                     s3_key = f"recordings/{call_id}.mp3"
                 else:
@@ -253,7 +326,7 @@ Follow these specific instructions:
                 "event": "CALL_DATA_UPDATE",
                 "data": {
                     "client_id": call_payload.get("lead_id"),
-                    "call_id": call_payload.get("call_id"),
+                    "call_id": call_payload.get("call_id") or call_payload.get("voice_id"),
                     "call_status": call_status,
                     "call_transcript": transcript_data,
                     "ai_summary": summary_text,

@@ -164,8 +164,8 @@ class SessionRecorder:
         return json.dumps(structured)
 
     @staticmethod
-    async def generate_summary(llm_engine: openai.LLM, history: list) -> str:
-        summary_prompt = "Generate a structured medical summary...\n"
+    async def generate_summary(llm_engine: llm.LLM, history: list) -> str:
+        summary_prompt = "Generate a structured call summary, do not include any extra information other than the call transcript.\n"
         for msg in history:
             role = msg.role.name if hasattr(msg.role, "name") else str(msg.role)
             content = " ".join([str(c) for c in msg.content]) if isinstance(msg.content, list) else msg.content
