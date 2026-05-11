@@ -127,8 +127,8 @@ async def handle_outbound_call_webhook(request: Request):
     event_name = payload.get("event_name", "telephony_dispatch")
     logger.info(f"Webhook received call request for event {event_name}: {json.dumps(payload, indent=2)}")
     
-    # Use call_id from payload if available, otherwise use timestamp
-    call_id = payload.get("call_id") or payload.get("event_id") or int(time.time())
+    # Use call_id or voice_id from payload if available, otherwise use timestamp
+    call_id = payload.get("call_id") or payload.get("voice_id") or payload.get("event_id") or int(time.time())
     room_name = f"call_{call_id}"
     
     # Construct phone number in E.164 format
