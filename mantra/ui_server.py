@@ -131,18 +131,15 @@ async def handle_outbound_call_webhook(request: Request):
     call_id = payload.get("call_id") or payload.get("voice_id") or payload.get("event_id") or int(time.time())
     room_name = f"call_{call_id}"
     
+    # Extract the specific Zadarma number to display to the patient (Caller ID)
+    caller_id = payload.get("call_from")
+    
     # Construct phone number in E.164 format
-    country_code = payload.get("client_country_code", "").strip("+")
-    client_phone = payload.get("client_phone", "").strip()
+    country_code = str(payload.get("client_country_code", "91")).strip("+")
+    client_phone = str(payload.get("client_phone", "")).strip()
+    phone_number = client_phone if client_phone.startswith("+") else f"+{country_code}{client_phone}"
     
-    if client_phone.startswith("+"):
-        phone_number = client_phone
-    elif country_code and client_phone:
-        phone_number = f"+{country_code}{client_phone}"
-    else:
-        phone_number = client_phone # Fallback
-    
-    if not phone_number:
+    if not client_phone:
         return JSONResponse({"error": "No client_phone provided in payload"}, status_code=400)
 
     # Trigger agent dispatch
@@ -163,17 +160,20 @@ async def handle_outbound_call_webhook(request: Request):
     # Trigger SIP outbound call
     try:
         trunk_id = os.getenv("SIP_TRUNK_ID")
-        logger.info(f"Step 2: Initiating SIP call to {phone_number} via trunk {trunk_id}")
+        logger.info(f"Step 2: Initiating SIP call to {phone_number} via trunk {trunk_id} with caller_id {caller_id}")
         sip_part = await lk_client.sip.create_sip_participant(
             api.CreateSIPParticipantRequest(
                 sip_trunk_id=trunk_id,
                 sip_call_to=phone_number,
+                sip_number=caller_id, # Display this number to the patient
                 room_name=room_name,
                 participant_identity=f"sip_{call_id}",
-                participant_name="SIP Caller"
+                participant_name="EyeMantra Assistant"
+
             )
         )
         logger.info(f"SIP Participant created: {sip_part.participant_identity}")
+        logger.info("SIP Trunk ID: {trunk_id}")
     except Exception as e:
         logger.error(f"SIP Call trigger failed: {e}\n{traceback.format_exc()}")
         return JSONResponse({"error": f"SIP Call trigger failed: {str(e)}"}, status_code=500)
