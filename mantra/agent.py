@@ -265,7 +265,17 @@ Follow these specific instructions:
     logger.info("Remote participant joined. Initializing conversation...")
     await asyncio.sleep(2.0)
     
-    await session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
+    # Check if participants are still in the room before starting
+    if not ctx.room.remote_participants:
+        logger.warning("Remote participant left before conversation could start.")
+        return
+
+    try:
+        await session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
+    except RuntimeError as e:
+        logger.warning(f"Could not generate initial reply: {e}")
+    except Exception as e:
+        logger.error(f"Unexpected error during initial greeting: {e}")
     
     # Wait for session to end, then finalize everything
     @session.on("close")

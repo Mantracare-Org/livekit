@@ -3,6 +3,7 @@ import logging
 import json
 import time
 import traceback
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, FileResponse
@@ -13,22 +14,8 @@ from dotenv import load_dotenv
 # Load environment variables from .env.local
 load_dotenv(".env.local")
 
-app = FastAPI()
-logger = logging.getLogger("mantra.ui_server")
-logger.setLevel(logging.INFO)
-
-# Get the directory of the current file
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-STATIC_DIR = os.path.join(BASE_DIR, "static")
-
-# Mount static files
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-# Persistent LiveKit API client — created once, reused across requests
-lk_client: api.LiveKitAPI = None
-
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     global lk_client
     api_key = os.getenv("LIVEKIT_API_KEY")
     api_secret = os.getenv("LIVEKIT_API_SECRET")
@@ -48,12 +35,32 @@ async def startup_event():
             api_key=api_key,
             api_secret=api_secret
         )
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    global lk_client
+    
+    yield
+    
     if lk_client:
         await lk_client.aclose()
+
+app = FastAPI(lifespan=lifespan)
+logger = logging.getLogger("mantra.ui_server")
+logger.setLevel(logging.INFO)
+
+# Ensure logs are visible in console
+if not logger.handlers:
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    logger.addHandler(console_handler)
+
+# Get the directory of the current file
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+
+# Mount static files
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# Persistent LiveKit API client — created once, reused across requests
+lk_client: api.LiveKitAPI = None
+
 
 @app.get("/")
 async def index():
@@ -145,6 +152,10 @@ async def handle_outbound_call_webhook(request: Request):
     if not phone_number:
         return JSONResponse({"error": "No client_phone provided in payload"}, status_code=400)
 
+    # Dynamic Caller ID
+    caller_id = payload.get("call_from")
+    logger.info(f"Using Caller ID (sip_number): {caller_id}")
+
     # Trigger agent dispatch
     try:
         logger.info(f"Step 1: Creating agent dispatch for room {room_name}")
@@ -168,6 +179,7 @@ async def handle_outbound_call_webhook(request: Request):
             api.CreateSIPParticipantRequest(
                 sip_trunk_id=trunk_id,
                 sip_call_to=phone_number,
+                sip_number=caller_id,
                 room_name=room_name,
                 participant_identity=f"sip_{call_id}",
                 participant_name="SIP Caller"
