@@ -251,7 +251,43 @@ Follow these specific instructions:
         instructions=initial_instructions,
     )
 
+    # Call duration limiter logic
+    async def call_limiter():
+        try:
+            # Wait for remote participant to join before starting the 2m/3m timers
+            while not list(ctx.room.remote_participants.values()):
+                await asyncio.sleep(1.0)
+            
+            logger.info("Participant joined. Call limiter timers starting now.")
+            
+            # Stage 1: 2-minute mark (Wind-up)
+            await asyncio.sleep(120)
+            if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+                logger.info("Call limit (2m) reached. Instructing agent to wind up.")
+                await session.generate_reply(
+                    instructions="The call has reached 2 minutes. Please find a natural way to conclude the conversation now. Politely wrap up and say goodbye. Do NOT ask any more questions or start new topics."
+                )
+                
+                # Stage 2: 2m 45s mark (Final warning)
+                await asyncio.sleep(45)
+                if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+                    logger.info("Call limit (2m 45s) reached. Firm goodbye.")
+                    await session.generate_reply(
+                        instructions="We must end the call now. Please say your final goodbye immediately so we can disconnect gracefully."
+                    )
+                    
+                    # Stage 3: 3-minute mark (Force disconnect)
+                    await asyncio.sleep(15)
+                    if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+                        logger.info("Max call limit (3m) reached. Force disconnecting.")
+                        await ctx.room.disconnect()
+        except asyncio.CancelledError:
+            logger.info("Call limiter task cancelled.")
+        except Exception as e:
+            logger.error(f"Error in call limiter: {e}")
+
     await session.start(agent=agent, room=ctx.room)
+    limiter_task = asyncio.create_task(call_limiter())
     
     # Check if agent track was already published before we attached the listener
     for publication in ctx.room.local_participant.track_publications.values():
@@ -265,11 +301,19 @@ Follow these specific instructions:
     logger.info("Remote participant joined. Initializing conversation...")
     await asyncio.sleep(2.0)
     
+    # Start the call limiter only after conversation starts
+    # (Moved wait logic inside the task)
+    
+    logger.info(f"Generating greeting for {client_name}...")
     await session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
+    logger.info("Greeting generation requested.")
     
     # Wait for session to end, then finalize everything
     @session.on("close")
     def on_session_close():
+        if not limiter_task.done():
+            limiter_task.cancel()
+            
         async def finalize():
             logger.info("Session closed — starting post-call processing...")
 
