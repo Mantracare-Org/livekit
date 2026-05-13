@@ -162,12 +162,23 @@ async def handle_outbound_call_webhook(request: Request):
 
     # Trigger SIP outbound call
     try:
-        trunk_id = os.getenv("SIP_TRUNK_ID")
-        logger.info(f"Step 2: Initiating SIP call to {phone_number} via trunk {trunk_id}")
+        # Use trunk_id from payload if provided, fallback to environment variable
+        trunk_id = payload.get("trunk_id") or os.getenv("SIP_TRUNK_ID")
+        
+        # Use specific caller ID if provided (helps avoid "random number" issue)
+        sip_number = payload.get("sip_number") or payload.get("call_from")
+        
+        if not trunk_id:
+            logger.error("No SIP_TRUNK_ID found in payload or environment")
+            return JSONResponse({"error": "No SIP trunk ID configured"}, status_code=500)
+
+        logger.info(f"Step 2: Initiating SIP call to {phone_number} via trunk {trunk_id}" + (f" (Caller ID: {sip_number})" if sip_number else ""))
+        
         sip_part = await lk_client.sip.create_sip_participant(
             api.CreateSIPParticipantRequest(
                 sip_trunk_id=trunk_id,
                 sip_call_to=phone_number,
+                sip_number=sip_number,
                 room_name=room_name,
                 participant_identity=f"sip_{call_id}",
                 participant_name="SIP Caller"
@@ -198,6 +209,50 @@ async def handle_outbound_call_webhook(request: Request):
         "token": token.to_jwt(),
         "url": os.getenv("LIVEKIT_URL"),
     })
+
+
+@app.post("/api/v1/sip/trunks/outbound")
+async def create_outbound_sip_trunk(request: Request):
+    """
+    Create a new outbound SIP trunk on LiveKit Cloud.
+    """
+    payload = await request.json()
+    if not payload:
+        return JSONResponse({"error": "No payload provided"}, status_code=400)
+    
+    name = payload.get("name")
+    address = payload.get("address")
+    numbers = payload.get("numbers")
+    auth_username = payload.get("authUsername")
+    auth_password = payload.get("authPassword")
+    
+    if not all([name, address, numbers, auth_username, auth_password]):
+        return JSONResponse({"error": "Missing required fields (name, address, numbers, authUsername, authPassword)"}, status_code=400)
+    
+    try:
+        logger.info(f"Creating SIP outbound trunk: {name} at {address}")
+        trunk_request = api.CreateSIPOutboundTrunkRequest(
+            trunk=api.SIPOutboundTrunkInfo(
+                name=name,
+                address=address,
+                numbers=numbers,
+                auth_username=auth_username,
+                auth_password=auth_password
+            )
+        )
+        
+        trunk = await lk_client.sip.create_outbound_trunk(trunk_request)
+        logger.info(f"Successfully created SIP outbound trunk: {trunk.sip_trunk_id}")
+        
+        return JSONResponse({
+            "status": "success",
+            "sip_trunk_id": trunk.sip_trunk_id,
+            "name": trunk.name,
+            "address": trunk.address
+        })
+    except Exception as e:
+        logger.error(f"Failed to create SIP outbound trunk: {e}\n{traceback.format_exc()}")
+        return JSONResponse({"error": f"Failed to create SIP outbound trunk: {str(e)}"}, status_code=500)
 
 
 @app.get("/config")
