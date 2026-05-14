@@ -211,24 +211,22 @@ async def handle_outbound_call_webhook(request: Request):
     })
 
 
-@app.post("/api/v1/sip/trunks/outbound")
-async def create_outbound_sip_trunk(request: Request):
+async def _create_sip_outbound_trunk(name: str, address: str, numbers: list, auth_username: str, auth_password: str):
     """
-    Create a new outbound SIP trunk on LiveKit Cloud.
+    Internal helper to create a SIP outbound trunk via LiveKit API.
+    Handles field validation and normalization (e.g., ensuring numbers is a list).
     """
-    payload = await request.json()
-    if not payload:
-        return JSONResponse({"error": "No payload provided"}, status_code=400)
-    
-    name = payload.get("name")
-    address = payload.get("address")
-    numbers = payload.get("numbers")
-    auth_username = payload.get("authUsername")
-    auth_password = payload.get("authPassword")
-    
     if not all([name, address, numbers, auth_username, auth_password]):
-        return JSONResponse({"error": "Missing required fields (name, address, numbers, authUsername, authPassword)"}, status_code=400)
-    
+        missing = [f for f, v in [("name", name), ("address", address), ("numbers", numbers), 
+                                   ("auth_username", auth_username), ("auth_password", auth_password)] if not v]
+        raise ValueError(f"Missing required fields: {', '.join(missing)}")
+
+    # Ensure numbers is a list (LiveKit SDK expects a sequence of strings)
+    if isinstance(numbers, str):
+        numbers = [n.strip() for n in numbers.split(",") if n.strip()]
+    elif not isinstance(numbers, list):
+        numbers = [str(numbers)]
+
     try:
         logger.info(f"Creating SIP outbound trunk: {name} at {address}")
         trunk_request = api.CreateSIPOutboundTrunkRequest(
@@ -242,17 +240,79 @@ async def create_outbound_sip_trunk(request: Request):
         )
         
         trunk = await lk_client.sip.create_outbound_trunk(trunk_request)
-        logger.info(f"Successfully created SIP outbound trunk: {trunk.sip_trunk_id}")
+        logger.info(f"Successfully created SIP outbound trunk: {trunk.sip_trunk_id} ({name})")
+        return trunk
+    except Exception as e:
+        logger.error(f"LiveKit API error creating SIP trunk: {e}")
+        raise
+
+
+@app.post("/api/v1/sip/trunks/outbound")
+@app.post("/api/v1/sip/trunks/outbound/zadarma")
+async def create_zadarma_sip_trunk(request: Request):
+    """
+    Create a new Zadarma SIP trunk. 
+    The root '/outbound' endpoint is maintained for backward compatibility.
+    """
+    payload = await request.json()
+    if not payload:
+        return JSONResponse({"error": "No payload provided"}, status_code=400)
+    
+    try:
+        trunk = await _create_sip_outbound_trunk(
+            name=payload.get("name"),
+            address=payload.get("address"),
+            numbers=payload.get("numbers"),
+            auth_username=payload.get("authUsername"),
+            auth_password=payload.get("authPassword")
+        )
         
         return JSONResponse({
             "status": "success",
             "sip_trunk_id": trunk.sip_trunk_id,
             "name": trunk.name,
+            "provider": "zadarma",
             "address": trunk.address
         })
     except Exception as e:
-        logger.error(f"Failed to create SIP outbound trunk: {e}\n{traceback.format_exc()}")
-        return JSONResponse({"error": f"Failed to create SIP outbound trunk: {str(e)}"}, status_code=500)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/v1/sip/trunks/outbound/twilio")
+async def create_twilio_sip_trunk(request: Request):
+    """
+    Create a new Twilio SIP trunk using professional nomenclature.
+    Aligns with LiveKit CLI parameters: auth_user, auth_pass.
+    """
+    payload = await request.json()
+    if not payload:
+        return JSONResponse({"error": "No payload provided"}, status_code=400)
+    
+    # Twilio-friendly field mapping (accepting both CLI-style and original keys)
+    name = payload.get("name")
+    address = payload.get("address") or "live-kit-mc.pstn.twilio.com"
+    numbers = payload.get("numbers")
+    auth_user = payload.get("auth_user") or payload.get("authUser") or payload.get("authUsername")
+    auth_pass = payload.get("auth_pass") or payload.get("authPass") or payload.get("authPassword")
+    
+    try:
+        trunk = await _create_sip_outbound_trunk(
+            name=name,
+            address=address,
+            numbers=numbers,
+            auth_username=auth_user,
+            auth_password=auth_pass
+        )
+        
+        return JSONResponse({
+            "status": "success",
+            "sip_trunk_id": trunk.sip_trunk_id,
+            "name": trunk.name,
+            "provider": "twilio",
+            "address": trunk.address
+        })
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.get("/config")
