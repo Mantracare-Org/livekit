@@ -315,6 +315,91 @@ async def create_twilio_sip_trunk(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.post("/api/v1/sip/trunks/outbound/plivo")
+async def create_and_call_plivo(request: Request):
+    """
+    Unified Plivo endpoint to provision a SIP trunk (optional) and place an outbound call.
+    Supports on-the-fly provisioning if 'trunk' details are provided, 
+    otherwise uses 'trunk_id' from the payload or environment.
+    """
+    payload = await request.json()
+    if not payload:
+        return JSONResponse({"error": "No payload provided"}, status_code=400)
+
+    try:
+        # 1. Handle SIP Trunk (Provision new or use existing)
+        trunk_data = payload.get("trunk")
+        if trunk_data:
+            logger.info("Provisioning new SIP trunk (Plivo) before call...")
+            trunk = await _create_sip_outbound_trunk(
+                name=trunk_data.get("name"),
+                address=trunk_data.get("address"),
+                numbers=trunk_data.get("numbers"),
+                auth_username=trunk_data.get("auth_user") or trunk_data.get("authUser") or trunk_data.get("authUsername"),
+                auth_password=trunk_data.get("auth_pass") or trunk_data.get("authPass") or trunk_data.get("authPassword")
+            )
+            trunk_id = trunk.sip_trunk_id
+        else:
+            trunk_id = payload.get("trunk_id") or os.getenv("SIP_TRUNK_ID")
+
+        if not trunk_id:
+            return JSONResponse({"error": "No trunk_id provided or configured"}, status_code=400)
+
+        # 2. Extract Target Phone Number
+        country_code = str(payload.get("client_country_code") or "").strip("+")
+        client_phone = str(payload.get("client_phone") or "").strip()
+        
+        if client_phone.startswith("+"):
+            phone_number = client_phone
+        elif country_code and client_phone:
+            phone_number = f"+{country_code}{client_phone}"
+        else:
+            phone_number = client_phone
+            
+        if not phone_number:
+            return JSONResponse({"error": "Missing client_phone"}, status_code=400)
+
+        # 3. Trigger Agent Dispatch
+        call_id = payload.get("call_id") or payload.get("voice_id") or int(time.time())
+        room_name = f"call_{call_id}"
+        
+        logger.info(f"Dispatching agent to room {room_name}")
+        await lk_client.agent_dispatch.create_dispatch(
+            api.CreateAgentDispatchRequest(
+                room=room_name,
+                agent_name="mantra-agent",
+                metadata=json.dumps(payload)
+            )
+        )
+
+        # 4. Initiate SIP Call
+        sip_number = payload.get("call_from") # Caller ID
+        logger.info(f"Placing SIP call to {phone_number} via trunk {trunk_id} (Caller ID: {sip_number})")
+        
+        sip_part = await lk_client.sip.create_sip_participant(
+            api.CreateSIPParticipantRequest(
+                sip_trunk_id=trunk_id,
+                sip_call_to=phone_number,
+                sip_number=sip_number,
+                room_name=room_name,
+                participant_identity=f"sip_{call_id}",
+                participant_name="Mantra Voice"
+            )
+        )
+
+        return JSONResponse({
+            "status": "success",
+            "sip_trunk_id": trunk_id,
+            "room": room_name,
+            "participant": sip_part.participant_identity,
+            "call_id": call_id
+        })
+
+    except Exception as e:
+        logger.error(f"Plivo unified call failed: {e}\n{traceback.format_exc()}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.get("/config")
 async def get_config():
     """Return the LiveKit URL for the frontend."""
