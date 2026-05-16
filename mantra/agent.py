@@ -56,6 +56,41 @@ load_dotenv(".env.local", override=True)  # Load .env.local (LiveKit, etc.) and 
 
 server = AgentServer()
 
+class AssistantFunctions(llm.FunctionContext):
+    def __init__(self, job_metadata: str, room_name: str):
+        super().__init__()
+        self.job_metadata = job_metadata
+        self.room_name = room_name
+        self.handoff_triggered = False
+
+    @llm.ai_callable(description="Transfer the call to a human assistant when requested or if the issue is too complex.")
+    async def transfer_to_human(
+        self,
+        reason: str = llm.Annotated[str, "The reason why a human is needed"]
+    ):
+        logger.info(f"Handoff requested. Reason: {reason}")
+        self.handoff_triggered = True
+        
+        # Parse metadata to get call/lead IDs
+        try:
+            payload = json.loads(self.job_metadata) if self.job_metadata else {}
+        except Exception:
+            payload = {}
+
+        # Notify backend
+        webhook_payload = {
+            "event": "HANDOFF_REQUESTED",
+            "data": {
+                "room_name": self.room_name,
+                "reason": reason,
+                "call_id": payload.get("call_id") or payload.get("voice_id"),
+                "lead_id": payload.get("lead_id"),
+                "client_name": payload.get("client_name", "User"),
+            }
+        }
+        await send_to_backend(webhook_payload)
+        return "I am connecting you to a human assistant now. Please stay on the line. I will remain on the call to record and summarize our conversation."
+
 @server.rtc_session(agent_name="mantra-agent")
 async def entrypoint(ctx: JobContext):
     # Plain log to verify entrypoint is reached
@@ -67,6 +102,9 @@ async def entrypoint(ctx: JobContext):
     logger.info(f"Room: {ctx.room.name}")
     logger.info(f"Job ID: {ctx.job.id}")
     logger.info(f"Metadata: {ctx.job.metadata}")
+
+    # Initialize function context for handoff
+    fnc_ctx = AssistantFunctions(ctx.job.metadata, ctx.room.name)
 
     # Session ID for S3 key naming
     session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -245,46 +283,22 @@ Follow these specific instructions:
             speed=voice_speed,
             language="hi"
         ),
+        fnc_ctx=fnc_ctx,
     )
 
     agent = Agent(
         instructions=initial_instructions,
     )
 
-    # Call duration limiter logic
-    async def call_limiter():
-        try:
-            # Wait for remote participant to join before starting the 2m/3m timers
-            while not list(ctx.room.remote_participants.values()):
-                await asyncio.sleep(1.0)
-            
-            logger.info("Participant joined. Call limiter timers starting now.")
-            
-            # Stage 1: 2-minute mark (Wind-up)
-            await asyncio.sleep(120)
-            if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
-                logger.info("Call limit (2m) reached. Instructing agent to wind up.")
-                await session.generate_reply(
-                    instructions="The call has reached 2 minutes. Please find a natural way to conclude the conversation now. Politely wrap up and say goodbye. Do NOT ask any more questions or start new topics."
-                )
-                
-                # Stage 2: 2m 45s mark (Final warning)
-                await asyncio.sleep(45)
-                if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
-                    logger.info("Call limit (2m 45s) reached. Firm goodbye.")
-                    await session.generate_reply(
-                        instructions="We must end the call now. Please say your final goodbye immediately so we can disconnect gracefully."
-                    )
-                    
-                    # Stage 3: 3-minute mark (Force disconnect)
-                    await asyncio.sleep(15)
-                    if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
-                        logger.info("Max call limit (3m) reached. Force disconnecting.")
-                        await ctx.room.disconnect()
-        except asyncio.CancelledError:
-            logger.info("Call limiter task cancelled.")
-        except Exception as e:
-            logger.error(f"Error in call limiter: {e}")
+    @session.on("function_calls_finished")
+    def on_fnc_calls_done(ctx: llm.FunctionContext):
+        if fnc_ctx.handoff_triggered:
+            logger.info("Handoff triggered — switching to passive monitoring instructions")
+            agent.update_instructions(
+                "A human has joined the call. You are now in PASSIVE MONITORING MODE. "
+                "DO NOT speak. DO NOT respond to the user. DO NOT generate any audio. "
+                "Just observe and maintain the transcript for the final summary."
+            )
 
     await session.start(agent=agent, room=ctx.room)
     limiter_task = asyncio.create_task(call_limiter())
@@ -362,7 +376,9 @@ Follow these specific instructions:
             
             # Determine call status based on duration
             call_status = "Completed"
-            if duration < 10:
+            if fnc_ctx.handoff_triggered:
+                call_status = "Handed Off"
+            elif duration < 10:
                 call_status = "Incomplete"
             
             # 8. Build webhook payload
