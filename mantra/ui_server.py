@@ -292,8 +292,8 @@ async def create_twilio_sip_trunk(request: Request):
     name = payload.get("name")
     address = payload.get("address") or "live-kit-mc.pstn.twilio.com"
     numbers = payload.get("numbers")
-    auth_user = payload.get("auth_user") or payload.get("authUser") or payload.get("authUsername")
-    auth_pass = payload.get("auth_pass") or payload.get("authPass") or payload.get("authPassword")
+    auth_user = payload.get("auth_user")
+    auth_pass = payload.get("auth_pass")
     
     try:
         trunk = await _create_sip_outbound_trunk(
@@ -335,8 +335,8 @@ async def create_and_call_plivo(request: Request):
                 name=trunk_data.get("name"),
                 address=trunk_data.get("address"),
                 numbers=trunk_data.get("numbers"),
-                auth_username=trunk_data.get("auth_user") or trunk_data.get("authUser") or trunk_data.get("authUsername"),
-                auth_password=trunk_data.get("auth_pass") or trunk_data.get("authPass") or trunk_data.get("authPassword")
+                auth_username=trunk_data.get("auth_user"),
+                auth_password=trunk_data.get("auth_pass")
             )
             trunk_id = trunk.sip_trunk_id
         else:
@@ -345,19 +345,26 @@ async def create_and_call_plivo(request: Request):
         if not trunk_id:
             return JSONResponse({"error": "No trunk_id provided or configured"}, status_code=400)
 
-        # 2. Extract Target Phone Number
+        # 2. Extract Target Phone Number (optional if only provisioning/testing trunk)
+        client_phone = payload.get("client_phone")
+        if client_phone is not None:
+            client_phone = str(client_phone).strip()
+
+        if not client_phone:
+            logger.info(f"No client_phone provided. Trunk {trunk_id} provisioned successfully.")
+            return JSONResponse({
+                "status": "success",
+                "sip_trunk_id": trunk_id,
+                "message": "Trunk provisioned successfully (no call initiated)"
+            })
+
         country_code = str(payload.get("client_country_code") or "").strip("+")
-        client_phone = str(payload.get("client_phone") or "").strip()
-        
         if client_phone.startswith("+"):
             phone_number = client_phone
         elif country_code and client_phone:
             phone_number = f"+{country_code}{client_phone}"
         else:
             phone_number = client_phone
-            
-        if not phone_number:
-            return JSONResponse({"error": "Missing client_phone"}, status_code=400)
 
         # 3. Trigger Agent Dispatch
         call_id = payload.get("call_id") or payload.get("voice_id") or int(time.time())
