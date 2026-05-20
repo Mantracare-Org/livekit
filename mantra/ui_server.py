@@ -407,6 +407,63 @@ async def create_and_call_plivo(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.get("/api/v1/sip/trunks/outbound")
+async def list_sip_outbound_trunks():
+    """
+    List all SIP outbound trunks.
+    Returns a collection of configured SIP trunks with their metadata.
+    """
+    try:
+        response = await lk_client.sip.list_outbound_trunk(
+            api.ListSIPOutboundTrunkRequest()
+        )
+        trunk_list = []
+        for item in response.items:
+            trunk_list.append({
+                "sip_trunk_id": item.sip_trunk_id,
+                "name": item.name,
+                "address": item.address,
+                "transport": item.transport,
+                "numbers": list(item.numbers),
+                "auth_username": item.auth_username,
+                "encryption": item.media_encryption,
+            })
+        
+        return JSONResponse({
+            "status": "success",
+            "count": len(trunk_list),
+            "trunks": trunk_list
+        })
+    except Exception as e:
+        logger.error(f"Failed to list SIP outbound trunks: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.delete("/api/v1/sip/trunks/outbound/{trunk_id}")
+async def delete_sip_outbound_trunk(trunk_id: str):
+    """
+    Delete a SIP outbound trunk by its trunk ID.
+    Permanently removes the trunk configuration from LiveKit.
+    """
+    if not trunk_id:
+        return JSONResponse({"error": "Trunk ID is required"}, status_code=400)
+    
+    try:
+        await lk_client.sip.delete_trunk(
+            api.DeleteSIPTrunkRequest(sip_trunk_id=trunk_id)
+        )
+        logger.info(f"Successfully deleted SIP outbound trunk: {trunk_id}")
+        
+        return JSONResponse({
+            "status": "success",
+            "message": f"SIP trunk {trunk_id} deleted successfully",
+            "sip_trunk_id": trunk_id
+        })
+    except Exception as e:
+        logger.error(f"Failed to delete SIP outbound trunk {trunk_id}: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.get("/config")
 async def get_config():
     """Return the LiveKit URL for the frontend."""
