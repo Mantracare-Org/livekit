@@ -77,8 +77,9 @@ async def dispatch_test(request: Request):
     
     logger.info(f"Manual dispatch request with payload: {json.dumps(payload, indent=2)}")
     
-    # Generate a unique room name for this test session
-    room_name = f"test_{int(time.time())}"
+    # Generate a unique room name for this test session using the call_id if provided
+    call_id = payload.get("call_id") or int(time.time())
+    room_name = f"test_{call_id}"
     
     try:
         # Create dispatch with payload as metadata
@@ -258,13 +259,15 @@ async def create_zadarma_sip_trunk(request: Request):
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
     
+    logger.info(f"[POST /api/v1/sip/trunks/outbound] Payload received: {json.dumps(payload, indent=2)}")
+    
     try:
         trunk = await _create_sip_outbound_trunk(
             name=payload.get("name"),
             address=payload.get("address"),
             numbers=payload.get("numbers"),
-            auth_username=payload.get("authUsername"),
-            auth_password=payload.get("authPassword")
+            auth_username=payload.get("authUsername") or payload.get("auth_username") or payload.get("auth_user"),
+            auth_password=payload.get("authPassword") or payload.get("auth_password") or payload.get("auth_pass")
         )
         
         return JSONResponse({
@@ -288,20 +291,22 @@ async def create_twilio_sip_trunk(request: Request):
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
     
+    logger.info(f"[POST /api/v1/sip/trunks/outbound/twilio] Payload received: {json.dumps(payload, indent=2)}")
+    
     # Twilio-friendly field mapping (accepting both CLI-style and original keys)
     name = payload.get("name")
     address = payload.get("address") or "live-kit-mc.pstn.twilio.com"
     numbers = payload.get("numbers")
-    auth_user = payload.get("auth_user")
-    auth_pass = payload.get("auth_pass")
+    auth_username = payload.get("authUsername") or payload.get("auth_username") or payload.get("auth_user")
+    auth_password = payload.get("authPassword") or payload.get("auth_password") or payload.get("auth_pass")
     
     try:
         trunk = await _create_sip_outbound_trunk(
             name=name,
             address=address,
             numbers=numbers,
-            auth_username=auth_user,
-            auth_password=auth_pass
+            auth_username=auth_username,
+            auth_password=auth_password
         )
         
         return JSONResponse({
@@ -325,6 +330,8 @@ async def create_and_call_plivo(request: Request):
     payload = await request.json()
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
+
+    logger.info(f"[POST /api/v1/sip/trunks/outbound/plivo] Payload received: {json.dumps(payload, indent=2)}")
 
     try:
         # 1. Handle SIP Trunk (Provision new or use existing)

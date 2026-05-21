@@ -33,11 +33,48 @@ from livekit.agents import (
     llm,
 )
 from livekit.agents import TurnHandlingOptions
+import fcntl
+from livekit.agents.tts import FallbackAdapter
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from livekit.plugins import assemblyai, openai, google, cartesia, silero, deepgram
 
 # Import our production helpers
 from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend
+
+# Path to the shared JSON file for tracking Cartesia API key usage
+USAGE_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "cartesia_usage.json"))
+
+class TrackedCartesiaTTS(cartesia.TTS):
+    async def _connect_ws(self, timeout: float):
+        ws = await super()._connect_ws(timeout)
+        
+        # When WebSocket connection is successful, record key usage
+        key = self._opts.api_key
+        masked_key = f"{key[:10]}...{key[-6:]}" if key else "unknown"
+        
+        try:
+            with open(USAGE_FILE, "a+") as f:
+                fcntl.flock(f, fcntl.LOCK_EX)
+                f.seek(0)
+                content = f.read()
+                if content:
+                    try:
+                        data = json.loads(content)
+                    except Exception:
+                        data = {}
+                else:
+                    data = {}
+                
+                data[masked_key] = data.get(masked_key, 0) + 1
+                
+                f.seek(0)
+                f.truncate()
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to record Cartesia API usage: {e}")
+            
+        return ws
+
 
 VOICE_MAPPING = {
     "gemma": "62ae83ad-4f6a-430b-af41-a9bede9286ca",
@@ -216,6 +253,32 @@ Follow these specific instructions:
         logger.info("Using OpenAI LLM")
         llm_engine = openai.LLM(model="gpt-4o-mini")
 
+    # Collect Cartesia API keys dynamically from environment variables
+    cartesia_keys = []
+    for env_var in ["CARTESIA_API_KEY", "CARTESIA_API_KEY_2", "CARTESIA_API_KEY_3"]:
+        val = os.getenv(env_var)
+        if val:
+            if "," in val:
+                cartesia_keys.extend([k.strip() for k in val.split(",") if k.strip()])
+            else:
+                cartesia_keys.append(val.strip())
+    
+    # If no keys are specified in variables, let it default to standard CARTESIA_API_KEY logic
+    if not cartesia_keys:
+        cartesia_keys = [None]
+
+    # Setup Fallback TTS using the pool of keys to cycle on rate limits (429) / connection failures
+    tts_pool = [
+        TrackedCartesiaTTS(
+            model="sonic-3",
+            voice=voice_id,
+            speed=voice_speed,
+            language="hi",
+            api_key=key
+        )
+        for key in cartesia_keys
+    ]
+
     session = AgentSession(
         turn_handling=TurnHandlingOptions(
             turn_detection=MultilingualModel(),
@@ -225,7 +288,7 @@ Follow these specific instructions:
                 "max_delay": 2.0,
             },
             interruption={
-                "mode": "adaptive",
+                "mode": "vad",
                 "resume_false_interruption": True,
                 "false_interruption_timeout": 1.5,
                 "min_words": 2,
@@ -238,13 +301,8 @@ Follow these specific instructions:
         # Using Hindi STT as it's better at catching Hinglish/Indian English
         stt=deepgram.STT(model="nova-3", language="hi", smart_format=True, numerals=True),
         llm=llm_engine,
-        # Using Hindi-Multilingual TTS to support both languages natively
-        tts=cartesia.TTS(
-            model="sonic-3",
-            voice=voice_id,
-            speed=voice_speed,
-            language="hi"
-        ),
+        # Using Hindi-Multilingual TTS with FallbackAdapter to support multiple API keys
+        tts=FallbackAdapter(tts_pool),
     )
 
     agent = Agent(
@@ -258,12 +316,15 @@ Follow these specific instructions:
         if publication.track and publication.track.kind == rtc.TrackKind.KIND_AUDIO:
             recorder.start_recording(publication.track, "agent")
     
-    logger.info("Waiting for remote participant to join...")
-    while not list(ctx.room.remote_participants.values()):
-        await asyncio.sleep(0.5)
-        
-    logger.info("Remote participant joined. Initializing conversation...")
-    await asyncio.sleep(2.0)
+    if ctx.room.name.startswith("test_"):
+        logger.info("Test room detected. Skipping wait for remote participant to initialize synthesis.")
+    else:
+        logger.info("Waiting for remote participant to join...")
+        while not list(ctx.room.remote_participants.values()):
+            await asyncio.sleep(0.5)
+            
+        logger.info("Remote participant joined. Initializing conversation...")
+        await asyncio.sleep(2.0)
     
     await session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
     
