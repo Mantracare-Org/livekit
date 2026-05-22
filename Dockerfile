@@ -67,6 +67,9 @@ RUN uv run python -m mantra.agent download-files
 COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
+# Expose the UI Server port
+EXPOSE 8081
+
 # Use entrypoint to switch between agent and ui
 ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["agent"]
