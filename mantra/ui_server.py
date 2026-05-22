@@ -3,6 +3,7 @@ import logging
 import json
 import time
 import traceback
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, FileResponse
@@ -13,22 +14,11 @@ from dotenv import load_dotenv
 # Load environment variables from .env.local
 load_dotenv(".env.local")
 
-app = FastAPI()
-logger = logging.getLogger("mantra.ui_server")
-logger.setLevel(logging.INFO)
-
-# Get the directory of the current file
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-STATIC_DIR = os.path.join(BASE_DIR, "static")
-
-# Mount static files
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
 # Persistent LiveKit API client — created once, reused across requests
 lk_client: api.LiveKitAPI = None
 
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     global lk_client
     api_key = os.getenv("LIVEKIT_API_KEY")
     api_secret = os.getenv("LIVEKIT_API_SECRET")
@@ -48,12 +38,20 @@ async def startup_event():
             api_key=api_key,
             api_secret=api_secret
         )
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    global lk_client
+    yield
     if lk_client:
         await lk_client.aclose()
+
+app = FastAPI(lifespan=lifespan)
+logger = logging.getLogger("mantra.ui_server")
+logger.setLevel(logging.INFO)
+
+# Get the directory of the current file
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+
+# Mount static files
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get("/")
 async def index():
