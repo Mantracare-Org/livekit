@@ -33,7 +33,7 @@ from livekit.agents import (
     llm,
 )
 from livekit.agents import TurnHandlingOptions
-import fcntl
+
 from livekit.agents.tts import FallbackAdapter
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from livekit.plugins import assemblyai, openai, google, cartesia, silero, deepgram
@@ -41,39 +41,6 @@ from livekit.plugins import assemblyai, openai, google, cartesia, silero, deepgr
 # Import our production helpers
 from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend
 
-# Path to the shared JSON file for tracking Cartesia API key usage
-USAGE_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "cartesia_usage.json"))
-
-class TrackedCartesiaTTS(cartesia.TTS):
-    async def _connect_ws(self, timeout: float):
-        ws = await super()._connect_ws(timeout)
-        
-        # When WebSocket connection is successful, record key usage
-        key = self._opts.api_key
-        masked_key = f"{key[:10]}...{key[-6:]}" if key else "unknown"
-        
-        try:
-            with open(USAGE_FILE, "a+") as f:
-                fcntl.flock(f, fcntl.LOCK_EX)
-                f.seek(0)
-                content = f.read()
-                if content:
-                    try:
-                        data = json.loads(content)
-                    except Exception:
-                        data = {}
-                else:
-                    data = {}
-                
-                data[masked_key] = data.get(masked_key, 0) + 1
-                
-                f.seek(0)
-                f.truncate()
-                json.dump(data, f, indent=2)
-        except Exception as e:
-            logger.error(f"Failed to record Cartesia API usage: {e}")
-            
-        return ws
 
 
 VOICE_MAPPING = {
@@ -269,7 +236,7 @@ Follow these specific instructions:
 
     # Setup Fallback TTS using the pool of keys to cycle on rate limits (429) / connection failures
     tts_pool = [
-        TrackedCartesiaTTS(
+        cartesia.TTS(
             model="sonic-3",
             voice=voice_id,
             speed=voice_speed,
