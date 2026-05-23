@@ -331,8 +331,6 @@ async def create_and_call_plivo(request: Request):
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
 
-    logger.info(f"[POST /api/v1/sip/trunks/outbound/plivo] Payload received: {json.dumps(payload, indent=2)}")
-
     try:
         # 1. Handle SIP Trunk (Provision new or use existing)
         trunk_data = payload.get("trunk")
@@ -342,8 +340,18 @@ async def create_and_call_plivo(request: Request):
                 name=trunk_data.get("name"),
                 address=trunk_data.get("address"),
                 numbers=trunk_data.get("numbers"),
-                auth_username=trunk_data.get("auth_user"),
-                auth_password=trunk_data.get("auth_pass")
+                auth_username=trunk_data.get("authUsername") or trunk_data.get("auth_username") or trunk_data.get("auth_user"),
+                auth_password=trunk_data.get("authPassword") or trunk_data.get("auth_password") or trunk_data.get("auth_pass")
+            )
+            trunk_id = trunk.sip_trunk_id
+        elif "numbers" in payload and ("authUsername" in payload or "auth_username" in payload or "auth_user" in payload):
+            logger.info("Flat trunk payload detected. Provisioning Plivo trunk...")
+            trunk = await _create_sip_outbound_trunk(
+                name=payload.get("name"),
+                address=payload.get("address"),
+                numbers=payload.get("numbers"),
+                auth_username=payload.get("authUsername") or payload.get("auth_username") or payload.get("auth_user"),
+                auth_password=payload.get("authPassword") or payload.get("auth_password") or payload.get("auth_pass")
             )
             trunk_id = trunk.sip_trunk_id
         else:
@@ -480,7 +488,7 @@ async def get_config():
 
 def main():
     import uvicorn
-    port = int(os.getenv("PORT", "8081"))
+    port = int(os.getenv("PORT", "8086"))
     logger.info(f"UI Server starting on http://0.0.0.0:{port}")
     uvicorn.run("mantra.ui_server:app", host="0.0.0.0", port=port)
 
