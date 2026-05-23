@@ -170,17 +170,20 @@ Follow these specific instructions:
     # 3. Select LLM and Voice based on payload
     if 'payload' in locals():
         # Handle nested ai_payload if present
-        ai_p = payload.get("ai_payload", {})
+        ai_p = payload.get("ai_payload")
+        if not isinstance(ai_p, dict):
+            ai_p = {}
         
         # Priority for Model: ai_payload.ai_model -> payload.model -> default "openai"
-        model_name = ai_p.get("ai_model", payload.get("model", "openai")).lower()
+        model_name = ai_p.get("ai_model") or payload.get("model") or "openai"
+        model_name = str(model_name).lower()
         
         # Priority for Voice: ai_payload.voice_id -> payload.voice_id -> voice_name -> voice -> default "arushi"
-        voice_input = ai_p.get("voice_id", payload.get("voice_id", payload.get("voice_name", payload.get("voice", "arushi"))))
+        voice_input = ai_p.get("voice_id") or payload.get("voice_id") or payload.get("voice_name") or payload.get("voice") or "arushi"
         voice_id = VOICE_MAPPING.get(str(voice_input).lower(), voice_input)
         
         # Priority for Speed: ai_payload.voice_speed -> payload.voice_speed -> default 1.05
-        voice_speed = ai_p.get("voice_speed", payload.get("voice_speed", 1.05))
+        voice_speed = ai_p.get("voice_speed") or payload.get("voice_speed") or 1.05
     else:
         model_name = "openai"
         voice_input = "arushi"
