@@ -353,7 +353,7 @@ async def create_and_call_plivo(request: Request):
             )
             trunk_id = trunk.sip_trunk_id
         else:
-            trunk_id = payload.get("trunk_id") or os.getenv("SIP_TRUNK_ID")
+            trunk_id = payload.get("trunk_id") or payload.get("call_from_id") or os.getenv("SIP_TRUNK_ID")
 
         if not trunk_id:
             return JSONResponse({"error": "No trunk_id provided or configured"}, status_code=400)
