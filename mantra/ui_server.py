@@ -162,7 +162,7 @@ async def handle_outbound_call_webhook(request: Request):
     # Trigger SIP outbound call
     try:
         # Use trunk_id from payload if provided, fallback to environment variable
-        trunk_id = payload.get("trunk_id") or os.getenv("SIP_TRUNK_ID")
+        trunk_id = payload.get("trunk_id") or payload.get("call_from_id") or os.getenv("SIP_TRUNK_ID")
         
         # Use specific caller ID if provided (helps avoid "random number" issue)
         sip_number = payload.get("call_from")
