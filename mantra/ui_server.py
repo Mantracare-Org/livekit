@@ -18,10 +18,11 @@ load_dotenv(".env.local")
 # Persistent LiveKit API clients
 lk_client: api.LiveKitAPI = None           # Direct — used for Twilio, Zadarma, and general operations
 plivo_client: api.LiveKitAPI = None        # Proxied — used for Plivo (India routing)
+plivo_session: aiohttp.ClientSession = None  # Owned session for plivo_client; closed manually on shutdown
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global lk_client, plivo_client
+    global lk_client, plivo_client, plivo_session
     api_key = os.getenv("LIVEKIT_API_KEY")
     api_secret = os.getenv("LIVEKIT_API_SECRET")
     lk_url = os.getenv("LIVEKIT_URL")
@@ -40,10 +41,9 @@ async def lifespan(app: FastAPI):
 
         plivo_proxy = os.getenv("PLIVO_PROXY", "http://15.206.0.235:8888")
         logger.info(f"Creating Plivo LiveKit client with proxy: {plivo_proxy}")
-        connector = aiohttp.TCPConnector(ssl=False)
-        session = aiohttp.ClientSession(connector=connector, proxy=plivo_proxy)
+        plivo_session = aiohttp.ClientSession(proxy=plivo_proxy)
         plivo_client = api.LiveKitAPI(
-            url=api_url, api_key=api_key, api_secret=api_secret, session=session
+            url=api_url, api_key=api_key, api_secret=api_secret, session=plivo_session
         )
 
     yield
@@ -51,6 +51,8 @@ async def lifespan(app: FastAPI):
     for client in [lk_client, plivo_client]:
         if client:
             await client.aclose()
+    if plivo_session:
+        await plivo_session.close()
 
 app = FastAPI(lifespan=lifespan)
 logger = logging.getLogger("mantra.ui_server")
@@ -251,6 +253,8 @@ async def _create_sip_outbound_trunk(
         raise
 
 
+DEFAULT_PROVIDER = "twilio"
+
 async def _get_provider_from_trunk(trunk_id: str) -> str:
     """List all trunks and infer the provider from the matching trunk's address."""
     try:
@@ -264,12 +268,12 @@ async def _get_provider_from_trunk(trunk_id: str) -> str:
                     return "twilio"
                 elif "plivo" in address:
                     return "plivo"
-                return "zadarma"
-        logger.warning(f"Trunk {trunk_id} not found — defaulting to twilio")
-        return "twilio"
+                return DEFAULT_PROVIDER
+        logger.warning(f"Trunk {trunk_id} not found — defaulting to {DEFAULT_PROVIDER}")
+        return DEFAULT_PROVIDER
     except Exception as e:
         logger.error(f"Failed to list trunks for provider detection: {e}")
-        return "twilio"
+        return DEFAULT_PROVIDER
 
 
 @app.post("/api/v1/sip/trunks/outbound")
@@ -354,6 +358,10 @@ async def create_and_call_plivo(request: Request):
     payload = await request.json()
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
+
+    if plivo_client is None:
+        logger.error("plivo_client is None — LIVEKIT_URL may be unset")
+        return JSONResponse({"error": "Plivo client not available"}, status_code=503)
 
     try:
         # 1. Handle SIP Trunk (Provision new or use existing)
