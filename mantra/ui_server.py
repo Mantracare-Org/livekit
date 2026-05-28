@@ -253,7 +253,7 @@ async def _create_sip_outbound_trunk(
         raise
 
 
-DEFAULT_PROVIDER = "twilio"
+DEFAULT_PROVIDER = "zadarma"
 
 async def _get_provider_from_trunk(trunk_id: str) -> str:
     """List all trunks and infer the provider from the matching trunk's address."""
