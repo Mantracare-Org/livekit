@@ -1,10 +1,21 @@
 import os
+
+# Force-disable global proxy so the default LiveKit client (Twilio/Zadarma) bypasses it.
+# The plivo_client will still explicitly use PLIVO_PROXY via its session.
+_PROXY_VARS = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]
+_removed_proxies = []
+for proxy_var in _PROXY_VARS:
+    if proxy_var in os.environ:
+        _removed_proxies.append(f"{proxy_var}={os.environ[proxy_var]}")
+        del os.environ[proxy_var]
+
 import logging
 import json
 import time
 import traceback
 from contextlib import asynccontextmanager
 
+import aiohttp
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,16 +25,24 @@ from dotenv import load_dotenv
 # Load environment variables from .env.local
 load_dotenv(".env.local")
 
-# Persistent LiveKit API client — created once, reused across requests
-lk_client: api.LiveKitAPI = None
+# Second proxy cleanup: dotenv may have re-introduced proxy vars from .env files
+for proxy_var in _PROXY_VARS:
+    if proxy_var in os.environ:
+        _removed_proxies.append(f"{proxy_var}={os.environ[proxy_var]} (via dotenv)")
+        del os.environ[proxy_var]
+
+# Persistent LiveKit API clients
+lk_client: api.LiveKitAPI = None           # Direct — used for Twilio, Zadarma, and general operations
+plivo_client: api.LiveKitAPI = None        # Proxied — used for Plivo (India routing)
+plivo_session: aiohttp.ClientSession = None  # Owned session for plivo_client; closed manually on shutdown
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global lk_client
+    global lk_client, plivo_client, plivo_session
     api_key = os.getenv("LIVEKIT_API_KEY")
     api_secret = os.getenv("LIVEKIT_API_SECRET")
     lk_url = os.getenv("LIVEKIT_URL")
-    
+
     if lk_url:
         if lk_url.startswith("wss://"):
             api_url = lk_url.replace("wss://", "https://")
@@ -33,14 +52,30 @@ async def lifespan(app: FastAPI):
             api_url = lk_url
 
         logger.info(f"Connecting to LiveKit API at {api_url}")
-        lk_client = api.LiveKitAPI(
-            url=api_url,
-            api_key=api_key,
-            api_secret=api_secret
+        if _removed_proxies:
+            logger.info(f"Proxy cleanup: removed {_removed_proxies} from environment")
+        else:
+            logger.info("Proxy cleanup: no proxy env vars found (clean environment)")
+
+        lk_client = api.LiveKitAPI(url=api_url, api_key=api_key, api_secret=api_secret)
+
+        plivo_proxy = os.getenv("PLIVO_PROXY")
+        if plivo_proxy:
+            logger.info(f"Creating Plivo LiveKit client with proxy: {plivo_proxy}")
+        else:
+            logger.info("Creating Plivo LiveKit client without proxy (PLIVO_PROXY not set)")
+        plivo_session = aiohttp.ClientSession(proxy=plivo_proxy)
+        plivo_client = api.LiveKitAPI(
+            url=api_url, api_key=api_key, api_secret=api_secret, session=plivo_session
         )
+
     yield
-    if lk_client:
-        await lk_client.aclose()
+
+    for client in [lk_client, plivo_client]:
+        if client:
+            await client.aclose()
+    if plivo_session:
+        await plivo_session.close()
 
 app = FastAPI(lifespan=lifespan)
 logger = logging.getLogger("mantra.ui_server")
@@ -210,7 +245,10 @@ async def handle_outbound_call_webhook(request: Request):
     })
 
 
-async def _create_sip_outbound_trunk(name: str, address: str, numbers: list, auth_username: str, auth_password: str):
+async def _create_sip_outbound_trunk(
+    name: str, address: str, numbers: list, auth_username: str, auth_password: str,
+    client: api.LiveKitAPI = None, destination_country: str = None,
+):
     """
     Internal helper to create a SIP outbound trunk via LiveKit API.
     Handles field validation and normalization (e.g., ensuring numbers is a list).
@@ -226,6 +264,7 @@ async def _create_sip_outbound_trunk(name: str, address: str, numbers: list, aut
     elif not isinstance(numbers, list):
         numbers = [str(numbers)]
 
+    svc = (client or lk_client).sip
     try:
         logger.info(f"Creating SIP outbound trunk: {name} at {address}")
         trunk_request = api.CreateSIPOutboundTrunkRequest(
@@ -234,11 +273,12 @@ async def _create_sip_outbound_trunk(name: str, address: str, numbers: list, aut
                 address=address,
                 numbers=numbers,
                 auth_username=auth_username,
-                auth_password=auth_password
+                auth_password=auth_password,
+                destination_country=destination_country
             )
         )
         
-        trunk = await lk_client.sip.create_outbound_trunk(trunk_request)
+        trunk = await svc.create_outbound_trunk(trunk_request)
         logger.info(f"Successfully created SIP outbound trunk: {trunk.sip_trunk_id} ({name})")
         return trunk
     except Exception as e:
@@ -329,6 +369,10 @@ async def create_and_call_plivo(request: Request):
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
 
+    if plivo_client is None:
+        logger.error("plivo_client is None — LIVEKIT_URL may be unset")
+        return JSONResponse({"error": "Plivo client not available"}, status_code=503)
+
     try:
         # 1. Handle SIP Trunk (Provision new or use existing)
         trunk_data = payload.get("trunk")
@@ -339,7 +383,9 @@ async def create_and_call_plivo(request: Request):
                 address=trunk_data.get("address"),
                 numbers=trunk_data.get("numbers"),
                 auth_username=trunk_data.get("authUsername") or trunk_data.get("auth_username") or trunk_data.get("auth_user"),
-                auth_password=trunk_data.get("authPassword") or trunk_data.get("auth_password") or trunk_data.get("auth_pass")
+                auth_password=trunk_data.get("authPassword") or trunk_data.get("auth_password") or trunk_data.get("auth_pass"),
+                client=plivo_client,
+                destination_country="in"
             )
             trunk_id = trunk.sip_trunk_id
         elif "numbers" in payload and ("authUsername" in payload or "auth_username" in payload or "auth_user" in payload):
@@ -349,7 +395,9 @@ async def create_and_call_plivo(request: Request):
                 address=payload.get("address"),
                 numbers=payload.get("numbers"),
                 auth_username=payload.get("authUsername") or payload.get("auth_username") or payload.get("auth_user"),
-                auth_password=payload.get("authPassword") or payload.get("auth_password") or payload.get("auth_pass")
+                auth_password=payload.get("authPassword") or payload.get("auth_password") or payload.get("auth_pass"),
+                client=plivo_client,
+                destination_country="in"
             )
             trunk_id = trunk.sip_trunk_id
         else:
