@@ -1,4 +1,11 @@
 import os
+
+# Force-disable global proxy so the default LiveKit client (Twilio/Zadarma) bypasses it.
+# The plivo_client will still explicitly use PLIVO_PROXY via its session.
+for proxy_var in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]:
+    if proxy_var in os.environ:
+        del os.environ[proxy_var]
+
 import logging
 import json
 import time
@@ -39,8 +46,11 @@ async def lifespan(app: FastAPI):
 
         lk_client = api.LiveKitAPI(url=api_url, api_key=api_key, api_secret=api_secret)
 
-        plivo_proxy = os.getenv("PLIVO_PROXY", "http://15.206.0.235:8888")
-        logger.info(f"Creating Plivo LiveKit client with proxy: {plivo_proxy}")
+        plivo_proxy = os.getenv("PLIVO_PROXY")
+        if plivo_proxy:
+            logger.info(f"Creating Plivo LiveKit client with proxy: {plivo_proxy}")
+        else:
+            logger.info("Creating Plivo LiveKit client without proxy (PLIVO_PROXY not set)")
         plivo_session = aiohttp.ClientSession(proxy=plivo_proxy)
         plivo_client = api.LiveKitAPI(
             url=api_url, api_key=api_key, api_secret=api_secret, session=plivo_session

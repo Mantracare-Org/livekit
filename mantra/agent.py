@@ -4,6 +4,12 @@ import asyncio
 import os
 import datetime
 import sys
+
+# Force-disable global proxy for the agent process so it doesn't break WebSocket/WebRTC
+# connections to LiveKit, Deepgram, and Cartesia. The UI Server handles the Plivo proxy separately.
+for proxy_var in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]:
+    if proxy_var in os.environ:
+        del os.environ[proxy_var]
 # import colorama
 # from colorama import Fore, Style
 
