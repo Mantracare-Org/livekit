@@ -2,8 +2,11 @@ import os
 
 # Force-disable global proxy so the default LiveKit client (Twilio/Zadarma) bypasses it.
 # The plivo_client will still explicitly use PLIVO_PROXY via its session.
-for proxy_var in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]:
+_PROXY_VARS = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]
+_removed_proxies = []
+for proxy_var in _PROXY_VARS:
     if proxy_var in os.environ:
+        _removed_proxies.append(f"{proxy_var}={os.environ[proxy_var]}")
         del os.environ[proxy_var]
 
 import logging
@@ -21,6 +24,12 @@ from dotenv import load_dotenv
 
 # Load environment variables from .env.local
 load_dotenv(".env.local")
+
+# Second proxy cleanup: dotenv may have re-introduced proxy vars from .env files
+for proxy_var in _PROXY_VARS:
+    if proxy_var in os.environ:
+        _removed_proxies.append(f"{proxy_var}={os.environ[proxy_var]} (via dotenv)")
+        del os.environ[proxy_var]
 
 # Persistent LiveKit API clients
 lk_client: api.LiveKitAPI = None           # Direct — used for Twilio, Zadarma, and general operations
@@ -43,6 +52,10 @@ async def lifespan(app: FastAPI):
             api_url = lk_url
 
         logger.info(f"Connecting to LiveKit API at {api_url}")
+        if _removed_proxies:
+            logger.info(f"Proxy cleanup: removed {_removed_proxies} from environment")
+        else:
+            logger.info("Proxy cleanup: no proxy env vars found (clean environment)")
 
         lk_client = api.LiveKitAPI(url=api_url, api_key=api_key, api_secret=api_secret)
 
