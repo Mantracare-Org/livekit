@@ -77,6 +77,23 @@ for proxy_var in _PROXY_VARS:
         logger.warning(f"Proxy var {proxy_var} was re-introduced by dotenv — removing it")
         del os.environ[proxy_var]
 
+# Startup diagnostics: verify critical API keys are present
+# In Docker, .env.local is excluded by .dockerignore — keys must come from docker-compose env vars
+_critical_keys = {
+    "LIVEKIT_URL": os.getenv("LIVEKIT_URL"),
+    "LIVEKIT_API_KEY": os.getenv("LIVEKIT_API_KEY"),
+    "LIVEKIT_API_SECRET": os.getenv("LIVEKIT_API_SECRET"),
+    "DEEPGRAM_API_KEY": os.getenv("DEEPGRAM_API_KEY"),
+    "CARTESIA_API_KEY": os.getenv("CARTESIA_API_KEY"),
+    "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
+}
+_missing = [k for k, v in _critical_keys.items() if not v]
+if _missing:
+    logger.error(f"⚠️ MISSING CRITICAL ENV VARS: {_missing} — agent will NOT function correctly!")
+    logger.error("Ensure these are set in your docker-compose.yml or .env file on the production server.")
+else:
+    logger.info("All critical API keys present ✓")
+
 server = AgentServer()
 
 @server.rtc_session(agent_name="mantra-agent")
