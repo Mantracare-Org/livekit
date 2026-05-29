@@ -234,7 +234,7 @@ async def handle_outbound_call_webhook(request: Request):
 
 async def _create_sip_outbound_trunk(
     name: str, address: str, numbers: list, auth_username: str, auth_password: str,
-    client: api.LiveKitAPI = None,
+    client: api.LiveKitAPI = None, destination_country: str = None,
 ):
     if not all([name, address, numbers, auth_username, auth_password]):
         missing = [f for f, v in [("name", name), ("address", address), ("numbers", numbers),
@@ -252,7 +252,8 @@ async def _create_sip_outbound_trunk(
         trunk_request = api.CreateSIPOutboundTrunkRequest(
             trunk=api.SIPOutboundTrunkInfo(
                 name=name, address=address, numbers=numbers,
-                auth_username=auth_username, auth_password=auth_password
+                auth_username=auth_username, auth_password=auth_password,
+                destination_country=destination_country
             )
         )
         trunk = await svc.create_outbound_trunk(trunk_request)
@@ -385,6 +386,7 @@ async def create_and_call_plivo(request: Request):
                 auth_username=trunk_data.get("authUsername") or trunk_data.get("auth_username") or trunk_data.get("auth_user"),
                 auth_password=trunk_data.get("authPassword") or trunk_data.get("auth_password") or trunk_data.get("auth_pass"),
                 client=plivo_client,
+                destination_country="in"
             )
             trunk_id = trunk.sip_trunk_id
         elif "numbers" in payload and ("authUsername" in payload or "auth_username" in payload or "auth_user" in payload):
@@ -396,6 +398,7 @@ async def create_and_call_plivo(request: Request):
                 auth_username=payload.get("authUsername") or payload.get("auth_username") or payload.get("auth_user"),
                 auth_password=payload.get("authPassword") or payload.get("auth_password") or payload.get("auth_pass"),
                 client=plivo_client,
+                destination_country="in"
             )
             trunk_id = trunk.sip_trunk_id
         else:
