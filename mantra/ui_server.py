@@ -281,23 +281,23 @@ async def _create_sip_outbound_trunk(
 DEFAULT_PROVIDER = "zadarma"
 
 async def _get_provider_from_trunk(trunk_id: str) -> str:
-    """List all trunks and infer the provider from the matching trunk's address."""
+    """Fetch the specific trunk by ID and infer the provider from its address."""
     try:
         response = await lk_client.sip.list_outbound_trunk(
-            api.ListSIPOutboundTrunkRequest()
+            api.ListSIPOutboundTrunkRequest(trunk_ids=[trunk_id])
         )
-        for trunk in response.items:
-            if trunk.sip_trunk_id == trunk_id:
-                address = (trunk.address or "").lower()
-                if "twilio" in address:
-                    return "twilio"
-                elif "plivo" in address:
-                    return "plivo"
-                return DEFAULT_PROVIDER
+        if response.items:
+            trunk = response.items[0]
+            address = (trunk.address or "").lower()
+            if "twilio" in address:
+                return "twilio"
+            elif "plivo" in address:
+                return "plivo"
+            return DEFAULT_PROVIDER
         logger.warning(f"Trunk {trunk_id} not found — defaulting to {DEFAULT_PROVIDER}")
         return DEFAULT_PROVIDER
     except Exception as e:
-        logger.error(f"Failed to list trunks for provider detection: {e}")
+        logger.error(f"Failed to fetch trunk {trunk_id} for provider detection: {e}")
         return DEFAULT_PROVIDER
 
 
