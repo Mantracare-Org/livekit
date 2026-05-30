@@ -4,6 +4,23 @@ import asyncio
 import os
 import datetime
 import sys
+
+# Force HuggingFace and Transformers to run in offline mode using pre-cached models,
+# but allow online access during the image build stage when downloading the model files.
+if "download-files" not in sys.argv:
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+
+# Force-disable global proxy for the agent process so it doesn't break WebSocket/WebRTC
+# connections to LiveKit, Deepgram, and Cartesia. The UI Server handles the Plivo proxy separately.
+_PROXY_VARS = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]
+_removed_proxies = []
+for proxy_var in _PROXY_VARS:
+    if proxy_var in os.environ:
+        _removed_proxies.append(f"{proxy_var}={os.environ[proxy_var]}")
+        del os.environ[proxy_var]
+
 # import colorama
 # from colorama import Fore, Style
 
@@ -20,6 +37,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("mantra.agent")
 logger.info("Initializing process...")
+if _removed_proxies:
+    logger.info(f"Proxy cleanup: removed {_removed_proxies} from environment")
+else:
+    logger.info("Proxy cleanup: no proxy env vars found (clean environment)")
 
 from dotenv import load_dotenv
 
@@ -57,6 +78,29 @@ VOICE_MAPPING = {
 # Load environment variables
 load_dotenv()          # Load .env (OpenAI, etc.)
 load_dotenv(".env.local", override=True)  # Load .env.local (LiveKit, etc.) and override if needed
+
+# Second proxy cleanup: dotenv may have re-introduced proxy vars from .env files
+for proxy_var in _PROXY_VARS:
+    if proxy_var in os.environ:
+        logger.warning(f"Proxy var {proxy_var} was re-introduced by dotenv — removing it")
+        del os.environ[proxy_var]
+
+# Startup diagnostics: verify critical API keys are present
+# In Docker, .env.local is excluded by .dockerignore — keys must come from docker-compose env vars
+_critical_keys = {
+    "LIVEKIT_URL": os.getenv("LIVEKIT_URL"),
+    "LIVEKIT_API_KEY": os.getenv("LIVEKIT_API_KEY"),
+    "LIVEKIT_API_SECRET": os.getenv("LIVEKIT_API_SECRET"),
+    "DEEPGRAM_API_KEY": os.getenv("DEEPGRAM_API_KEY"),
+    "CARTESIA_API_KEY": os.getenv("CARTESIA_API_KEY"),
+    "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
+}
+_missing = [k for k, v in _critical_keys.items() if not v]
+if _missing:
+    logger.error(f"MISSING CRITICAL ENV VARS: {_missing} — agent will NOT function correctly!")
+    logger.error("Ensure these are set in your docker-compose.yml or .env file on the production server.")
+else:
+    logger.info("All critical API keys present")
 
 server = AgentServer()
 

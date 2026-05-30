@@ -1192,6 +1192,7 @@ name = "livekit-agent"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "asyncpg" },
     { name = "boto3" },
     { name = "fastapi" },
@@ -1215,6 +1216,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.9.0" },
     { name = "asyncpg" },
     { name = "boto3", specifier = ">=1.35.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
