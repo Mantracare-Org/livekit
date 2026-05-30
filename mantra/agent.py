@@ -282,13 +282,15 @@ Follow these specific instructions:
         cartesia_keys = [None]
 
     # Setup Fallback TTS using the pool of keys to cycle on rate limits (429) / connection failures
+    # Language is auto-detected by Cartesia from text; can be overridden via payload tts_language
+    tts_language = ai_p.get("tts_language") or payload.get("tts_language")
     tts_pool = [
         cartesia.TTS(
             model="sonic-3",
             voice=voice_id,
             speed=voice_speed,
-            language="hi",
-            api_key=key
+            api_key=key,
+            **(dict(language=tts_language) if tts_language else {})
         )
         for key in cartesia_keys
     ]
