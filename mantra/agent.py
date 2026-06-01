@@ -338,88 +338,127 @@ Follow these specific instructions:
     # Wait for session to end, then finalize everything
     @session.on("close")
     def on_session_close():
+        # Capture session data synchronously before async task runs
+        # (avoids race where session cleans up resources before finalize() starts)
+        history_snapshot = list(session.history.messages()) if session.history else []
+        llm_engine = session.llm
+        logger.info(f"Session closed — spawning finalize (history: {len(history_snapshot)} messages)")
+
         async def finalize():
-            logger.info("Session closed — starting post-call processing...")
-
-            # 0. Pre-load call metadata for predictable S3 naming and webhook
-            try:
-                call_payload = json.loads(ctx.job.metadata) if ctx.job.metadata else {}
-            except Exception as e:
-                logger.error(f"Failed to parse metadata in finalize: {e}")
-                call_payload = {}
-
-            # 1. Build recording MP3 in memory
-            mp3_bytes = recorder.get_combined_mp3_bytes()
-            
-            # 2. Upload recording to S3
             recording_url = ""
-            if mp3_bytes:
-                # Priority: call_id -> voice_id
-                call_id = call_payload.get("call_id") or call_payload.get("voice_id")
-                if call_id:
-                    s3_key = f"recordings/{call_id}.mp3"
-                else:
-                    s3_key = f"recordings/{session_id}_{ctx.room.name}.mp3"
-                
-                recording_url = upload_to_s3(mp3_bytes, s3_key) or ""
-            
-            # 3. Build transcript in memory
-            history = session.history.messages()
-            transcript_data = SessionRecorder.build_transcript(history)
-            
-            # 4. Generate summary in memory
-            summary_text = await SessionRecorder.generate_summary(session.llm, history)
-            
-            # 5. Calculate duration
+            transcript_data = ""
+            summary_text = ""
             duration = 0
-            if recorder.start_time and recorder.end_time:
-                duration = int((recorder.end_time - recorder.start_time).total_seconds())
-            
-            # 6. Parse additional data from summary
-            sentiment_score, next_call_on, parsed_custom_fields = SessionRecorder.parse_summary_data(summary_text)
-            
-            # Combine payload's client_custom_fields with parsed ones
-            client_custom_fields = call_payload.get("client_custom_fields", {})
-            for k, v in parsed_custom_fields.items():
-                if v:  # Only update if the parsed value is not empty
-                    client_custom_fields[k] = v
-            
-            # Determine call status based on duration
-            call_status = "Completed"
-            if duration < 10:
-                call_status = "Incomplete"
-            
-            # 8. Build webhook payload
-            webhook_payload = {
-                "event": "CALL_DATA_UPDATE",
-                "data": {
-                    "client_id": call_payload.get("lead_id"),
-                    "call_id": call_payload.get("call_id") or call_payload.get("voice_id"),
-                    "call_status": call_status,
-                    "call_transcript": transcript_data,
-                    "ai_summary": summary_text,
-                    "recording_url": recording_url,
-                    "call_duration_seconds": duration,
-                    "next_call_on": next_call_on,
-                    "ai_call_id": ctx.job.id,
-                    "new_stage_id": call_payload.get("stage_id"),
-                    "process_id": call_payload.get("process_id"),
-                    "notes": "",
-                    "metadata": call_payload.get("metadata", {}),
-                    "client_custom_fields": client_custom_fields,
-                    "call_custom_fields": call_payload.get("call_custom_fields", {}),
-                    "url": ""
+            call_status = "Error"
+            webhook_payload = None
+
+            try:
+                logger.info("Starting post-call processing...")
+
+                # 1. Pre-load call metadata
+                try:
+                    call_payload = json.loads(ctx.job.metadata) if ctx.job.metadata else {}
+                except Exception as e:
+                    logger.error(f"Failed to parse metadata: {e}")
+                    call_payload = {}
+
+                # 2. Build recording and upload to S3
+                try:
+                    mp3_bytes = recorder.get_combined_mp3_bytes()
+                    if mp3_bytes:
+                        call_id = call_payload.get("call_id") or call_payload.get("voice_id")
+                        s3_key = f"recordings/{call_id}.mp3" if call_id else f"recordings/{session_id}_{ctx.room.name}.mp3"
+                        recording_url = upload_to_s3(mp3_bytes, s3_key) or ""
+                        logger.info(f"S3 recording: {'uploaded' if recording_url else 'upload failed'}")
+                    else:
+                        logger.info("No audio data captured for recording")
+                except Exception as e:
+                    logger.error(f"Recording/S3 step failed: {e}", exc_info=True)
+
+                # 3. Build transcript from captured history snapshot
+                try:
+                    transcript_data = SessionRecorder.build_transcript(list(history_snapshot))
+                    logger.info(f"Transcript built ({len(history_snapshot)} messages)")
+                except Exception as e:
+                    logger.error(f"Transcript step failed: {e}", exc_info=True)
+
+                # 4. Generate summary using captured LLM reference
+                try:
+                    if llm_engine and history_snapshot:
+                        summary_text = await SessionRecorder.generate_summary(llm_engine, list(history_snapshot))
+                        logger.info(f"Summary generated ({len(summary_text)} chars)")
+                    else:
+                        logger.warning("Skipping summary: LLM or history unavailable after session close")
+                except Exception as e:
+                    logger.error(f"Summary generation failed: {e}", exc_info=True)
+
+                # 5. Calculate duration
+                if recorder.start_time and recorder.end_time:
+                    duration = int((recorder.end_time - recorder.start_time).total_seconds())
+
+                # 6. Parse additional data from summary
+                sentiment_score, next_call_on, parsed_custom_fields = SessionRecorder.parse_summary_data(summary_text)
+
+                # Combine payload's client_custom_fields with parsed ones
+                client_custom_fields = call_payload.get("client_custom_fields", {})
+                for k, v in parsed_custom_fields.items():
+                    if v:
+                        client_custom_fields[k] = v
+
+                # Determine call status based on duration
+                call_status = "Completed"
+                if duration < 10:
+                    call_status = "Incomplete"
+
+                # 7. Build webhook payload
+                webhook_payload = {
+                    "event": "CALL_DATA_UPDATE",
+                    "data": {
+                        "client_id": call_payload.get("lead_id"),
+                        "call_id": call_payload.get("call_id") or call_payload.get("voice_id"),
+                        "call_status": call_status,
+                        "call_transcript": transcript_data,
+                        "ai_summary": summary_text,
+                        "recording_url": recording_url,
+                        "call_duration_seconds": duration,
+                        "next_call_on": next_call_on,
+                        "ai_call_id": ctx.job.id,
+                        "new_stage_id": call_payload.get("stage_id"),
+                        "process_id": call_payload.get("process_id"),
+                        "notes": "",
+                        "metadata": call_payload.get("metadata", {}),
+                        "client_custom_fields": client_custom_fields,
+                        "call_custom_fields": call_payload.get("call_custom_fields", {}),
+                        "url": ""
+                    }
                 }
-            }
-            
-            # 9. Send to MantraAssist backend
-            delivered = await send_to_backend(webhook_payload)
-            
+
+            except Exception as e:
+                logger.error(f"Pipeline error in finalize: {e}", exc_info=True)
+
+            # 8. Send to MantraAssist backend (always attempted, even if pipeline failed)
+            try:
+                if webhook_payload is None:
+                    webhook_payload = {
+                        "event": "CALL_DATA_UPDATE",
+                        "data": {
+                            "ai_call_id": ctx.job.id,
+                            "call_status": "Error",
+                            "notes": "Post-call pipeline encountered an error — minimal payload sent",
+                        }
+                    }
+
+                logger.info(f"Delivering post-call webhook to backend...")
+                delivered = await send_to_backend(webhook_payload)
+            except Exception as e:
+                logger.error(f"Webhook delivery failed: {e}", exc_info=True)
+                delivered = False
+
             logger.info(
                 f"Post-call processing complete | "
                 f"Call ID: {ctx.job.id} | "
-                f"Lead: {webhook_payload['data']['client_id']} | "
-                f"Status: {call_status} | "
+                f"Lead: {webhook_payload.get('data', {}).get('client_id', 'N/A')} | "
+                f"Status: {webhook_payload.get('data', {}).get('call_status', 'N/A')} | "
                 f"Duration: {duration}s | "
                 f"S3: {'✓' if recording_url else '✗'} | "
                 f"Backend: {'✓' if delivered else '✗'}"
