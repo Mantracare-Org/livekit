@@ -56,11 +56,15 @@ async def send_to_backend(payload: dict, max_retries: int = 3) -> bool:
     else:
         logger.warning("MANTRAASSIST_WEBHOOK_SECRET not set — sending unsigned request")
 
-    logger.info(f"Delivering post-call webhook to: {url}")
+    # Use PLIVO_PROXY if set (not removed by agent.py proxy cleanup) for outbound webhook.
+    # The container may need this proxy to resolve external hostnames.
+    webhook_proxy = os.getenv("PLIVO_PROXY") or os.getenv("HTTPS_PROXY") or os.getenv("https_proxy")
+
+    logger.info(f"Delivering post-call webhook to: {url}" + (f" via proxy: {webhook_proxy}" if webhook_proxy else ""))
 
     for attempt in range(1, max_retries + 1):
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=30.0, proxy=webhook_proxy) as client:
                 resp = await client.post(url, content=payload_str, headers=headers)
                 resp.raise_for_status()
                 logger.info(f"Backend webhook delivered successfully (HTTP {resp.status_code})")
