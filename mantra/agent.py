@@ -215,7 +215,8 @@ Follow these specific instructions:
         model_name = str(model_name).lower()
         
         # Priority for Voice: ai_payload.voice_id -> payload.voice_id -> voice_name -> voice -> default "arushi"
-        voice_input = ai_p.get("voice_id") or payload.get("voice_id") or payload.get("voice_name") or payload.get("voice") or "arushi"
+        _raw_voice = ai_p.get("voice_id") or payload.get("voice_id") or payload.get("voice_name") or payload.get("voice") or "arushi"
+        voice_input = "arushi" if _raw_voice in (None, "null", "None") else _raw_voice
         voice_id = VOICE_MAPPING.get(str(voice_input).lower(), voice_input)
         
         # Priority for Speed: ai_payload.voice_speed -> payload.voice_speed -> default 1.05
