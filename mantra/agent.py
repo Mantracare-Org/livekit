@@ -382,35 +382,53 @@ Follow these specific instructions:
                 except Exception as e:
                     logger.error(f"Transcript step failed: {e}", exc_info=True)
 
-                # 4. Generate summary using captured LLM reference
-                try:
-                    if llm_engine and history_snapshot:
-                        summary_text = await SessionRecorder.generate_summary(llm_engine, list(history_snapshot))
-                        logger.info(f"Summary generated ({len(summary_text)} chars)")
-                    else:
-                        logger.warning("Skipping summary: LLM or history unavailable after session close")
-                except Exception as e:
-                    logger.error(f"Summary generation failed: {e}", exc_info=True)
-
-                # 5. Calculate duration
+                # 4. Calculate duration
                 if recorder.start_time and recorder.end_time:
                     duration = int((recorder.end_time - recorder.start_time).total_seconds())
-
-                # 6. Parse additional data from summary
-                sentiment_score, next_call_on, parsed_custom_fields = SessionRecorder.parse_summary_data(summary_text)
-
-                # Combine payload's client_custom_fields with parsed ones
-                client_custom_fields = call_payload.get("client_custom_fields", {})
-                for k, v in parsed_custom_fields.items():
-                    if v:
-                        client_custom_fields[k] = v
 
                 # Determine call status based on duration
                 call_status = "Completed"
                 if duration < 10:
                     call_status = "Incomplete"
 
-                # 7. Build webhook payload
+                # 5. Run unified analysis to generate summary, stage transition, and metadata
+                current_stage_id = call_payload.get("stage_id")
+                stage_details = call_payload.get("stageDetails", [])
+                
+                summary_text = ""
+                new_stage_id = current_stage_id
+                next_call_on = None
+                client_custom_fields = call_payload.get("client_custom_fields", {})
+                if not isinstance(client_custom_fields, dict):
+                    client_custom_fields = {}
+
+                try:
+                    if llm_engine and history_snapshot:
+                        analysis = await SessionRecorder.analyze_call(
+                            llm_engine=llm_engine,
+                            history=list(history_snapshot),
+                            current_stage_id=current_stage_id,
+                            stage_details=stage_details,
+                            duration=duration
+                        )
+                        summary_text = analysis["summary"]
+                        new_stage_id = analysis["new_stage_id"]
+                        next_call_on = analysis["next_call_on"]
+                        
+                        if analysis.get("appointment_date_time"):
+                            client_custom_fields["appointment_date_time"] = analysis["appointment_date_time"]
+                        if analysis.get("doctor"):
+                            client_custom_fields["doctor"] = analysis["doctor"]
+                        if analysis.get("hospital_location"):
+                            client_custom_fields["hospital_location"] = analysis["hospital_location"]
+                        
+                        logger.info(f"Analysis completed. New Stage ID: {new_stage_id}, Next Call On: {next_call_on}")
+                    else:
+                        logger.warning("Skipping analysis: LLM or history unavailable after session close")
+                except Exception as e:
+                    logger.error(f"Analysis or summary generation failed: {e}", exc_info=True)
+
+                # 6. Build webhook payload
                 webhook_payload = {
                     "event": "CALL_DATA_UPDATE",
                     "data": {
@@ -423,7 +441,7 @@ Follow these specific instructions:
                         "call_duration_seconds": duration,
                         "next_call_on": next_call_on,
                         "ai_call_id": ctx.job.id,
-                        "new_stage_id": call_payload.get("stage_id"),
+                        "new_stage_id": new_stage_id,
                         "process_id": call_payload.get("process_id"),
                         "notes": "",
                         "metadata": call_payload.get("metadata", {}),
