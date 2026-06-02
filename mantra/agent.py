@@ -52,7 +52,7 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from livekit.plugins import assemblyai, openai, google, cartesia, silero, deepgram
 
 # Import our production helpers
-from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend
+from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend, normalize_to_iso8601
 
 
 
@@ -439,7 +439,7 @@ Follow these specific instructions:
                         "ai_summary": summary_text,
                         "recording_url": recording_url,
                         "call_duration_seconds": duration,
-                        "next_call_on": next_call_on,
+                        "next_call_on": normalize_to_iso8601(next_call_on),
                         "ai_call_id": ctx.job.id,
                         "new_stage_id": new_stage_id,
                         "process_id": call_payload.get("process_id"),
