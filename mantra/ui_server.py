@@ -20,6 +20,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from livekit import api
+from livekit.protocol import sip as proto_sip
+from livekit.protocol import room as proto_room
+from livekit.protocol import agent_dispatch as proto_agent_dispatch
 from dotenv import load_dotenv
 
 # Load environment variables from .env.local
@@ -145,6 +148,76 @@ async def dispatch_test(request: Request):
         "token": token.to_jwt(),
         "url": os.getenv("LIVEKIT_URL"),
     })
+
+
+@app.post("/api/v1/test/inbound-call")
+async def test_inbound_call(request: Request):
+    """
+    Test inbound call behavior by having the system call YOUR phone.
+    The agent will think it's an inbound call and greet you accordingly.
+    Requires an outbound SIP trunk to place the call to your phone.
+    """
+    payload = await request.json()
+    if not payload:
+        return JSONResponse({"error": "No payload provided"}, status_code=400)
+
+    phone = payload.get("phone") or payload.get("client_phone")
+    country_code = str(payload.get("country_code") or payload.get("client_country_code") or "91").strip("+")
+    trunk_id = payload.get("trunk_id") or os.getenv("SIP_TRUNK_ID")
+    prompt = payload.get("prompt", "You are a healthcare assistant. Greet the caller warmly and ask how you can help them today.")
+    voice = payload.get("voice", "arushi")
+    model = payload.get("model", "openai")
+
+    if not phone:
+        return JSONResponse({"error": "phone is required"}, status_code=400)
+    if not trunk_id:
+        return JSONResponse({"error": "No SIP trunk ID configured. Set trunk_id in payload or SIP_TRUNK_ID in env."}, status_code=500)
+
+    phone_number = f"+{country_code}{phone}" if not phone.startswith("+") else phone
+    call_id = payload.get("call_id") or int(time.time())
+    room_name = f"test_inbound_{call_id}"
+
+    agent_metadata = {
+        "direction": "inbound",
+        "call_id": str(call_id),
+        "client_phone": phone_number,
+        "prompt": prompt,
+        "voice": voice,
+        "model": model,
+    }
+
+    try:
+        logger.info(f"[Inbound Test] Step 1: Dispatching agent to room {room_name}")
+        await lk_client.agent_dispatch.create_dispatch(
+            api.CreateAgentDispatchRequest(
+                room=room_name,
+                agent_name="mantra-agent",
+                metadata=json.dumps(agent_metadata)
+            )
+        )
+
+        logger.info(f"[Inbound Test] Step 2: Calling {phone_number} via trunk {trunk_id}")
+        sip_part = await lk_client.sip.create_sip_participant(
+            api.CreateSIPParticipantRequest(
+                sip_trunk_id=trunk_id,
+                sip_call_to=phone_number,
+                room_name=room_name,
+                participant_identity=f"sip_{call_id}",
+                participant_name="Inbound Test Caller"
+            )
+        )
+
+        logger.info(f"[Inbound Test] Call initiated: {sip_part.participant_identity}")
+        return JSONResponse({
+            "status": "success",
+            "message": "Agent dispatched as inbound. You should receive a call shortly.",
+            "room": room_name,
+            "phone": phone_number,
+            "participant": sip_part.participant_identity,
+        })
+    except Exception as e:
+        logger.error(f"[Inbound Test] Failed: {e}\n{traceback.format_exc()}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.post("/api/v1/webhooks/telephony")
@@ -537,6 +610,240 @@ async def delete_sip_outbound_trunk(trunk_id: str):
         })
     except Exception as e:
         logger.error(f"Failed to delete SIP outbound trunk {trunk_id}: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ──────────────────────────────────────────────
+# INBOUND SIP TRUNK CRUD
+# ──────────────────────────────────────────────
+
+@app.post("/api/v1/sip/trunks/inbound")
+async def create_inbound_sip_trunk(request: Request):
+    """Create a SIP inbound trunk for receiving incoming calls."""
+    payload = await request.json()
+    if not payload:
+        return JSONResponse({"error": "No payload provided"}, status_code=400)
+
+    name = payload.get("name")
+    numbers = payload.get("numbers")
+    auth_username = payload.get("authUsername") or payload.get("auth_username") or payload.get("auth_user")
+    auth_password = payload.get("authPassword") or payload.get("auth_password") or payload.get("auth_pass")
+
+    if not all([name, numbers, auth_username, auth_password]):
+        missing = [f for f, v in [
+            ("name", name), ("numbers", numbers),
+            ("auth_username", auth_username), ("auth_password", auth_password)
+        ] if not v]
+        return JSONResponse({"error": f"Missing required fields: {', '.join(missing)}"}, status_code=400)
+
+    if isinstance(numbers, str):
+        numbers = [n.strip() for n in numbers.split(",") if n.strip()]
+
+    logger.info(f"Creating inbound SIP trunk: {name} — numbers: {numbers}")
+
+    try:
+        trunk = proto_sip.SIPInboundTrunkInfo(
+            name=name,
+            numbers=numbers,
+            auth_username=auth_username,
+            auth_password=auth_password,
+            metadata=json.dumps(payload.get("metadata", {})),
+        )
+        req = proto_sip.CreateSIPInboundTrunkRequest(trunk=trunk)
+        result = await lk_client.sip.create_inbound_trunk(req)
+
+        logger.info(f"Inbound trunk created: {result.sip_trunk_id} ({name})")
+        return JSONResponse({
+            "status": "success",
+            "sip_trunk_id": result.sip_trunk_id,
+            "name": result.name,
+            "numbers": list(result.numbers),
+        })
+    except Exception as e:
+        logger.error(f"Failed to create inbound trunk: {e}\n{traceback.format_exc()}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/v1/sip/trunks/inbound")
+async def list_inbound_sip_trunks():
+    """List all SIP inbound trunks."""
+    try:
+        req = proto_sip.ListSIPInboundTrunkRequest()
+        response = await lk_client.sip.list_inbound_trunk(req)
+
+        trunk_list = []
+        for item in response.items:
+            trunk_list.append({
+                "sip_trunk_id": item.sip_trunk_id,
+                "name": item.name,
+                "numbers": list(item.numbers),
+                "allowed_addresses": list(item.allowed_addresses),
+                "allowed_numbers": list(item.allowed_numbers),
+                "media_encryption": item.media_encryption,
+                "created_at": str(item.created_at),
+            })
+
+        return JSONResponse({
+            "status": "success",
+            "count": len(trunk_list),
+            "trunks": trunk_list,
+        })
+    except Exception as e:
+        logger.error(f"Failed to list inbound trunks: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.delete("/api/v1/sip/trunks/inbound/{trunk_id}")
+async def delete_inbound_sip_trunk(trunk_id: str):
+    """Delete a SIP inbound trunk by its trunk ID."""
+    if not trunk_id:
+        return JSONResponse({"error": "Trunk ID is required"}, status_code=400)
+
+    try:
+        await lk_client.sip.delete_trunk(
+            api.DeleteSIPTrunkRequest(sip_trunk_id=trunk_id)
+        )
+        logger.info(f"Deleted inbound trunk: {trunk_id}")
+        return JSONResponse({
+            "status": "success",
+            "message": f"Inbound trunk {trunk_id} deleted",
+            "sip_trunk_id": trunk_id,
+        })
+    except Exception as e:
+        logger.error(f"Failed to delete inbound trunk {trunk_id}: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ──────────────────────────────────────────────
+# SIP DISPATCH RULE CRUD (for inbound call routing)
+# ──────────────────────────────────────────────
+
+@app.post("/api/v1/sip/dispatch-rules")
+async def create_sip_dispatch_rule(request: Request):
+    """
+    Create a SIP dispatch rule that routes inbound calls to rooms
+    and auto-dispatches the mantra-agent.
+    """
+    payload = await request.json()
+    if not payload:
+        return JSONResponse({"error": "No payload provided"}, status_code=400)
+
+    trunk_id = payload.get("trunk_id") or payload.get("trunk_ids")
+    if not trunk_id:
+        return JSONResponse({"error": "trunk_id is required"}, status_code=400)
+
+    trunk_ids = [trunk_id] if isinstance(trunk_id, str) else trunk_id
+
+    name = payload.get("name", "inbound-agent-rule")
+    room_prefix = payload.get("room_prefix", "inbound_")
+    metadata = payload.get("metadata", {})
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except Exception:
+            metadata = {}
+
+    agent_prompt = payload.get("prompt", "You are receiving an inbound healthcare call. Greet the caller warmly and assist them.")
+    voice = payload.get("voice", "arushi")
+    model = payload.get("model", "openai")
+
+    agent_metadata = {
+        "direction": "inbound",
+        "trunk_id": trunk_ids[0],
+        "prompt": agent_prompt,
+        "voice": voice,
+        "model": model,
+    }
+    agent_metadata.update(metadata)
+
+    try:
+        rule_info = proto_sip.SIPDispatchRuleInfo(
+            name=name,
+            trunk_ids=trunk_ids,
+            rule=proto_sip.SIPDispatchRule(
+                dispatch_rule_individual=proto_sip.SIPDispatchRuleIndividual(
+                    room_prefix=room_prefix,
+                )
+            ),
+            attributes={"direction": "inbound"},
+            metadata=json.dumps({"direction": "inbound"}),
+            room_config=proto_room.RoomConfiguration(
+                agents=[
+                    proto_agent_dispatch.RoomAgentDispatch(
+                        agent_name="mantra-agent",
+                        metadata=json.dumps(agent_metadata),
+                        restart_policy=proto_agent_dispatch.JobRestartPolicy.JRP_ON_FAILURE,
+                    )
+                ]
+            ),
+        )
+
+        result = await lk_client.sip.create_dispatch_rule(
+            proto_sip.CreateSIPDispatchRuleRequest(dispatch_rule=rule_info)
+        )
+
+        logger.info(f"Dispatch rule created: {result.sip_dispatch_rule_id} ({name})")
+        return JSONResponse({
+            "status": "success",
+            "sip_dispatch_rule_id": result.sip_dispatch_rule_id,
+            "name": result.name,
+            "trunk_ids": list(result.trunk_ids),
+            "room_prefix": room_prefix,
+        })
+    except Exception as e:
+        logger.error(f"Failed to create dispatch rule: {e}\n{traceback.format_exc()}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/v1/sip/dispatch-rules")
+async def list_sip_dispatch_rules():
+    """List all SIP dispatch rules."""
+    try:
+        req = proto_sip.ListSIPDispatchRuleRequest()
+        response = await lk_client.sip.list_dispatch_rule(req)
+
+        rule_list = []
+        for item in response.items:
+            rule_list.append({
+                "sip_dispatch_rule_id": item.sip_dispatch_rule_id,
+                "name": item.name,
+                "trunk_ids": list(item.trunk_ids),
+                "inbound_numbers": list(item.inbound_numbers),
+                "numbers": list(item.numbers),
+                "hide_phone_number": item.hide_phone_number,
+                "metadata": item.metadata,
+                "attributes": dict(item.attributes),
+                "room_preset": item.room_preset,
+            })
+
+        return JSONResponse({
+            "status": "success",
+            "count": len(rule_list),
+            "rules": rule_list,
+        })
+    except Exception as e:
+        logger.error(f"Failed to list dispatch rules: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.delete("/api/v1/sip/dispatch-rules/{rule_id}")
+async def delete_sip_dispatch_rule(rule_id: str):
+    """Delete a SIP dispatch rule by its rule ID."""
+    if not rule_id:
+        return JSONResponse({"error": "Rule ID is required"}, status_code=400)
+
+    try:
+        await lk_client.sip.delete_dispatch_rule(
+            proto_sip.DeleteSIPDispatchRuleRequest(sip_dispatch_rule_id=rule_id)
+        )
+        logger.info(f"Deleted dispatch rule: {rule_id}")
+        return JSONResponse({
+            "status": "success",
+            "message": f"Dispatch rule {rule_id} deleted",
+            "sip_dispatch_rule_id": rule_id,
+        })
+    except Exception as e:
+        logger.error(f"Failed to delete dispatch rule {rule_id}: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 

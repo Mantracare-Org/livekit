@@ -1,0 +1,265 @@
+### ============================================
+### INBOUND CALL TEST PAYLOADS
+### Use with VS Code REST Client or curl
+### Base URL: http://localhost:8081
+### ============================================
+
+### ────────────────────────────────────────────
+### 1. INBOUND SIP TRUNK CRUD
+### ────────────────────────────────────────────
+
+### 1a. Create an inbound trunk (Plivo)
+POST http://localhost:8081/api/v1/sip/trunks/inbound
+Content-Type: application/json
+
+{
+  "name": "plivo-inbound-trunk",
+  "numbers": ["+911234567890"],
+  "auth_username": "MANTA2NJKXNKNKXX",
+  "auth_password": "MjEwYjYxNTg0OTM2ZDdjNTMyYjVhY2E5YWIyY2Rj",
+  "metadata": {
+    "provider": "plivo",
+    "description": "Plivo trunk for India inbound calls"
+  }
+}
+
+### 1b. Create an inbound trunk (Twilio)
+POST http://localhost:8081/api/v1/sip/trunks/inbound
+Content-Type: application/json
+
+{
+  "name": "twilio-inbound-trunk",
+  "numbers": ["+1234567890"],
+  "auth_username": "twilio_account_sid",
+  "auth_password": "twilio_auth_token",
+  "metadata": {
+    "provider": "twilio"
+  }
+}
+
+### 1c. Create inbound trunk with multiple numbers
+POST http://localhost:8081/api/v1/sip/trunks/inbound
+Content-Type: application/json
+
+{
+  "name": "multi-number-inbound-trunk",
+  "numbers": ["+911234567890", "+919876543210"],
+  "auth_username": "sip_username",
+  "auth_password": "sip_password",
+  "metadata": {
+    "provider": "plivo"
+  }
+}
+
+### 1d. List all inbound trunks
+GET http://localhost:8081/api/v1/sip/trunks/inbound
+
+### 1e. Delete an inbound trunk (replace ST_xxxxx)
+DELETE http://localhost:8081/api/v1/sip/trunks/inbound/ST_xxxxx
+
+
+### ────────────────────────────────────────────
+### 2. SIP DISPATCH RULE CRUD
+### ────────────────────────────────────────────
+
+### 2a. Create dispatch rule (minimal)
+POST http://localhost:8081/api/v1/sip/dispatch-rules
+Content-Type: application/json
+
+{
+  "name": "inbound-agent-rule",
+  "trunk_id": "ST_xxxxx",
+  "room_prefix": "inbound_",
+  "prompt": "You are a healthcare assistant at MantraCare. A patient is calling you. Greet them warmly and help them with their health-related queries. Ask how you can assist them today.",
+  "voice": "arushi",
+  "model": "openai"
+}
+
+### 2b. Create dispatch rule (Hindi-focused)
+POST http://localhost:8081/api/v1/sip/dispatch-rules
+Content-Type: application/json
+
+{
+  "name": "hindi-inbound-rule",
+  "trunk_id": "ST_xxxxx",
+  "room_prefix": "inbound_hindi_",
+  "prompt": "Aap MantraCare se baat kar rahe hain. Aapka swagat hai. Kripya bataayein ki aap kya sahayata chahte hain.",
+  "voice": "arushi",
+  "model": "openai"
+}
+
+### 2c. Create dispatch rule (custom model/voice)
+POST http://localhost:8081/api/v1/sip/dispatch-rules
+Content-Type: application/json
+
+{
+  "name": "gemini-inbound-rule",
+  "trunk_id": "ST_xxxxx",
+  "room_prefix": "inbound_gemini_",
+  "prompt": "You are a medical receptionist. Greet the caller and help them book an appointment or connect with the right department.",
+  "voice": "vikas",
+  "model": "gemini"
+}
+
+### 2d. List all dispatch rules
+GET http://localhost:8081/api/v1/sip/dispatch-rules
+
+### 2e. Delete a dispatch rule (replace SR_xxxxx)
+DELETE http://localhost:8081/api/v1/sip/dispatch-rules/SR_xxxxx
+
+
+### ────────────────────────────────────────────
+### 3. OUTBOUND CALL TEST (existing system)
+### ────────────────────────────────────────────
+
+### 3a. Trigger outbound call via webhook
+POST http://localhost:8081/api/v1/webhooks/telephony
+Content-Type: application/json
+
+{
+  "event_name": "telephony_dispatch",
+  "call_id": "test_1717000000",
+  "client_name": "Rahul Sharma",
+  "client_phone": "9876543210",
+  "client_country_code": "91",
+  "trunk_id": "ST_xxxxx",
+  "call_from": "+911234567890",
+  "prompt": "You are calling from MantraCare to follow up on the patient's recent health checkup. Ask if they are feeling better and if they need to schedule a follow-up appointment.",
+  "voice": "arushi",
+  "model": "openai",
+  "lead_id": "lead_123",
+  "stage_id": 5,
+  "stageDetails": [
+    {"stage_id": 1, "description": "Not answering / Failed call"},
+    {"stage_id": 2, "description": "Not interested"},
+    {"stage_id": 3, "description": "Follow up / Call later"},
+    {"stage_id": 4, "description": "Shown interest"},
+    {"stage_id": 5, "description": "Confirmed the appointment"}
+  ],
+  "client_custom_fields": {
+    "city": "Mumbai",
+    "age": 35
+  },
+  "call_custom_fields": {
+    "campaign": "summer_checkup_2026"
+  }
+}
+
+### 3b. Outbound call with DeepSeek model
+POST http://localhost:8081/api/v1/webhooks/telephony
+Content-Type: application/json
+
+{
+  "event_name": "telephony_dispatch",
+  "call_id": "test_1717000001",
+  "client_name": "Priya Singh",
+  "client_phone": "8765432109",
+  "client_country_code": "91",
+  "trunk_id": "ST_xxxxx",
+  "call_from": "+911234567890",
+  "prompt": "You are calling from MantraCare to remind the patient about their upcoming appointment tomorrow at 10 AM.",
+  "ai_payload": {
+    "ai_model": "deepseek",
+    "voice_id": "vikas",
+    "voice_speed": 1.1
+  }
+}
+
+### 3c. Manual dispatch test (no phone call, just agent in room)
+POST http://localhost:8081/dispatch-test
+Content-Type: application/json
+
+{
+  "call_id": "test_manual_001",
+  "client_name": "Test User",
+  "prompt": "This is a test conversation. Ask the user about their health and well-being.",
+  "voice": "arushi",
+  "model": "openai"
+}
+
+
+### ────────────────────────────────────────────
+### 4. PLIVO UNIFIED ENDPOINT (outbound)
+### ────────────────────────────────────────────
+
+### 4a. Provision Plivo trunk + place call
+POST http://localhost:8081/api/v1/sip/trunks/outbound/plivo
+Content-Type: application/json
+
+{
+  "trunk": {
+    "name": "plivo-outbound-trunk",
+    "address": "phone.plivo.com",
+    "numbers": ["+911234567890"],
+    "auth_user": "MANTA2NJKXNKNKXX",
+    "auth_pass": "MjEwYjYxNTg0OTM2ZDdjNTMyYjVhY2E5YWIyY2Rj"
+  },
+  "client_phone": "9876543210",
+  "client_country_code": "91",
+  "call_id": "plivo_test_001",
+  "prompt": "You are calling from MantraCare for a health checkup follow-up.",
+  "call_from": "+911234567890"
+}
+
+### 4b. Provision trunk only (no call)
+POST http://localhost:8081/api/v1/sip/trunks/outbound/plivo
+Content-Type: application/json
+
+{
+  "trunk": {
+    "name": "plivo-trunk-only",
+    "address": "phone.plivo.com",
+    "numbers": ["+911234567890"],
+    "auth_user": "MANTA2NJKXNKNKXX",
+    "auth_pass": "MjEwYjYxNTg0OTM2ZDdjNTMyYjVhY2E5YWIyY2Rj"
+  }
+}
+
+
+### ────────────────────────────────────────────
+### 5. OUTBOUND TRUNK CRUD
+### ────────────────────────────────────────────
+
+### 5a. Create Zadarma outbound trunk
+POST http://localhost:8081/api/v1/sip/trunks/outbound/zadarma
+Content-Type: application/json
+
+{
+  "name": "zadarma-test-trunk",
+  "address": "sip.zadarma.com",
+  "numbers": ["+911234567890"],
+  "authUsername": "zadarma_username",
+  "authPassword": "zadarma_password"
+}
+
+### 5b. Create Twilio outbound trunk
+POST http://localhost:8081/api/v1/sip/trunks/outbound/twilio
+Content-Type: application/json
+
+{
+  "name": "twilio-test-trunk",
+  "address": "live-kit-mc.pstn.twilio.com",
+  "numbers": ["+1234567890"],
+  "auth_user": "twilio_sid",
+  "auth_pass": "twilio_auth_token"
+}
+
+### 5c. List all outbound trunks
+GET http://localhost:8081/api/v1/sip/trunks/outbound
+
+### 5d. Delete outbound trunk
+DELETE http://localhost:8081/api/v1/sip/trunks/outbound/ST_xxxxx
+
+
+### ────────────────────────────────────────────
+### 6. UTILITY
+### ────────────────────────────────────────────
+
+### 6a. Health check
+GET http://localhost:8081/health
+
+### 6b. Get LiveKit config (for frontend)
+GET http://localhost:8081/config
+
+### 6c. Serve frontend UI
+GET http://localhost:8081/

@@ -124,6 +124,22 @@ async def entrypoint(ctx: JobContext):
         if track.kind == rtc.TrackKind.KIND_AUDIO:
             recorder.start_recording(track, "agent")
 
+    client_name = "User"
+    is_inbound = False
+
+    direction_override = ""
+    if ctx.job.metadata:
+        try:
+            payload = json.loads(ctx.job.metadata)
+            is_inbound = payload.get("direction") == "inbound"
+        except Exception:
+            payload = {}
+    
+    if is_inbound:
+        direction_override = "\n--- INBOUND CALL CONTEXT ---\n- This is an INBOUND call. The caller reached out to you.\n- Greet warmly and ask how you can help.\n- Do not assume you know why they are calling. Let them explain.\n- Identify yourself: 'MantraCare' or as instructed in your prompt.\n- If the caller seems confused, help them understand who you are.\n"
+    else:
+        direction_override = ""
+
     initial_instructions = """You are a warm, professional Care Support Assistant on a phone call.
 
 CORE BEHAVIOR:
@@ -138,9 +154,8 @@ CORE BEHAVIOR:
 - RETAIN CONTEXT & AVOID REPETITION: Remember the user's previous answers. Do NOT repeatedly ask the same questions. If they say no or want to focus on something else, acknowledge it and move on. DO NOT be pushy.
 
 Follow these specific instructions:
-"""
-    client_name = "User"
-    
+""" + direction_override
+
     if ctx.job.metadata:
         try:
             payload = json.loads(ctx.job.metadata)
@@ -333,7 +348,10 @@ Follow these specific instructions:
         logger.info("Remote participant joined. Initializing conversation...")
         await asyncio.sleep(2.0)
     
-    await session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
+    if is_inbound:
+        await session.generate_reply(instructions="Greet the caller warmly. Introduce yourself and ask how you can help them today.")
+    else:
+        await session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
     
     # Wait for session to end, then finalize everything
     @session.on("close")
@@ -429,11 +447,22 @@ Follow these specific instructions:
                     logger.error(f"Analysis or summary generation failed: {e}", exc_info=True)
 
                 # 6. Build webhook payload
+                client_phone = None
+                try:
+                    remotes = list(ctx.room.remote_participants.values())
+                    if remotes:
+                        client_phone = remotes[0].identity
+                except Exception as e:
+                    logger.error(f"Failed to get remote participant identity: {e}")
+
                 webhook_payload = {
                     "event": "CALL_DATA_UPDATE",
                     "data": {
                         "client_id": call_payload.get("lead_id"),
                         "call_id": call_payload.get("call_id") or call_payload.get("voice_id"),
+                        "client_phone": client_phone,
+                        "trunk_id": call_payload.get("trunk_id"),
+                        "direction": call_payload.get("direction") or ("inbound" if is_inbound else "outbound"),
                         "call_status": call_status,
                         "call_transcript": transcript_data,
                         "ai_summary": summary_text,
