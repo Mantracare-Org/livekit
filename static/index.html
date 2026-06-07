@@ -451,8 +451,9 @@
             <div class="panel-header">
                 <h4>Manual Test Console</h4>
                 <div class="panel-tabs">
-                    <button class="tab-btn active" data-tab="structured">Structured</button>
+                    <button class="tab-btn active" data-tab="structured">Test Call</button>
                     <button class="tab-btn" data-tab="raw">Raw JSON</button>
+                    <button class="tab-btn" data-tab="inbound">Inbound</button>
                 </div>
             </div>
 
@@ -483,6 +484,86 @@
                 <p class="helper-text">Paste a raw JSON payload from your logs here and click "Parse" to populate the fields.</p>
                 <textarea id="payload-raw" rows="14" placeholder='{ "call_id": 123, ... }'></textarea>
                 <button id="parse-raw-btn" class="btn secondary mb-4">Parse & Populate Fields</button>
+            </div>
+
+            <!-- Inbound Management Tab -->
+            <div id="tab-inbound" class="tab-content">
+                <p class="helper-text">Manage inbound SIP trunks and dispatch rules.</p>
+
+                <div style="display:flex; gap:16px; flex:1;">
+                    <!-- Left: Inbound Trunks -->
+                    <div style="flex:1; display:flex; flex-direction:column; gap:12px;">
+                        <h4 style="font-size:0.85rem; color:var(--text-secondary);">Inbound SIP Trunks</h4>
+                        <div class="field">
+                            <label>Name</label>
+                            <input type="text" id="trunk-name" placeholder="e.g. plivo-inbound">
+                        </div>
+                        <div class="field">
+                            <label>Numbers (comma-separated)</label>
+                            <input type="text" id="trunk-numbers" placeholder="+919876543210,+919876543211">
+                        </div>
+                        <div class="field">
+                            <label>Auth Username</label>
+                            <input type="text" id="trunk-auth-user" placeholder="sip_username">
+                        </div>
+                        <div class="field">
+                            <label>Auth Password</label>
+                            <input type="text" id="trunk-auth-pass" placeholder="sip_password">
+                        </div>
+                        <div class="field">
+                            <label>Headers to Attributes (JSON)</label>
+                            <textarea id="trunk-headers" rows="2" placeholder='{"X-Account-Number": "account_number"}'></textarea>
+                        </div>
+                        <div style="display:flex; gap:8px;">
+                            <button id="create-trunk-btn" class="btn secondary" style="flex:1;">Create Trunk</button>
+                            <button id="list-trunks-btn" class="btn secondary">List</button>
+                        </div>
+                        <div class="field">
+                            <label>Trunk ID (for delete)</label>
+                            <div style="display:flex; gap:8px;">
+                                <input type="text" id="trunk-delete-id" placeholder="ST_xxxxx" style="flex:1;">
+                                <button id="delete-trunk-btn" class="btn secondary">Delete</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right: Dispatch Rules -->
+                    <div style="flex:1; display:flex; flex-direction:column; gap:12px;">
+                        <h4 style="font-size:0.85rem; color:var(--text-secondary);">SIP Dispatch Rules</h4>
+                        <div class="field">
+                            <label>Name</label>
+                            <input type="text" id="rule-name" placeholder="inbound-agent-rule">
+                        </div>
+                        <div class="field">
+                            <label>Trunk ID</label>
+                            <input type="text" id="rule-trunk-id" placeholder="ST_xxxxx">
+                        </div>
+                        <div class="field">
+                            <label>Room Prefix</label>
+                            <input type="text" id="rule-prefix" placeholder="inbound_">
+                        </div>
+                        <div class="field">
+                            <label>Agent Prompt</label>
+                            <textarea id="rule-prompt" rows="2" placeholder="Prompt for the agent"></textarea>
+                        </div>
+                        <div style="display:flex; gap:8px;">
+                            <button id="create-rule-btn" class="btn secondary" style="flex:1;">Create Rule</button>
+                            <button id="list-rules-btn" class="btn secondary">List</button>
+                        </div>
+                        <div class="field">
+                            <label>Rule ID (for delete)</label>
+                            <div style="display:flex; gap:8px;">
+                                <input type="text" id="rule-delete-id" placeholder="SR_xxxxx" style="flex:1;">
+                                <button id="delete-rule-btn" class="btn secondary">Delete</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="inbound-response" class="field mt-4">
+                    <label>Response</label>
+                    <textarea id="inbound-result" rows="6" readonly style="color:#10b981; font-family:monospace;"></textarea>
+                </div>
             </div>
 
             <button id="start-session-btn" class="btn primary full-width mt-4">Start Test Session</button>
