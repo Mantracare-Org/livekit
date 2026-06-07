@@ -54,6 +54,9 @@ from livekit.plugins import assemblyai, openai, google, cartesia, silero, deepgr
 # Import our production helpers
 from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend, normalize_to_iso8601
 
+# MCP server for database tools (patient lookup, appointment booking, etc.)
+from livekit.agents import mcp as lk_mcp
+
 
 
 VOICE_MAPPING = {
@@ -230,6 +233,20 @@ Follow these specific instructions:
             initial_instructions += "1. NEVER repeat the same question twice. If the user dodges the question or asks a counter-question, answer them and DO NOT repeat your previous question.\n"
             initial_instructions += "2. DO NOT push for an appointment if the user hasn't explicitly agreed or if they are asking about other things. Let the conversation flow naturally.\n"
             initial_instructions += "3. Answer user's questions DIRECTLY without appending a sales pitch or appointment request at the end of every turn.\n"
+
+            # ── Database Tool Instructions ──
+            initial_instructions += "\n\n*** DATABASE TOOLS ***\n"
+            initial_instructions += "You have access to a database with patient records, doctors, hospitals, and appointments.\n"
+            initial_instructions += "Use these tools when needed — do NOT ask the patient for information you can look up:\n"
+            initial_instructions += "- To identify a caller: use get_patient_info with their phone number.\n"
+            initial_instructions += "- To list hospitals: use get_hospitals.\n"
+            initial_instructions += "- To find doctors: use get_doctors (optionally filter by hospital name).\n"
+            initial_instructions += "- To check availability: use get_available_slots with doctor ID and date.\n"
+            initial_instructions += "- To book: use create_appointment with patient ID, doctor ID, time, hospital.\n"
+            initial_instructions += "- To reschedule or cancel: use update_appointment with the appointment ID.\n"
+            initial_instructions += "- To view call history: use get_call_history with patient ID or phone.\n"
+            initial_instructions += "- To query any data: use execute_query with a SQL SELECT statement.\n"
+            initial_instructions += "If a tool returns an error or no results, inform the patient and suggest alternatives.\n"
             logger.info(f"Loaded full context for {client_name}")
         except Exception as e:
             logger.error(f"Failed to parse metadata: {e}")
@@ -343,8 +360,24 @@ Follow these specific instructions:
         tts=FallbackAdapter(tts_pool),
     )
 
+    # ── MCP Database Tools ──
+    # Launch the MCP Postgres server as a subprocess so the LLM can query
+    # patient info, doctors, hospital locations, and book appointments.
+    mcp_servers = []
+    try:
+        db_mcp = lk_mcp.MCPServerStdio(
+            command="uv",
+            args=["run", "python", "mcp/server.py"],
+            client_session_timeout_seconds=10,
+        )
+        mcp_servers.append(db_mcp)
+        logger.info("MCP database server configured for agent tools")
+    except Exception as e:
+        logger.warning(f"Failed to configure MCP server: {e} — agent will run without database tools")
+
     agent = Agent(
         instructions=initial_instructions,
+        mcp_servers=mcp_servers if mcp_servers else None,
     )
 
     await session.start(agent=agent, room=ctx.room)
