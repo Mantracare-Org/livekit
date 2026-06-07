@@ -208,7 +208,23 @@ Follow these specific instructions:
             
             if context_body:
                 initial_instructions += context_header + context_body
-                
+
+            # If the call arrived via an external IVR (SIP header passthrough),
+            # inject a dedicated context block so the LLM understands the caller's
+            # origin and reason for calling without having to re-ask.
+            ivr_keys = {"account_number", "call_reason", "department", "language", "user_id", "caller_choice"}
+            ivr_block = ""
+            for key in payload:
+                if key in ivr_keys and payload[key]:
+                    readable = key.replace("_", " ").title()
+                    ivr_block += f"- {readable}: {payload[key]}\n"
+            if ivr_block:
+                initial_instructions += "\n\n--- IVR CONTEXT (from external system) ---\n"
+                initial_instructions += "This caller was pre-screened by an external IVR system:\n"
+                initial_instructions += ivr_block
+                if "call_reason" in payload:
+                    initial_instructions += "- Address their stated reason for calling directly.\n"
+
             # Add an overriding rule at the very end so it takes precedence over the backend prompt
             initial_instructions += "\n\n*** CRITICAL OVERRIDING RULES ***\n"
             initial_instructions += "1. NEVER repeat the same question twice. If the user dodges the question or asks a counter-question, answer them and DO NOT repeat your previous question.\n"

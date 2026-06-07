@@ -67,6 +67,7 @@ Caller dials +911234567890
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | `POST` | `/api/v1/sip/trunks/inbound` | Create inbound trunk |
+| `PATCH` | `/api/v1/sip/trunks/inbound/{trunk_id}` | Partial-update inbound trunk fields |
 | `GET` | `/api/v1/sip/trunks/inbound` | List all inbound trunks |
 | `DELETE` | `/api/v1/sip/trunks/inbound/{trunk_id}` | Delete inbound trunk |
 
@@ -81,12 +82,48 @@ POST /api/v1/sip/trunks/inbound
   "auth_password": "MjEwYjYxNTg0OTM2ZDdjNTMyYjVhY2E5YWIyY2Rj",
   "metadata": {
     "provider": "plivo"
-  }
+  },
+  "headers_to_attributes": {
+    "X-Account-Number": "account_number",
+    "X-Call-Reason": "call_reason",
+    "X-Department": "department",
+    "X-Language": "language",
+    "X-User-ID": "user_id"
+  },
+  "include_headers": "all",
+  "allowed_addresses": ["203.0.113.0/24"],
+  "allowed_numbers": ["+919876543210"]
 }
 ```
 
 **Required fields:** `name`, `numbers`, `auth_username`, `auth_password`
-**Optional:** `metadata`, `allowed_addresses`, `allowed_numbers`
+**Optional:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `metadata` | object/string | `{}` | Arbitrary metadata JSON |
+| `allowed_addresses` | string[] | `[]` | IP/CIDR whitelist for inbound SIP |
+| `allowed_numbers` | string[] | `[]` | Phone numbers allowed to call in |
+| `include_headers` | string | `"x_headers"` | SIP headers to forward: `"none"`, `"x_headers"`, or `"all"` |
+| `headers_to_attributes` | object | `{}` | Map SIP header → room attribute key for IVR context passthrough |
+
+> **IVR Integration:** When `headers_to_attributes` is set, the external IVR's custom SIP
+> headers (e.g., `X-Account-Number`, `X-Call-Reason`) are automatically extracted into room
+> attributes and forwarded to the agent as LLM context. Set `include_headers: "all"` to
+> preserve all SIP headers for debugging.
+
+#### Update Inbound Trunk (PATCH)
+
+```json
+PATCH /api/v1/sip/trunks/inbound/ST_9crXjawUyeJp
+{
+  "allowed_addresses": ["203.0.113.0/24"],
+  "name": "updated-trunk-name"
+}
+```
+
+Only provided fields are updated. Supported: `name`, `numbers`, `allowed_addresses`,
+`allowed_numbers`, `auth_username`, `auth_password`, `metadata`.
 
 #### Response
 
@@ -106,6 +143,7 @@ POST /api/v1/sip/trunks/inbound
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | `POST` | `/api/v1/sip/dispatch-rules` | Create dispatch rule with auto-agent |
+| `PATCH` | `/api/v1/sip/dispatch-rules/{rule_id}` | Partial-update dispatch rule fields |
 | `GET` | `/api/v1/sip/dispatch-rules` | List all dispatch rules |
 | `DELETE` | `/api/v1/sip/dispatch-rules/{rule_id}` | Delete dispatch rule |
 
@@ -117,22 +155,64 @@ POST /api/v1/sip/dispatch-rules
   "name": "plivo-inbound-rule",
   "trunk_id": "ST_9crXjawUyeJp",
   "room_prefix": "inbound_",
+  "inbound_numbers": ["+911234567890", "+911234567891"],
   "prompt": "You are a healthcare assistant at MantraCare. A patient is calling you. Greet them warmly and ask how you can help.",
   "voice": "arushi",
-  "model": "openai"
+  "model": "openai",
+  "pin": "1234",
+  "no_randomness": false,
+  "attributes": {
+    "source": "ivr",
+    "department": "billing"
+  }
 }
 ```
 
 **Required fields:** `trunk_id`
-**Optional:** `name`, `room_prefix`, `prompt`, `voice`, `model`, `metadata`
+**Optional:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | `"inbound-agent-rule"` | Rule name |
+| `room_prefix` | string | `"inbound_"` | Room name prefix |
+| `inbound_numbers` | string[] | — | **DNIS routing:** only match calls to these DID numbers |
+| `prompt` | string | Healthcare prompt | Agent system prompt |
+| `voice` | string | `"arushi"` | TTS voice name |
+| `model` | string | `"openai"` | LLM model (`openai`, `gemini`, `deepseek`) |
+| `pin` | string | — | Require caller to enter this PIN before entering room |
+| `no_randomness` | bool | `false` | Room name = `{prefix}{inbound_number}` (no random suffix) |
+| `attributes` | object | `{}` | Additional room/participant attributes (merged with `direction: inbound`) |
+| `metadata` | object/string | `{}` | Arbitrary metadata JSON |
+
+> **DNIS Routing:** Use `inbound_numbers` to route calls from different DID numbers
+> to different dispatch rules / prompts. For example, one number can route to a
+> sales agent while another routes to support.
+
+> **PIN Protection:** The `pin` field requires callers to enter a DTMF PIN before
+> they are connected to the room. Useful for secure IVR handoffs.
 
 #### What it does under the hood
 
 - Creates a `SIPDispatchRuleInfo` with `SIPDispatchRuleIndividual` (one room per caller)
-- Sets `room_prefix` so rooms are named `inbound_<random>`
-- Injects `direction: inbound` into participant attributes
+- Sets `room_prefix` so rooms are named `inbound_<random>` (or `inbound_<number>` when `no_randomness=true`)
+- Injects `direction: inbound` plus any custom `attributes` into room/participant attributes
+- SIP headers extracted by the inbound trunk's `headers_to_attributes` are also available as room attributes
 - Sets `RoomConfiguration` with `RoomAgentDispatch` for `mantra-agent`
-- The agent is auto-dispatched with metadata containing the prompt, voice, and model
+- The agent is auto-dispatched with metadata containing the prompt, voice, model, and any known IVR context keys
+
+#### Update Dispatch Rule (PATCH)
+
+```json
+PATCH /api/v1/sip/dispatch-rules/SR_xxxxx
+{
+  "name": "updated-rule-name",
+  "attributes": {
+    "department": "support"
+  }
+}
+```
+
+Supported fields: `name`, `metadata`, `attributes`, `trunk_ids`, `rule` (room_prefix, pin, no_randomness).
 
 ---
 
@@ -193,6 +273,24 @@ Inbound:  "Greet the caller warmly. Introduce yourself and ask how you can help 
 Outbound: "Greet the user named {client_name} and follow the opening script in your instructions."
 ```
 
+### IVR Context Passthrough
+For inbound calls originating from an external IVR system, the agent automatically extracts pre-screened context from the room metadata/payload (forwarded from custom SIP headers) and injects it into the prompt:
+
+```python
+ivr_keys = {"account_number", "call_reason", "department", "language", "user_id", "caller_choice"}
+ivr_block = ""
+for key in payload:
+    if key in ivr_keys and payload[key]:
+        readable = key.replace("_", " ").title()
+        ivr_block += f"- {readable}: {payload[key]}\n"
+if ivr_block:
+    initial_instructions += "\n\n--- IVR CONTEXT (from external system) ---\n"
+    initial_instructions += "This caller was pre-screened by an external IVR system:\n"
+    initial_instructions += ivr_block
+    if "call_reason" in payload:
+        initial_instructions += "- Address their stated reason for calling directly.\n"
+```
+
 ---
 
 ## Setup Checklist
@@ -222,8 +320,9 @@ Outbound: "Greet the user named {client_name} and follow the opening script in y
 
 | File | Lines | What Changed |
 |------|-------|-------------|
-| `mantra/ui_server.py` | +250 | 6 new endpoints for inbound trunks + dispatch rules + test endpoint |
-| `mantra/agent.py` | +20 | Inbound detection, context instructions, different greeting |
-| `docs/inbound.md` | — | This document |
+| `mantra/ui_server.py` | +380 | 8 endpoints: inbound trunks + dispatch rules CRUD, PATCH endpoints, & test endpoint |
+| `mantra/agent.py` | +40 | Inbound detection, context instructions, IVR context parsing, different greeting |
+| `docs/inbound.md` | — | This document (reference) |
 | `docs/inbound-testing.md` | — | Step-by-step testing guide |
-| `docs/test-payloads.http` | — | Curl-ready payloads |
+| `docs/test-payloads.http` | — | Curl-ready payloads (including PATCH testing) |
+

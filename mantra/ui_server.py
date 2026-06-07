@@ -351,10 +351,12 @@ async def _create_sip_outbound_trunk(
         raise
 
 
-DEFAULT_PROVIDER = "zadarma"
-
 async def _get_provider_from_trunk(trunk_id: str) -> str:
-    """Fetch the specific trunk by ID and infer the provider from its address."""
+    """Fetch the specific trunk by ID and infer the provider from its address.
+
+    Returns 'generic' for unrecognised providers so the caller can fall back
+    to a direct LiveKit client without provider-specific routing.
+    """
     try:
         response = await lk_client.sip.list_outbound_trunk(
             api.ListSIPOutboundTrunkRequest(trunk_ids=[trunk_id])
@@ -366,12 +368,14 @@ async def _get_provider_from_trunk(trunk_id: str) -> str:
                 return "twilio"
             elif "plivo" in address:
                 return "plivo"
-            return DEFAULT_PROVIDER
-        logger.warning(f"Trunk {trunk_id} not found — defaulting to {DEFAULT_PROVIDER}")
-        return DEFAULT_PROVIDER
+            elif "zadarma" in address:
+                return "zadarma"
+            return "generic"
+        logger.warning(f"Trunk {trunk_id} not found — returning 'none'")
+        return "none"
     except Exception as e:
         logger.error(f"Failed to fetch trunk {trunk_id} for provider detection: {e}")
-        return DEFAULT_PROVIDER
+        return "none"
 
 
 @app.post("/api/v1/sip/trunks/outbound")
@@ -619,7 +623,12 @@ async def delete_sip_outbound_trunk(trunk_id: str):
 
 @app.post("/api/v1/sip/trunks/inbound")
 async def create_inbound_sip_trunk(request: Request):
-    """Create a SIP inbound trunk for receiving incoming calls."""
+    """Create a SIP inbound trunk for receiving incoming calls from any provider/IVR.
+
+    Supports SIP header → room attribute mapping so external IVRs can pass
+    call context (e.g. X-Account-Number, X-Call-Reason, X-Department) via
+    custom SIP headers.
+    """
     payload = await request.json()
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
@@ -639,7 +648,33 @@ async def create_inbound_sip_trunk(request: Request):
     if isinstance(numbers, str):
         numbers = [n.strip() for n in numbers.split(",") if n.strip()]
 
+    # SIP header → room attribute mapping for IVR context passthrough
+    headers_to_attributes = payload.get("headers_to_attributes", {})
+    if isinstance(headers_to_attributes, str):
+        try:
+            headers_to_attributes = json.loads(headers_to_attributes)
+        except Exception:
+            headers_to_attributes = {}
+
+    # Which SIP headers to forward: "none", "x_headers" (default), or "all"
+    include_headers_raw = payload.get("include_headers", "x_headers")
+    include_header_enum = {
+        "none": proto_sip.SIP_NO_HEADERS,
+        "x_headers": proto_sip.SIP_X_HEADERS,
+        "all": proto_sip.SIP_ALL_HEADERS,
+    }.get(include_headers_raw.lower(), proto_sip.SIP_X_HEADERS)
+
+    allowed_addresses = payload.get("allowed_addresses", [])
+    if isinstance(allowed_addresses, str):
+        allowed_addresses = [a.strip() for a in allowed_addresses.split(",") if a.strip()]
+
+    allowed_numbers = payload.get("allowed_numbers", [])
+    if isinstance(allowed_numbers, str):
+        allowed_numbers = [n.strip() for n in allowed_numbers.split(",") if n.strip()]
+
     logger.info(f"Creating inbound SIP trunk: {name} — numbers: {numbers}")
+    if headers_to_attributes:
+        logger.info(f"SIP header mapping: {headers_to_attributes}")
 
     try:
         trunk = proto_sip.SIPInboundTrunkInfo(
@@ -648,6 +683,10 @@ async def create_inbound_sip_trunk(request: Request):
             auth_username=auth_username,
             auth_password=auth_password,
             metadata=json.dumps(payload.get("metadata", {})),
+            headers_to_attributes=headers_to_attributes,
+            include_headers=include_header_enum,
+            allowed_addresses=allowed_addresses,
+            allowed_numbers=allowed_numbers,
         )
         req = proto_sip.CreateSIPInboundTrunkRequest(trunk=trunk)
         result = await lk_client.sip.create_inbound_trunk(req)
@@ -723,6 +762,10 @@ async def create_sip_dispatch_rule(request: Request):
     """
     Create a SIP dispatch rule that routes inbound calls to rooms
     and auto-dispatches the mantra-agent.
+
+    Supports DNIS-based routing (inbound_numbers), SIP header attribute
+    passthrough, PIN-gated entry, and deterministic room naming for
+    integration with external IVR systems.
     """
     payload = await request.json()
     if not payload:
@@ -743,10 +786,26 @@ async def create_sip_dispatch_rule(request: Request):
         except Exception:
             metadata = {}
 
+    # ── DNIS-based routing: only match calls to these specific DID numbers ──
+    inbound_numbers = payload.get("inbound_numbers") or payload.get("numbers")
+    if isinstance(inbound_numbers, str):
+        inbound_numbers = [n.strip() for n in inbound_numbers.split(",") if n.strip()]
+
+    # ── No-randomness mode: room name = {room_prefix}{inbound_number} ──
+    no_randomness = payload.get("no_randomness", False)
+    pin = payload.get("pin", "")
+
     agent_prompt = payload.get("prompt", "You are receiving an inbound healthcare call. Greet the caller warmly and assist them.")
     voice = payload.get("voice", "arushi")
     model = payload.get("model", "openai")
 
+    # ── Room attributes (also accessible by the agent via room metadata) ──
+    attributes = {"direction": "inbound"}
+    custom_attributes = payload.get("attributes", {})
+    if isinstance(custom_attributes, dict):
+        attributes.update(custom_attributes)
+
+    # ── Agent metadata — merge SIP-header-extracted context ──
     agent_metadata = {
         "direction": "inbound",
         "trunk_id": trunk_ids[0],
@@ -754,6 +813,11 @@ async def create_sip_dispatch_rule(request: Request):
         "voice": voice,
         "model": model,
     }
+    # Forward known IVR context keys from attributes if present
+    for ctx_key in ["account_number", "call_reason", "department", "language", "user_id", "caller_choice"]:
+        if ctx_key in attributes:
+            agent_metadata[ctx_key] = attributes[ctx_key]
+
     agent_metadata.update(metadata)
 
     try:
@@ -763,9 +827,12 @@ async def create_sip_dispatch_rule(request: Request):
             rule=proto_sip.SIPDispatchRule(
                 dispatch_rule_individual=proto_sip.SIPDispatchRuleIndividual(
                     room_prefix=room_prefix,
+                    pin=pin,
+                    no_randomness=no_randomness,
                 )
             ),
-            attributes={"direction": "inbound"},
+            attributes=attributes,
+            inbound_numbers=inbound_numbers or None,
             metadata=json.dumps({"direction": "inbound"}),
             room_config=proto_room.RoomConfiguration(
                 agents=[
@@ -789,6 +856,7 @@ async def create_sip_dispatch_rule(request: Request):
             "name": result.name,
             "trunk_ids": list(result.trunk_ids),
             "room_prefix": room_prefix,
+            "inbound_numbers": inbound_numbers,
         })
     except Exception as e:
         logger.error(f"Failed to create dispatch rule: {e}\n{traceback.format_exc()}")
@@ -844,6 +912,127 @@ async def delete_sip_dispatch_rule(rule_id: str):
         })
     except Exception as e:
         logger.error(f"Failed to delete dispatch rule {rule_id}: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ──────────────────────────────────────────────
+# SIP INBOUND TRUNK UPDATE
+# ──────────────────────────────────────────────
+
+@app.patch("/api/v1/sip/trunks/inbound/{trunk_id}")
+async def update_inbound_sip_trunk(trunk_id: str, request: Request):
+    """Update fields on an existing inbound SIP trunk without recreating it.
+
+    Supports partial updates for allowed addresses, allowed numbers,
+    auth credentials, and metadata.  Only the fields provided in the
+    request body are changed.
+    """
+    payload = await request.json()
+    if not payload:
+        return JSONResponse({"error": "No payload provided"}, status_code=400)
+
+    kwargs = {}
+
+    if "name" in payload:
+        kwargs["name"] = payload["name"]
+
+    if "metadata" in payload:
+        kwargs["metadata"] = json.dumps(payload["metadata"]) if isinstance(payload["metadata"], dict) else payload["metadata"]
+
+    if "auth_username" in payload:
+        kwargs["auth_username"] = payload["auth_username"]
+
+    if "auth_password" in payload:
+        kwargs["auth_password"] = payload["auth_password"]
+
+    if "numbers" in payload:
+        nums = payload["numbers"]
+        if isinstance(nums, str):
+            nums = [n.strip() for n in nums.split(",") if n.strip()]
+        kwargs["numbers"] = nums
+
+    if "allowed_addresses" in payload:
+        addrs = payload["allowed_addresses"]
+        if isinstance(addrs, str):
+            addrs = [a.strip() for a in addrs.split(",") if a.strip()]
+        kwargs["allowed_addresses"] = addrs
+
+    if "allowed_numbers" in payload:
+        nums = payload["allowed_numbers"]
+        if isinstance(nums, str):
+            nums = [n.strip() for n in nums.split(",") if n.strip()]
+        kwargs["allowed_numbers"] = nums
+
+    if not kwargs:
+        return JSONResponse({"error": "No updatable fields provided"}, status_code=400)
+
+    try:
+        await lk_client.sip.update_inbound_trunk_fields(trunk_id, **kwargs)
+        logger.info(f"Inbound trunk updated: {trunk_id}")
+        return JSONResponse({
+            "status": "success",
+            "message": f"Inbound trunk {trunk_id} updated",
+            "sip_trunk_id": trunk_id,
+        })
+    except Exception as e:
+        logger.error(f"Failed to update inbound trunk {trunk_id}: {e}\n{traceback.format_exc()}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ──────────────────────────────────────────────
+# SIP DISPATCH RULE UPDATE
+# ──────────────────────────────────────────────
+
+@app.patch("/api/v1/sip/dispatch-rules/{rule_id}")
+async def update_sip_dispatch_rule(rule_id: str, request: Request):
+    """Update fields on an existing SIP dispatch rule without recreating it."""
+    payload = await request.json()
+    if not payload:
+        return JSONResponse({"error": "No payload provided"}, status_code=400)
+
+    kwargs = {}
+
+    if "name" in payload:
+        kwargs["name"] = payload["name"]
+
+    if "metadata" in payload:
+        kwargs["metadata"] = json.dumps(payload["metadata"]) if isinstance(payload["metadata"], dict) else payload["metadata"]
+
+    if "attributes" in payload and isinstance(payload["attributes"], dict):
+        kwargs["attributes"] = payload["attributes"]
+
+    if "trunk_ids" in payload:
+        tids = payload["trunk_ids"]
+        if isinstance(tids, str):
+            tids = [t.strip() for t in tids.split(",") if t.strip()]
+        kwargs["trunk_ids"] = tids
+
+    if "rule" in payload:
+        rule_config = payload["rule"]
+        room_prefix = rule_config.get("room_prefix", "inbound_")
+        pin = rule_config.get("pin", "")
+        no_randomness = rule_config.get("no_randomness", False)
+        kwargs["rule"] = proto_sip.SIPDispatchRule(
+            dispatch_rule_individual=proto_sip.SIPDispatchRuleIndividual(
+                room_prefix=room_prefix,
+                pin=pin,
+                no_randomness=no_randomness,
+            )
+        )
+
+    if not kwargs:
+        return JSONResponse({"error": "No updatable fields provided"}, status_code=400)
+
+    try:
+        await lk_client.sip.update_dispatch_rule_fields(rule_id, **kwargs)
+        logger.info(f"Dispatch rule updated: {rule_id}")
+        return JSONResponse({
+            "status": "success",
+            "message": f"Dispatch rule {rule_id} updated",
+            "sip_dispatch_rule_id": rule_id,
+        })
+    except Exception as e:
+        logger.error(f"Failed to update dispatch rule {rule_id}: {e}\n{traceback.format_exc()}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 

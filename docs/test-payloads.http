@@ -54,8 +54,19 @@ Content-Type: application/json
 ### 1d. List all inbound trunks
 GET http://localhost:8081/api/v1/sip/trunks/inbound
 
-### 1e. Delete an inbound trunk (replace ST_xxxxx)
+### 1e. Update an inbound trunk (replace ST_xxxxx)
+PATCH http://localhost:8081/api/v1/sip/trunks/inbound/ST_xxxxx
+Content-Type: application/json
+
+{
+  "name": "updated-inbound-trunk-name",
+  "allowed_addresses": ["203.0.113.0/24"]
+}
+
+### 1f. Delete an inbound trunk (replace ST_xxxxx)
 DELETE http://localhost:8081/api/v1/sip/trunks/inbound/ST_xxxxx
+
+
 
 
 ### ────────────────────────────────────────────
@@ -104,8 +115,20 @@ Content-Type: application/json
 ### 2d. List all dispatch rules
 GET http://localhost:8081/api/v1/sip/dispatch-rules
 
-### 2e. Delete a dispatch rule (replace SR_xxxxx)
+### 2e. Update a dispatch rule (replace SR_xxxxx)
+PATCH http://localhost:8081/api/v1/sip/dispatch-rules/SR_xxxxx
+Content-Type: application/json
+
+{
+  "name": "updated-dispatch-rule-name",
+  "attributes": {
+    "department": "billing"
+  }
+}
+
+### 2f. Delete a dispatch rule (replace SR_xxxxx)
 DELETE http://localhost:8081/api/v1/sip/dispatch-rules/SR_xxxxx
+
 
 
 ### ────────────────────────────────────────────
