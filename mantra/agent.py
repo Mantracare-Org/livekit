@@ -186,19 +186,19 @@ Follow these specific instructions:
         voice_id = VOICE_MAPPING.get(str(voice_input).lower(), voice_input)
         
         # Priority for Speed: ai_payload.voice_speed -> payload.voice_speed -> default 1.05
-        voice_speed = ai_p.get("voice_speed") or payload.get("voice_speed") or 1.05
+        voice_speed = ai_p.get("voice_speed") or payload.get("voice_speed") or 1
     else:
         model_name = "openai"
         voice_input = "arushi"
         voice_id = VOICE_MAPPING["arushi"]
-        voice_speed = 1.05
+        voice_speed = 1
 
     # Safe parsing and clamping for speed (0.1 to 2.0)
     try:
         voice_speed = float(voice_speed)
         voice_speed = max(0.1, min(2.0, voice_speed))
     except (ValueError, TypeError):
-        voice_speed = 1.05
+        voice_speed = 1
 
     # Explicit logs for call configuration
     logger.info("--- CALL CONFIGURATION ---")
@@ -240,13 +240,24 @@ Follow these specific instructions:
     if not cartesia_keys:
         cartesia_keys = [None]
 
+    # Priority for Language: ai_payload.language -> payload.language -> default "en"
+    if 'payload' in locals():
+        ai_p = payload.get("ai_payload")
+        if not isinstance(ai_p, dict):
+            ai_p = {}
+        language = ai_p.get("language") or payload.get("language") or "en"
+    else:
+        language = "en"
+        
+    language = str(language).lower()
+
     # Setup Fallback TTS using the pool of keys to cycle on rate limits (429) / connection failures
     tts_pool = [
         cartesia.TTS(
             model="sonic-3",
             voice=voice_id,
             speed=voice_speed,
-            language="hi",
+            language=language,
             api_key=key
         )
         for key in cartesia_keys
