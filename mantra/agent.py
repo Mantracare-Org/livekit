@@ -250,14 +250,17 @@ Follow these specific instructions:
     if not cartesia_configs:
         cartesia_configs = [{"key": None, "dict_id": os.getenv("CARTESIA_PRONUNCIATION_DICT_ID")}]
 
-    # Priority for Language: ai_payload.language -> payload.language -> default None (Cartesia auto-detect)
+    # Priority for Language: ai_payload.language -> payload.language -> default "en"
+    # IMPORTANT: Default to "en" NOT None (auto-detect). Auto-detect causes Cartesia to
+    # apply Hindi phonetics to English words in bilingual conversations (e.g. "Care" → "karey").
+    # Sonic-3 in "en" mode still handles Hindi/Hinglish text correctly.
     if 'payload' in locals():
         ai_p = payload.get("ai_payload")
         if not isinstance(ai_p, dict):
             ai_p = {}
-        language = ai_p.get("language") or payload.get("language")
+        language = ai_p.get("language") or payload.get("language") or "en"
     else:
-        language = None
+        language = "en"
         
     if language:
         language = str(language).lower()
