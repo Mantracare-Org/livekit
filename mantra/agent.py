@@ -268,19 +268,22 @@ Follow these specific instructions:
             turn_detection=MultilingualModel(),
             endpointing={
                 "mode": "dynamic",
-                "min_delay": 0.6,
-                "max_delay": 2.0,
+                "min_delay": 0.3,
+                "max_delay": 1.5,
             },
             interruption={
                 "mode": "vad",
                 "resume_false_interruption": True,
-                "false_interruption_timeout": 1.5,
+                "false_interruption_timeout": 0.8,
                 "min_words": 2,
+            },
+            preemptive_generation={
+                "preemptive_tts": True,
             },
         ),
         vad=silero.VAD.load(
             min_speech_duration=0.1,
-            min_silence_duration=0.3,
+            min_silence_duration=0.2,
         ),
         # Using Hindi STT as it's better at catching Hinglish/Indian English
         stt=deepgram.STT(model="nova-3", language="hi", smart_format=True, numerals=True),
