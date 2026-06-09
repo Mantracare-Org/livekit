@@ -4,6 +4,7 @@ import asyncio
 import os
 import datetime
 import sys
+
 # import colorama
 # from colorama import Fore, Style
 
@@ -36,10 +37,10 @@ from livekit.agents import TurnHandlingOptions
 
 from livekit.agents.tts import FallbackAdapter
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
-from livekit.plugins import assemblyai, openai, google, cartesia, silero, deepgram
+from livekit.plugins import openai, google, cartesia, silero, deepgram
 
 # Import our production helpers
-from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend
+from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend, normalize_to_iso8601
 
 
 
@@ -57,6 +58,7 @@ VOICE_MAPPING = {
 # Load environment variables
 load_dotenv()          # Load .env (OpenAI, etc.)
 load_dotenv(".env.local", override=True)  # Load .env.local (LiveKit, etc.) and override if needed
+
 
 server = AgentServer()
 
@@ -100,6 +102,7 @@ CORE BEHAVIOR:
 - If the user pauses, wait patiently for them to finish.
 - ACTIVELY LISTEN: If the user asks a question (e.g., about directions, a bus stand, or any other detail), address it directly and helpfully BEFORE returning to the main topic. Never ignore the user's questions or blindly repeat your script.
 - RETAIN CONTEXT & AVOID REPETITION: Remember the user's previous answers. Do NOT repeatedly ask the same questions. If they say no or want to focus on something else, acknowledge it and move on. DO NOT be pushy.
+
 
 Follow these specific instructions:
 """
@@ -179,23 +182,24 @@ Follow these specific instructions:
         model_name = str(model_name).lower()
         
         # Priority for Voice: ai_payload.voice_id -> payload.voice_id -> voice_name -> voice -> default "arushi"
-        voice_input = ai_p.get("voice_id") or payload.get("voice_id") or payload.get("voice_name") or payload.get("voice") or "arushi"
+        _raw_voice = ai_p.get("voice_id") or payload.get("voice_id") or payload.get("voice_name") or payload.get("voice") or "arushi"
+        voice_input = "arushi" if _raw_voice in (None, "null", "None") else _raw_voice
         voice_id = VOICE_MAPPING.get(str(voice_input).lower(), voice_input)
         
         # Priority for Speed: ai_payload.voice_speed -> payload.voice_speed -> default 1.05
-        voice_speed = ai_p.get("voice_speed") or payload.get("voice_speed") or 1.05
+        voice_speed = ai_p.get("voice_speed") or payload.get("voice_speed") or 1
     else:
         model_name = "openai"
         voice_input = "arushi"
         voice_id = VOICE_MAPPING["arushi"]
-        voice_speed = 1.05
+        voice_speed = 1
 
     # Safe parsing and clamping for speed (0.1 to 2.0)
     try:
         voice_speed = float(voice_speed)
         voice_speed = max(0.1, min(2.0, voice_speed))
     except (ValueError, TypeError):
-        voice_speed = 1.05
+        voice_speed = 1
 
     # Explicit logs for call configuration
     logger.info("--- CALL CONFIGURATION ---")
@@ -237,14 +241,34 @@ Follow these specific instructions:
     if not cartesia_keys:
         cartesia_keys = [None]
 
+    # Priority for Language: ai_payload.language -> payload.language -> default "en"
+    if 'payload' in locals():
+        ai_p = payload.get("ai_payload")
+        if not isinstance(ai_p, dict):
+            ai_p = {}
+        language = ai_p.get("language") or payload.get("language") or "en"
+    else:
+        language = "en"
+        
+    language = str(language).lower()
+
+    # Diagnostic: log the resolved TTS language so we can verify in production
+    logger.info(f"TTS Language resolved to: '{language}' (from payload)")
+
+    # Load pronunciation dictionary for correct brand name pronunciation (MantraCare, MantraAssist, etc.)
+    pronunciation_dict_id = os.getenv("CARTESIA_PRONUNCIATION_DICT_ID")
+    if pronunciation_dict_id:
+        logger.info(f"Using Cartesia pronunciation dictionary: {pronunciation_dict_id}")
+
     # Setup Fallback TTS using the pool of keys to cycle on rate limits (429) / connection failures
     tts_pool = [
         cartesia.TTS(
             model="sonic-3",
             voice=voice_id,
             speed=voice_speed,
-            language="hi",
-            api_key=key
+            language=language,
+            api_key=key,
+            pronunciation_dict_id=pronunciation_dict_id,
         )
         for key in cartesia_keys
     ]
@@ -254,19 +278,22 @@ Follow these specific instructions:
             turn_detection=MultilingualModel(),
             endpointing={
                 "mode": "dynamic",
-                "min_delay": 0.6,
-                "max_delay": 2.0,
+                "min_delay": 0.3,
+                "max_delay": 1.5,
             },
             interruption={
                 "mode": "vad",
                 "resume_false_interruption": True,
-                "false_interruption_timeout": 1.5,
+                "false_interruption_timeout": 0.8,
                 "min_words": 2,
+            },
+            preemptive_generation={
+                "preemptive_tts": True,
             },
         ),
         vad=silero.VAD.load(
             min_speech_duration=0.1,
-            min_silence_duration=0.3,
+            min_silence_duration=0.2,
         ),
         # Using Hindi STT as it's better at catching Hinglish/Indian English
         stt=deepgram.STT(model="nova-3", language="hi", smart_format=True, numerals=True),
@@ -294,95 +321,152 @@ Follow these specific instructions:
             await asyncio.sleep(0.5)
             
         logger.info("Remote participant joined. Initializing conversation...")
-        await asyncio.sleep(2.0)
+        await asyncio.sleep(0.5)
     
     await session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
     
     # Wait for session to end, then finalize everything
     @session.on("close")
     def on_session_close():
+        # Capture session data synchronously before async task runs
+        # (avoids race where session cleans up resources before finalize() starts)
+        history_snapshot = list(session.history.messages()) if session.history else []
+        # llm_engine = session.llm
+        logger.info(f"Session closed — spawning finalize (history: {len(history_snapshot)} messages)")
+
         async def finalize():
-            logger.info("Session closed — starting post-call processing...")
-
-            # 0. Pre-load call metadata for predictable S3 naming and webhook
-            try:
-                call_payload = json.loads(ctx.job.metadata) if ctx.job.metadata else {}
-            except Exception as e:
-                logger.error(f"Failed to parse metadata in finalize: {e}")
-                call_payload = {}
-
-            # 1. Build recording MP3 in memory
-            mp3_bytes = recorder.get_combined_mp3_bytes()
-            
-            # 2. Upload recording to S3
             recording_url = ""
-            if mp3_bytes:
-                # Priority: call_id -> voice_id
-                call_id = call_payload.get("call_id") or call_payload.get("voice_id")
-                if call_id:
-                    s3_key = f"recordings/{call_id}.mp3"
-                else:
-                    s3_key = f"recordings/{session_id}_{ctx.room.name}.mp3"
-                
-                recording_url = upload_to_s3(mp3_bytes, s3_key) or ""
-            
-            # 3. Build transcript in memory
-            history = session.history.messages()
-            transcript_data = SessionRecorder.build_transcript(history)
-            
-            # 4. Generate summary in memory
-            summary_text = await SessionRecorder.generate_summary(session.llm, history)
-            
-            # 5. Calculate duration
+            transcript_data = ""
+            summary_text = ""
             duration = 0
-            if recorder.start_time and recorder.end_time:
-                duration = int((recorder.end_time - recorder.start_time).total_seconds())
-            
-            # 6. Parse additional data from summary
-            sentiment_score, next_call_on, parsed_custom_fields = SessionRecorder.parse_summary_data(summary_text)
-            
-            # Combine payload's client_custom_fields with parsed ones
-            client_custom_fields = call_payload.get("client_custom_fields", {})
-            for k, v in parsed_custom_fields.items():
-                if v:  # Only update if the parsed value is not empty
-                    client_custom_fields[k] = v
-            
-            # Determine call status based on duration
-            call_status = "Completed"
-            if duration < 10:
-                call_status = "Incomplete"
-            
-            # 8. Build webhook payload
-            webhook_payload = {
-                "event": "CALL_DATA_UPDATE",
-                "data": {
-                    "client_id": call_payload.get("lead_id"),
-                    "call_id": call_payload.get("call_id") or call_payload.get("voice_id"),
-                    "call_status": call_status,
-                    "call_transcript": transcript_data,
-                    "ai_summary": summary_text,
-                    "recording_url": recording_url,
-                    "call_duration_seconds": duration,
-                    "next_call_on": next_call_on,
-                    "ai_call_id": ctx.job.id,
-                    "new_stage_id": call_payload.get("stage_id"),
-                    "process_id": call_payload.get("process_id"),
-                    "notes": "",
-                    "metadata": call_payload.get("metadata", {}),
-                    "client_custom_fields": client_custom_fields,
-                    "call_custom_fields": call_payload.get("call_custom_fields", {}),
-                    "url": ""
+            call_status = "Error"
+            webhook_payload = None
+
+            try:
+                logger.info("Starting post-call processing...")
+
+                # 1. Pre-load call metadata
+                try:
+                    call_payload = json.loads(ctx.job.metadata) if ctx.job.metadata else {}
+                except Exception as e:
+                    logger.error(f"Failed to parse metadata: {e}")
+                    call_payload = {}
+
+                # 2. Build recording and upload to S3
+                try:
+                    mp3_bytes = recorder.get_combined_mp3_bytes()
+                    if mp3_bytes:
+                        call_id = call_payload.get("call_id") or call_payload.get("voice_id")
+                        s3_key = f"recordings/{call_id}.mp3" if call_id else f"recordings/{session_id}_{ctx.room.name}.mp3"
+                        recording_url = upload_to_s3(mp3_bytes, s3_key) or ""
+                        logger.info(f"S3 recording: {'uploaded' if recording_url else 'upload failed'}")
+                    else:
+                        logger.info("No audio data captured for recording")
+                except Exception as e:
+                    logger.error(f"Recording/S3 step failed: {e}", exc_info=True)
+
+                # 3. Build transcript from captured history snapshot
+                try:
+                    transcript_data = SessionRecorder.build_transcript(list(history_snapshot))
+                    logger.info(f"Transcript built ({len(history_snapshot)} messages)")
+                except Exception as e:
+                    logger.error(f"Transcript step failed: {e}", exc_info=True)
+
+                # 4. Calculate duration
+                if recorder.start_time and recorder.end_time:
+                    duration = int((recorder.end_time - recorder.start_time).total_seconds())
+
+                # Determine call status based on duration
+                call_status = "Completed"
+                if duration < 10:
+                    call_status = "Incomplete"
+
+                # 5. Run unified analysis to generate summary, stage transition, and metadata
+                current_stage_id = call_payload.get("stage_id")
+                stage_details = call_payload.get("stageDetails", [])
+                
+                summary_text = ""
+                new_stage_id = current_stage_id
+                next_call_on = None
+                client_custom_fields = call_payload.get("client_custom_fields", {})
+                if not isinstance(client_custom_fields, dict):
+                    client_custom_fields = {}
+
+                try:
+                    if llm_engine and history_snapshot:
+                        analysis = await SessionRecorder.analyze_call(
+                            llm_engine=llm_engine,
+                            history=list(history_snapshot),
+                            current_stage_id=current_stage_id,
+                            stage_details=stage_details,
+                            duration=duration
+                        )
+                        summary_text = analysis["summary"]
+                        new_stage_id = analysis["new_stage_id"]
+                        next_call_on = analysis["next_call_on"]
+                        
+                        if analysis.get("appointment_date_time"):
+                            client_custom_fields["appointment_date_time"] = analysis["appointment_date_time"]
+                        if analysis.get("doctor"):
+                            client_custom_fields["doctor"] = analysis["doctor"]
+                        if analysis.get("hospital_location"):
+                            client_custom_fields["hospital_location"] = analysis["hospital_location"]
+                        
+                        logger.info(f"Analysis completed. New Stage ID: {new_stage_id}, Next Call On: {next_call_on}")
+                    else:
+                        logger.warning("Skipping analysis: LLM or history unavailable after session close")
+                except Exception as e:
+                    logger.error(f"Analysis or summary generation failed: {e}", exc_info=True)
+
+                # 6. Build webhook payload
+                webhook_payload = {
+                    "event": "CALL_DATA_UPDATE",
+                    "data": {
+                        "client_id": call_payload.get("lead_id"),
+                        "call_id": call_payload.get("call_id") or call_payload.get("voice_id"),
+                        "call_status": call_status,
+                        "call_transcript": transcript_data,
+                        "ai_summary": summary_text,
+                        "recording_url": recording_url,
+                        "call_duration_seconds": duration,
+                        "next_call_on": normalize_to_iso8601(next_call_on),
+                        "ai_call_id": ctx.job.id,
+                        "new_stage_id": new_stage_id,
+                        "process_id": call_payload.get("process_id"),
+                        "notes": "",
+                        "metadata": call_payload.get("metadata", {}),
+                        "client_custom_fields": client_custom_fields,
+                        "call_custom_fields": call_payload.get("call_custom_fields", {}),
+                        "url": ""
+                    }
                 }
-            }
-            
-            # 9. Send to MantraAssist backend
-            delivered = await send_to_backend(webhook_payload)
-            
+
+            except Exception as e:
+                logger.error(f"Pipeline error in finalize: {e}", exc_info=True)
+
+            # 8. Send to MantraAssist backend (always attempted, even if pipeline failed)
+            try:
+                if webhook_payload is None:
+                    webhook_payload = {
+                        "event": "CALL_DATA_UPDATE",
+                        "data": {
+                            "ai_call_id": ctx.job.id,
+                            "call_status": "Error",
+                            "notes": "Post-call pipeline encountered an error — minimal payload sent",
+                        }
+                    }
+
+                logger.info(f"Delivering post-call webhook to backend...")
+                delivered = await send_to_backend(webhook_payload)
+            except Exception as e:
+                logger.error(f"Webhook delivery failed: {e}", exc_info=True)
+                delivered = False
+
             logger.info(
                 f"Post-call processing complete | "
                 f"Call ID: {ctx.job.id} | "
-                f"Lead: {webhook_payload['data']['client_id']} | "
-                f"Status: {call_status} | "
+                f"Lead: {webhook_payload.get('data', {}).get('client_id', 'N/A')} | "
+                f"Status: {webhook_payload.get('data', {}).get('call_status', 'N/A')} | "
                 f"Duration: {duration}s | "
                 f"S3: {'✓' if recording_url else '✗'} | "
                 f"Backend: {'✓' if delivered else '✗'}"

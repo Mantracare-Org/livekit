@@ -56,11 +56,15 @@ async def send_to_backend(payload: dict, max_retries: int = 3) -> bool:
     else:
         logger.warning("MANTRAASSIST_WEBHOOK_SECRET not set — sending unsigned request")
 
-    logger.info(f"Delivering post-call webhook to: {url}")
+    # Use PLIVO_PROXY if set (not removed by agent.py proxy cleanup) for outbound webhook.
+    # The container may need this proxy to resolve external hostnames.
+    webhook_proxy = os.getenv("PLIVO_PROXY") or os.getenv("HTTPS_PROXY") or os.getenv("https_proxy")
+
+    logger.info(f"Delivering post-call webhook to: {url}" + (f" via proxy: {webhook_proxy}" if webhook_proxy else ""))
 
     for attempt in range(1, max_retries + 1):
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=30.0, proxy=webhook_proxy) as client:
                 resp = await client.post(url, content=payload_str, headers=headers)
                 resp.raise_for_status()
                 logger.info(f"Backend webhook delivered successfully (HTTP {resp.status_code})")
@@ -165,7 +169,12 @@ class SessionRecorder:
 
     @staticmethod
     async def generate_summary(llm_engine: llm.LLM, history: list) -> str:
-        summary_prompt = "Generate a structured call summary, do not include any extra information other than the call transcript.\n"
+        summary_prompt = (
+            "Generate a call summary as a single, coherent paragraph. It must properly state: "
+            "what the patient concern/reason for calling was, the details discussed in the call, "
+            "the conclusion, and any other important patient details based on the transcript. "
+            "Keep it concise but detailed. Here is the transcript:\n"
+        )
         for msg in history:
             role = msg.role.name if hasattr(msg.role, "name") else str(msg.role)
             content = " ".join([str(c) for c in msg.content]) if isinstance(msg.content, list) else msg.content
@@ -187,6 +196,168 @@ class SessionRecorder:
         except Exception as e:
             logger.error(f"Summary failed: {e}")
             return ""
+
+    @staticmethod
+    async def analyze_call(
+        llm_engine: llm.LLM,
+        history: list,
+        current_stage_id: Optional[int],
+        stage_details: List[dict],
+        duration: int
+    ) -> dict:
+        # Fallback values
+        fallback_stage_id = current_stage_id
+        
+        # Parse stage details to find fallback IDs based on rules
+        not_answering_id = current_stage_id
+        interested_id = current_stage_id
+        confirmed_id = current_stage_id
+        follow_up_id = current_stage_id
+        not_interested_id = current_stage_id
+        
+        for stage in stage_details:
+            desc = stage.get("description", "").lower()
+            sid = stage.get("stage_id")
+            if "not answering" in desc or "failed" in desc or "incomplete" in desc:
+                not_answering_id = sid
+            elif "shown interest" in desc or "interested" in desc:
+                interested_id = sid
+            elif "confirmed" in desc or "appointment date" in desc:
+                confirmed_id = sid
+            elif "follow up" in desc or "call later" in desc:
+                follow_up_id = sid
+            elif "not interested" in desc or "no further follow" in desc:
+                not_interested_id = sid
+
+        if duration < 10:
+            fallback_stage_id = not_answering_id
+
+        # Construct transcript
+        transcript_lines = []
+        for msg in history:
+            role = msg.role.name if hasattr(msg.role, "name") else str(msg.role)
+            content = " ".join([str(c) for c in msg.content]) if isinstance(msg.content, list) else msg.content
+            if content:
+                role_label = "Assistant" if role.lower() == "assistant" else "User"
+                transcript_lines.append(f"{role_label}: {content}")
+        transcript_text = "\n".join(transcript_lines)
+
+        current_time = datetime.datetime.now()
+        current_time_str = current_time.strftime("%Y-%m-%d %H:%M:%S")
+
+        prompt = f"""
+You are an expert analyst for a care support and CRM system. Analyze the phone call transcript and metadata below.
+
+--- CALL METADATA ---
+Current Date and Time: {current_time_str}
+Call Duration: {duration} seconds
+Current Stage ID: {current_stage_id}
+
+--- AVAILABLE CRM STAGES ---
+{json.dumps(stage_details, indent=2)}
+
+--- TRANSCRIPT ---
+{transcript_text}
+
+--- ANALYSIS TASK ---
+1. Generate a call summary as a single, coherent paragraph. It must properly state:
+   - What the patient concern/reason for calling was.
+   - The details discussed in the call.
+   - The conclusion (e.g. appointment booked, callback scheduled, disconnected, not interested).
+   - Any other important patient details based on the transcript.
+2. Determine the correct Next Stage ID (`new_stage_id`) from the AVAILABLE CRM STAGES above.
+   - Select the stage ID whose description best matches the outcome of the call.
+   - If the call duration is short (e.g., less than 10 seconds), select the stage for "not answering / failed call".
+   - If the patient confirmed/booked an appointment, select the stage for "confirmed the appointment".
+   - If the patient asked to call back or follow up later, select the stage for "follow up or call later".
+   - If the patient showed interest but didn't book yet, select the stage for "shown interest".
+   - If the patient is not interested or declined, select the stage for "not interested" or the specific declining reason stage.
+   - If none of the stages match or the call did not change the state, default to the current stage ID: {current_stage_id}.
+3. Extract additional metadata:
+   - `next_call_on`: If a follow-up or callback is scheduled/needed (especially if stage is "follow up or call later" or "not answering / failed call"), suggest a callback date and time (e.g., "2026-06-02 15:00:00"). If the stage description specifies adding 24 hours to the current time, calculate that date and time (current time is {current_time_str}). If no follow-up is needed, use null.
+   - `appointment_date_time`: If the patient booked/confirmed an appointment date/time, extract it (e.g., "2026-06-05 11:30 AM"). Otherwise, use null.
+   - `doctor`: Extract any mentioned doctor's name. Otherwise, use null.
+   - `hospital_location`: Extract the preferred hospital location/center name. Otherwise, use null.
+   - `sentiment_score`: Rate the user's sentiment from 0.0 (very negative/angry) to 1.0 (very positive/happy), with 0.5 as neutral.
+
+You MUST return your response as a valid JSON object with the following schema:
+{{
+  "summary": "string (a single paragraph call summary)",
+  "new_stage_id": integer (the selected stage ID from the list),
+  "next_call_on": "string or null",
+  "appointment_date_time": "string or null",
+  "doctor": "string or null",
+  "hospital_location": "string or null",
+  "sentiment_score": float
+}}
+
+Provide ONLY the JSON object. Do not include markdown code block syntax or other text wrapper.
+"""
+
+        try:
+            messages = [
+                llm.ChatMessage(role="system", content=["You are a helpful assistant."]),
+                llm.ChatMessage(role="user", content=[prompt]),
+            ]
+            stream = llm_engine.chat(chat_ctx=llm.ChatContext(items=messages))
+            response = await stream.collect()
+            
+            text = response.text.strip()
+            if text.startswith("```"):
+                first_newline = text.find("\n")
+                if first_newline != -1:
+                    text = text[first_newline:]
+                if text.endswith("```"):
+                    text = text[:-3]
+                text = text.strip()
+            
+            res_dict = json.loads(text)
+            
+            summary = res_dict.get("summary", "")
+            new_stage_id = res_dict.get("new_stage_id")
+            next_call_on = res_dict.get("next_call_on")
+            appointment_date_time = res_dict.get("appointment_date_time")
+            doctor = res_dict.get("doctor")
+            hospital_location = res_dict.get("hospital_location")
+            sentiment_score = res_dict.get("sentiment_score", 0.5)
+            
+            if new_stage_id is not None:
+                try:
+                    new_stage_id = int(new_stage_id)
+                except ValueError:
+                    new_stage_id = fallback_stage_id
+            else:
+                new_stage_id = fallback_stage_id
+
+            if not summary:
+                summary = await SessionRecorder.generate_summary(llm_engine, history)
+
+        except Exception as e:
+            logger.error(f"analyze_call failed: {e}. Falling back to default heuristics.")
+            summary = await SessionRecorder.generate_summary(llm_engine, history)
+            new_stage_id = fallback_stage_id
+            next_call_on = None
+            appointment_date_time = ""
+            doctor = ""
+            hospital_location = ""
+            sentiment_score = 0.5
+
+        if duration < 10:
+            new_stage_id = not_answering_id
+
+        if new_stage_id in [not_answering_id, follow_up_id] and not next_call_on:
+            tomorrow = current_time + datetime.timedelta(hours=24)
+            next_call_on = tomorrow.strftime("%Y-%m-%d %H:%M:%S")
+
+        return {
+            "summary": summary,
+            "new_stage_id": new_stage_id,
+            "next_call_on": next_call_on,
+            "appointment_date_time": appointment_date_time,
+            "doctor": doctor,
+            "hospital_location": hospital_location,
+            "sentiment_score": sentiment_score
+        }
 
     @staticmethod
     def parse_summary_data(summary_text: str):
@@ -217,3 +388,17 @@ class SessionRecorder:
         except:
             pass
         return sentiment_score, next_call_on, custom_fields
+
+
+def normalize_to_iso8601(dt_str: Optional[str]) -> Optional[str]:
+    """Convert 'YYYY-MM-DD HH:MM:SS' to ISO-8601 'YYYY-MM-DDTHH:MM:SS.000Z'.
+
+    Returns None if input is None/empty. Passes through unparseable strings unchanged.
+    """
+    if not dt_str:
+        return None
+    try:
+        dt = datetime.datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+        return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    except (ValueError, TypeError):
+        return dt_str
