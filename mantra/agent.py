@@ -226,39 +226,40 @@ Follow these specific instructions:
     else:
         logger.info("Using OpenAI LLM")
         llm_engine = openai.LLM(model="gpt-4o-mini")
-
-    # Collect Cartesia API keys dynamically from environment variables
-    cartesia_keys = []
-    for env_var in ["CARTESIA_API_KEY", "CARTESIA_API_KEY_2", "CARTESIA_API_KEY_3"]:
-        val = os.getenv(env_var)
-        if val:
-            if "," in val:
-                cartesia_keys.extend([k.strip() for k in val.split(",") if k.strip()])
+    # Collect Cartesia API keys dynamically from environment variables, pairing each with its account-specific pronunciation dictionary
+    cartesia_configs = []
+    for key_env, dict_env in [
+        ("CARTESIA_API_KEY", "CARTESIA_PRONUNCIATION_DICT_ID"),
+        ("CARTESIA_API_KEY_2", "CARTESIA_PRONUNCIATION_DICT_ID_2"),
+        ("CARTESIA_API_KEY_3", "CARTESIA_PRONUNCIATION_DICT_ID_3")
+    ]:
+        key_val = os.getenv(key_env)
+        dict_val = os.getenv(dict_env)
+        if key_val:
+            if "," in key_val:
+                # If multiple keys are given in a comma-separated string, they share the same dict_id
+                cartesia_configs.extend([{"key": k.strip(), "dict_id": dict_val.strip() if dict_val else None} for k in key_val.split(",") if k.strip()])
             else:
-                cartesia_keys.append(val.strip())
+                cartesia_configs.append({"key": key_val.strip(), "dict_id": dict_val.strip() if dict_val else None})
     
     # If no keys are specified in variables, let it default to standard CARTESIA_API_KEY logic
-    if not cartesia_keys:
-        cartesia_keys = [None]
+    if not cartesia_configs:
+        cartesia_configs = [{"key": None, "dict_id": os.getenv("CARTESIA_PRONUNCIATION_DICT_ID")}]
 
-    # Priority for Language: ai_payload.language -> payload.language -> default "en"
+    # Priority for Language: ai_payload.language -> payload.language -> default None (Cartesia auto-detect)
     if 'payload' in locals():
         ai_p = payload.get("ai_payload")
         if not isinstance(ai_p, dict):
             ai_p = {}
-        language = ai_p.get("language") or payload.get("language") or "en"
+        language = ai_p.get("language") or payload.get("language")
     else:
-        language = "en"
+        language = None
         
-    language = str(language).lower()
+    if language:
+        language = str(language).lower()
 
     # Diagnostic: log the resolved TTS language so we can verify in production
-    logger.info(f"TTS Language resolved to: '{language}' (from payload)")
-
-    # Load pronunciation dictionary for correct brand name pronunciation (MantraCare, MantraAssist, etc.)
-    pronunciation_dict_id = os.getenv("CARTESIA_PRONUNCIATION_DICT_ID")
-    if pronunciation_dict_id:
-        logger.info(f"Using Cartesia pronunciation dictionary: {pronunciation_dict_id}")
+    logger.info(f"TTS Language resolved to: '{language}' (None means auto-detect)")
 
     # Setup Fallback TTS using the pool of keys to cycle on rate limits (429) / connection failures
     tts_pool = [
@@ -267,10 +268,10 @@ Follow these specific instructions:
             voice=voice_id,
             speed=voice_speed,
             language=language,
-            api_key=key,
-            pronunciation_dict_id=pronunciation_dict_id,
+            api_key=cfg["key"],
+            pronunciation_dict_id=cfg["dict_id"],
         )
-        for key in cartesia_keys
+        for cfg in cartesia_configs
     ]
 
     session = AgentSession(
