@@ -37,7 +37,7 @@ from livekit.agents import TurnHandlingOptions
 
 from livekit.agents.tts import FallbackAdapter
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
-from livekit.plugins import assemblyai, openai, google, cartesia, silero, deepgram
+from livekit.plugins import openai, google, cartesia, silero, deepgram
 
 # Import our production helpers
 from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend, normalize_to_iso8601
@@ -331,7 +331,7 @@ Follow these specific instructions:
         # Capture session data synchronously before async task runs
         # (avoids race where session cleans up resources before finalize() starts)
         history_snapshot = list(session.history.messages()) if session.history else []
-        llm_engine = session.llm
+        # llm_engine = session.llm
         logger.info(f"Session closed — spawning finalize (history: {len(history_snapshot)} messages)")
 
         async def finalize():
