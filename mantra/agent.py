@@ -103,6 +103,11 @@ CORE BEHAVIOR:
 - ACTIVELY LISTEN: If the user asks a question (e.g., about directions, a bus stand, or any other detail), address it directly and helpfully BEFORE returning to the main topic. Never ignore the user's questions or blindly repeat your script.
 - RETAIN CONTEXT & AVOID REPETITION: Remember the user's previous answers. Do NOT repeatedly ask the same questions. If they say no or want to focus on something else, acknowledge it and move on. DO NOT be pushy.
 
+TTS PRONUNCIATION RULES (CRITICAL — follow these EXACTLY):
+- ALWAYS write "MantraCare" as two separate words: "Mantra Care". Never write it as one word.
+- ALWAYS write "MantraAssist" as two separate words: "Mantra Assist".
+- For the word "sure", just write "sure" in lowercase. Never capitalize it mid-sentence.
+
 Follow these specific instructions:
 """
     client_name = "User"
@@ -251,6 +256,14 @@ Follow these specific instructions:
         
     language = str(language).lower()
 
+    # Diagnostic: log the resolved TTS language so we can verify in production
+    logger.info(f"TTS Language resolved to: '{language}' (from payload)")
+
+    # Load pronunciation dictionary for correct brand name pronunciation (MantraCare, MantraAssist, etc.)
+    pronunciation_dict_id = os.getenv("CARTESIA_PRONUNCIATION_DICT_ID")
+    if pronunciation_dict_id:
+        logger.info(f"Using Cartesia pronunciation dictionary: {pronunciation_dict_id}")
+
     # Setup Fallback TTS using the pool of keys to cycle on rate limits (429) / connection failures
     tts_pool = [
         cartesia.TTS(
@@ -258,7 +271,8 @@ Follow these specific instructions:
             voice=voice_id,
             speed=voice_speed,
             language=language,
-            api_key=key
+            api_key=key,
+            pronunciation_dict_id=pronunciation_dict_id,
         )
         for key in cartesia_keys
     ]
@@ -311,7 +325,7 @@ Follow these specific instructions:
             await asyncio.sleep(0.5)
             
         logger.info("Remote participant joined. Initializing conversation...")
-        await asyncio.sleep(2.0)
+        await asyncio.sleep(0.5)
     
     await session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
     
