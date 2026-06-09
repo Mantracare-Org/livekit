@@ -103,6 +103,10 @@ CORE BEHAVIOR:
 - ACTIVELY LISTEN: If the user asks a question (e.g., about directions, a bus stand, or any other detail), address it directly and helpfully BEFORE returning to the main topic. Never ignore the user's questions or blindly repeat your script.
 - RETAIN CONTEXT & AVOID REPETITION: Remember the user's previous answers. Do NOT repeatedly ask the same questions. If they say no or want to focus on something else, acknowledge it and move on. DO NOT be pushy.
 
+PRONUNCIATION (CRITICAL):
+- ALWAYS write the brand name as "Mantra Care" (two separate words with a space). NEVER write "MantraCare" or "Mantracare" as a single word.
+- ALWAYS write "Mantra Assist" (two separate words). NEVER write "MantraAssist" as one word.
+- These are spoken brand names on a phone call — proper spacing ensures correct pronunciation.
 
 Follow these specific instructions:
 """
@@ -260,6 +264,7 @@ Follow these specific instructions:
 
     # Diagnostic: log the resolved TTS language so we can verify in production
     logger.info(f"TTS Language resolved to: '{language}' (None means auto-detect)")
+    logger.info(f"TTS Pronunciation Dicts: {[cfg['dict_id'] for cfg in cartesia_configs]} ({len(cartesia_configs)} keys)")
 
     # Setup Fallback TTS using the pool of keys to cycle on rate limits (429) / connection failures
     tts_pool = [
