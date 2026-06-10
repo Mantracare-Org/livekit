@@ -55,7 +55,7 @@ Thumbs.db
 # Project Specific
 .python-version
 livekit_agent.egg-info/
-PRD.md
+
 
 #Test Datas 
 recordings/

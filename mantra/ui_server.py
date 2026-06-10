@@ -1,9 +1,14 @@
 import os
+
+
+
 import logging
 import json
 import time
 import traceback
+from contextlib import asynccontextmanager
 
+import aiohttp
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -13,27 +18,20 @@ from dotenv import load_dotenv
 # Load environment variables from .env.local
 load_dotenv(".env.local")
 
-app = FastAPI()
-logger = logging.getLogger("mantra.ui_server")
-logger.setLevel(logging.INFO)
 
-# Get the directory of the current file
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-STATIC_DIR = os.path.join(BASE_DIR, "static")
 
-# Mount static files
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+# Persistent LiveKit API clients
+lk_client: api.LiveKitAPI = None           # Direct — used for Twilio, Zadarma, and general operations
+plivo_client: api.LiveKitAPI = None        # Proxied — used for Plivo (India routing)
+plivo_session: aiohttp.ClientSession = None  # Owned session for plivo_client; closed manually on shutdown
 
-# Persistent LiveKit API client — created once, reused across requests
-lk_client: api.LiveKitAPI = None
-
-@app.on_event("startup")
-async def startup_event():
-    global lk_client
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global lk_client, plivo_client, plivo_session
     api_key = os.getenv("LIVEKIT_API_KEY")
     api_secret = os.getenv("LIVEKIT_API_SECRET")
     lk_url = os.getenv("LIVEKIT_URL")
-    
+
     if lk_url:
         if lk_url.startswith("wss://"):
             api_url = lk_url.replace("wss://", "https://")
@@ -43,17 +41,38 @@ async def startup_event():
             api_url = lk_url
 
         logger.info(f"Connecting to LiveKit API at {api_url}")
-        lk_client = api.LiveKitAPI(
-            url=api_url,
-            api_key=api_key,
-            api_secret=api_secret
+
+
+        lk_client = api.LiveKitAPI(url=api_url, api_key=api_key, api_secret=api_secret)
+
+        plivo_proxy = os.getenv("PLIVO_PROXY")
+        if plivo_proxy:
+            logger.info(f"Creating Plivo LiveKit client with proxy: {plivo_proxy}")
+        else:
+            logger.info("Creating Plivo LiveKit client without proxy (PLIVO_PROXY not set)")
+        plivo_session = aiohttp.ClientSession(proxy=plivo_proxy)
+        plivo_client = api.LiveKitAPI(
+            url=api_url, api_key=api_key, api_secret=api_secret, session=plivo_session
         )
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    global lk_client
-    if lk_client:
-        await lk_client.aclose()
+    yield
+
+    for client in [lk_client, plivo_client]:
+        if client:
+            await client.aclose()
+    if plivo_session:
+        await plivo_session.close()
+
+app = FastAPI(lifespan=lifespan)
+logger = logging.getLogger("mantra.ui_server")
+logger.setLevel(logging.INFO)
+
+# Get the directory of the current file
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+
+# Mount static files
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get("/")
 async def index():
@@ -77,8 +96,9 @@ async def dispatch_test(request: Request):
     
     logger.info(f"Manual dispatch request with payload: {json.dumps(payload, indent=2)}")
     
-    # Generate a unique room name for this test session
-    room_name = f"test_{int(time.time())}"
+    # Generate a unique room name for this test session using the call_id if provided
+    call_id = payload.get("call_id") or int(time.time())
+    room_name = f"test_{call_id}"
     
     try:
         # Create dispatch with payload as metadata
@@ -145,7 +165,16 @@ async def handle_outbound_call_webhook(request: Request):
     if not phone_number:
         return JSONResponse({"error": "No client_phone provided in payload"}, status_code=400)
 
-    # Trigger agent dispatch
+    # Resolve trunk ID and detect provider for logging
+    trunk_id = payload.get("trunk_id") or payload.get("call_from_id") or os.getenv("SIP_TRUNK_ID")
+    if not trunk_id:
+        return JSONResponse({"error": "No SIP trunk ID configured"}, status_code=500)
+
+    provider = await _get_provider_from_trunk(trunk_id)
+    logger.info(f"Provider detected: {provider} — using direct LiveKit client for API calls")
+
+    # Trigger agent dispatch — always use lk_client (direct, no proxy)
+    # LiveKit Cloud API calls don't need the Indian proxy; region pinning is on the trunk itself
     try:
         logger.info(f"Step 1: Creating agent dispatch for room {room_name}")
         dispatch = await lk_client.agent_dispatch.create_dispatch(
@@ -160,20 +189,12 @@ async def handle_outbound_call_webhook(request: Request):
         logger.error(f"Agent dispatch failed: {e}\n{traceback.format_exc()}")
         return JSONResponse({"error": f"Agent dispatch failed: {str(e)}"}, status_code=500)
 
-    # Trigger SIP outbound call
+    # Trigger SIP outbound call — always use lk_client (direct, no proxy)
+    # The trunk's destination_country="in" handles Indian region routing at the SIP layer
     try:
-        # Use trunk_id from payload if provided, fallback to environment variable
-        trunk_id = payload.get("trunk_id") or os.getenv("SIP_TRUNK_ID")
-        
-        # Use specific caller ID if provided (helps avoid "random number" issue)
         sip_number = payload.get("call_from")
-        
-        if not trunk_id:
-            logger.error("No SIP_TRUNK_ID found in payload or environment")
-            return JSONResponse({"error": "No SIP trunk ID configured"}, status_code=500)
-
         logger.info(f"Step 2: Initiating SIP call to {phone_number} via trunk {trunk_id}" + (f" (Caller ID: {sip_number})" if sip_number else ""))
-        
+
         sip_part = await lk_client.sip.create_sip_participant(
             api.CreateSIPParticipantRequest(
                 sip_trunk_id=trunk_id,
@@ -211,48 +232,298 @@ async def handle_outbound_call_webhook(request: Request):
     })
 
 
+async def _create_sip_outbound_trunk(
+    name: str, address: str, numbers: list, auth_username: str, auth_password: str,
+    client: api.LiveKitAPI = None, destination_country: str = None,
+):
+    if not all([name, address, numbers, auth_username, auth_password]):
+        missing = [f for f, v in [("name", name), ("address", address), ("numbers", numbers),
+                                   ("auth_username", auth_username), ("auth_password", auth_password)] if not v]
+        raise ValueError(f"Missing required fields: {', '.join(missing)}")
+
+    if isinstance(numbers, str):
+        numbers = [n.strip() for n in numbers.split(",") if n.strip()]
+    elif not isinstance(numbers, list):
+        numbers = [str(numbers)]
+
+    svc = (client or lk_client).sip
+    try:
+        logger.info(f"Creating SIP outbound trunk: {name} at {address}")
+        trunk_request = api.CreateSIPOutboundTrunkRequest(
+            trunk=api.SIPOutboundTrunkInfo(
+                name=name, address=address, numbers=numbers,
+                auth_username=auth_username, auth_password=auth_password,
+                destination_country=destination_country
+            )
+        )
+        trunk = await svc.create_outbound_trunk(trunk_request)
+        logger.info(f"Successfully created SIP outbound trunk: {trunk.sip_trunk_id} ({name})")
+        return trunk
+    except Exception as e:
+        logger.error(f"LiveKit API error creating SIP trunk: {e}")
+        raise
+
+
+DEFAULT_PROVIDER = "zadarma"
+
+async def _get_provider_from_trunk(trunk_id: str) -> str:
+    """Fetch the specific trunk by ID and infer the provider from its address."""
+    try:
+        response = await lk_client.sip.list_outbound_trunk(
+            api.ListSIPOutboundTrunkRequest(trunk_ids=[trunk_id])
+        )
+        if response.items:
+            trunk = response.items[0]
+            address = (trunk.address or "").lower()
+            if "twilio" in address:
+                return "twilio"
+            elif "plivo" in address:
+                return "plivo"
+            return DEFAULT_PROVIDER
+        logger.warning(f"Trunk {trunk_id} not found — defaulting to {DEFAULT_PROVIDER}")
+        return DEFAULT_PROVIDER
+    except Exception as e:
+        logger.error(f"Failed to fetch trunk {trunk_id} for provider detection: {e}")
+        return DEFAULT_PROVIDER
+
+
 @app.post("/api/v1/sip/trunks/outbound")
-async def create_outbound_sip_trunk(request: Request):
+@app.post("/api/v1/sip/trunks/outbound/zadarma")
+async def create_zadarma_sip_trunk(request: Request):
     """
-    Create a new outbound SIP trunk on LiveKit Cloud.
+    Create a new Zadarma SIP trunk. 
+    The root '/outbound' endpoint is maintained for backward compatibility.
     """
     payload = await request.json()
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
     
-    name = payload.get("name")
-    address = payload.get("address")
-    numbers = payload.get("numbers")
-    auth_username = payload.get("authUsername")
-    auth_password = payload.get("authPassword")
-    
-    if not all([name, address, numbers, auth_username, auth_password]):
-        return JSONResponse({"error": "Missing required fields (name, address, numbers, authUsername, authPassword)"}, status_code=400)
+    logger.info(f"[POST /api/v1/sip/trunks/outbound] Payload received: {json.dumps(payload, indent=2)}")
     
     try:
-        logger.info(f"Creating SIP outbound trunk: {name} at {address}")
-        trunk_request = api.CreateSIPOutboundTrunkRequest(
-            trunk=api.SIPOutboundTrunkInfo(
-                name=name,
-                address=address,
-                numbers=numbers,
-                auth_username=auth_username,
-                auth_password=auth_password
-            )
+        trunk = await _create_sip_outbound_trunk(
+            name=payload.get("name"),
+            address=payload.get("address"),
+            numbers=payload.get("numbers"),
+            auth_username=payload.get("authUsername") or payload.get("auth_username") or payload.get("auth_user"),
+            auth_password=payload.get("authPassword") or payload.get("auth_password") or payload.get("auth_pass")
         )
-        
-        trunk = await lk_client.sip.create_outbound_trunk(trunk_request)
-        logger.info(f"Successfully created SIP outbound trunk: {trunk.sip_trunk_id}")
         
         return JSONResponse({
             "status": "success",
             "sip_trunk_id": trunk.sip_trunk_id,
             "name": trunk.name,
+            "provider": "zadarma",
             "address": trunk.address
         })
     except Exception as e:
-        logger.error(f"Failed to create SIP outbound trunk: {e}\n{traceback.format_exc()}")
-        return JSONResponse({"error": f"Failed to create SIP outbound trunk: {str(e)}"}, status_code=500)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/v1/sip/trunks/outbound/twilio")
+async def create_twilio_sip_trunk(request: Request):
+    """
+    Create a new Twilio SIP trunk using professional nomenclature.
+    Aligns with LiveKit CLI parameters: auth_user, auth_pass.
+    """
+    payload = await request.json()
+    if not payload:
+        return JSONResponse({"error": "No payload provided"}, status_code=400)
+    
+    logger.info(f"[POST /api/v1/sip/trunks/outbound/twilio] Payload received: {json.dumps(payload, indent=2)}")
+    
+    # Twilio-friendly field mapping (accepting both CLI-style and original keys)
+    name = payload.get("name")
+    address = payload.get("address") or "live-kit-mc.pstn.twilio.com"
+    numbers = payload.get("numbers")
+    auth_username = payload.get("authUsername") or payload.get("auth_username") or payload.get("auth_user")
+    auth_password = payload.get("authPassword") or payload.get("auth_password") or payload.get("auth_pass")
+    
+    try:
+        trunk = await _create_sip_outbound_trunk(
+            name=name,
+            address=address,
+            numbers=numbers,
+            auth_username=auth_username,
+            auth_password=auth_password
+        )
+        
+        return JSONResponse({
+            "status": "success",
+            "sip_trunk_id": trunk.sip_trunk_id,
+            "name": trunk.name,
+            "provider": "twilio",
+            "address": trunk.address
+        })
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/v1/sip/trunks/outbound/plivo")
+async def create_and_call_plivo(request: Request):
+    """
+    Unified Plivo endpoint to provision a SIP trunk (optional) and place an outbound call.
+    Supports on-the-fly provisioning if 'trunk' details are provided, 
+    otherwise uses 'trunk_id' from the payload or environment.
+    """
+    payload = await request.json()
+    if not payload:
+        return JSONResponse({"error": "No payload provided"}, status_code=400)
+
+    if plivo_client is None:
+        logger.error("plivo_client is None — LIVEKIT_URL may be unset")
+        return JSONResponse({"error": "Plivo client not available"}, status_code=503)
+
+    try:
+        # 1. Handle SIP Trunk (Provision new or use existing)
+        trunk_data = payload.get("trunk")
+        if trunk_data:
+            logger.info("Provisioning new SIP trunk (Plivo) before call...")
+            trunk = await _create_sip_outbound_trunk(
+                name=trunk_data.get("name"),
+                address=trunk_data.get("address"),
+                numbers=trunk_data.get("numbers"),
+                auth_username=trunk_data.get("authUsername") or trunk_data.get("auth_username") or trunk_data.get("auth_user"),
+                auth_password=trunk_data.get("authPassword") or trunk_data.get("auth_password") or trunk_data.get("auth_pass"),
+                client=plivo_client,
+                destination_country="in"
+            )
+            trunk_id = trunk.sip_trunk_id
+        elif "numbers" in payload and ("authUsername" in payload or "auth_username" in payload or "auth_user" in payload):
+            logger.info("Flat trunk payload detected. Provisioning Plivo trunk...")
+            trunk = await _create_sip_outbound_trunk(
+                name=payload.get("name"),
+                address=payload.get("address"),
+                numbers=payload.get("numbers"),
+                auth_username=payload.get("authUsername") or payload.get("auth_username") or payload.get("auth_user"),
+                auth_password=payload.get("authPassword") or payload.get("auth_password") or payload.get("auth_pass"),
+                client=plivo_client,
+                destination_country="in"
+            )
+            trunk_id = trunk.sip_trunk_id
+        else:
+            trunk_id = payload.get("trunk_id") or payload.get("call_from_id") or os.getenv("SIP_TRUNK_ID")
+
+        if not trunk_id:
+            return JSONResponse({"error": "No trunk_id provided or configured"}, status_code=400)
+
+        # 2. Extract Target Phone Number (optional if only provisioning/testing trunk)
+        client_phone = payload.get("client_phone")
+        if client_phone is not None:
+            client_phone = str(client_phone).strip()
+
+        if not client_phone:
+            logger.info(f"No client_phone provided. Trunk {trunk_id} provisioned successfully.")
+            return JSONResponse({
+                "status": "success",
+                "sip_trunk_id": trunk_id,
+                "message": "Trunk provisioned successfully (no call initiated)"
+            })
+
+        country_code = str(payload.get("client_country_code") or "").strip("+")
+        if client_phone.startswith("+"):
+            phone_number = client_phone
+        elif country_code and client_phone:
+            phone_number = f"+{country_code}{client_phone}"
+        else:
+            phone_number = client_phone
+
+        # 3. Trigger Agent Dispatch — use direct client (no proxy needed for LiveKit Cloud)
+        call_id = payload.get("call_id") or payload.get("voice_id") or int(time.time())
+        room_name = f"call_{call_id}"
+
+        logger.info(f"Dispatching agent to room {room_name}")
+        await lk_client.agent_dispatch.create_dispatch(
+            api.CreateAgentDispatchRequest(
+                room=room_name,
+                agent_name="mantra-agent",
+                metadata=json.dumps(payload)
+            )
+        )
+
+        # 4. Initiate SIP Call — use direct client (trunk's destination_country handles region)
+        sip_number = payload.get("call_from")  # Caller ID
+        logger.info(f"Placing SIP call to {phone_number} via trunk {trunk_id} (Caller ID: {sip_number})")
+
+        sip_part = await lk_client.sip.create_sip_participant(
+            api.CreateSIPParticipantRequest(
+                sip_trunk_id=trunk_id,
+                sip_call_to=phone_number,
+                sip_number=sip_number,
+                room_name=room_name,
+                participant_identity=f"sip_{call_id}",
+                participant_name="Mantra Voice"
+            )
+        )
+
+        return JSONResponse({
+            "status": "success",
+            "sip_trunk_id": trunk_id,
+            "room": room_name,
+            "participant": sip_part.participant_identity,
+            "call_id": call_id
+        })
+
+    except Exception as e:
+        logger.error(f"Plivo unified call failed: {e}\n{traceback.format_exc()}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/v1/sip/trunks/outbound")
+async def list_sip_outbound_trunks():
+    """
+    List all SIP outbound trunks.
+    Returns a collection of configured SIP trunks with their metadata.
+    """
+    try:
+        response = await lk_client.sip.list_outbound_trunk(
+            api.ListSIPOutboundTrunkRequest()
+        )
+        trunk_list = []
+        for item in response.items:
+            trunk_list.append({
+                "sip_trunk_id": item.sip_trunk_id,
+                "name": item.name,
+                "address": item.address,
+                "transport": item.transport,
+                "numbers": list(item.numbers),
+                "auth_username": item.auth_username,
+                "encryption": item.media_encryption,
+            })
+        
+        return JSONResponse({
+            "status": "success",
+            "count": len(trunk_list),
+            "trunks": trunk_list
+        })
+    except Exception as e:
+        logger.error(f"Failed to list SIP outbound trunks: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.delete("/api/v1/sip/trunks/outbound/{trunk_id}")
+async def delete_sip_outbound_trunk(trunk_id: str):
+    """
+    Delete a SIP outbound trunk by its trunk ID.
+    Permanently removes the trunk configuration from LiveKit.
+    """
+    if not trunk_id:
+        return JSONResponse({"error": "Trunk ID is required"}, status_code=400)
+    
+    try:
+        await lk_client.sip.delete_trunk(
+            api.DeleteSIPTrunkRequest(sip_trunk_id=trunk_id)
+        )
+        logger.info(f"Successfully deleted SIP outbound trunk: {trunk_id}")
+        
+        return JSONResponse({
+            "status": "success",
+            "message": f"SIP trunk {trunk_id} deleted successfully",
+            "sip_trunk_id": trunk_id
+        })
+    except Exception as e:
+        logger.error(f"Failed to delete SIP outbound trunk {trunk_id}: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.get("/config")
@@ -264,7 +535,7 @@ async def get_config():
 
 def main():
     import uvicorn
-    port = int(os.getenv("PORT", "8081"))
+    port = int(os.getenv("PORT", "8086"))
     logger.info(f"UI Server starting on http://0.0.0.0:{port}")
     uvicorn.run("mantra.ui_server:app", host="0.0.0.0", port=port)
 
