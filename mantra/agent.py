@@ -399,16 +399,16 @@ Follow these specific instructions:
 
     # Call duration limiter logic
     async def call_limiter():
-        logger.info("⏱️ Call limiter started — waiting for remote participant to join.")
+        logger.info("Call limiter started — waiting for remote participant to join.")
         try:
             # Wait for remote participant to join before starting the 2m/3m timers
             while not list(ctx.room.remote_participants.values()):
                 await asyncio.sleep(1.0)
             
-            logger.info("✅ Remote participant detected in room.")
+            logger.info("Remote participant detected in room.")
             elapsed = asyncio.get_event_loop().time() - entrypoint_start_time
             logger.info(
-                f"⏱️ Participant joined at t={elapsed:.2f}s. "
+                f"Participant joined at t={elapsed:.2f}s. "
                 f"Setting limiter timers: "
                 f"Farewell reply in {max(0.0, 150.0-elapsed):.2f}s, "
                 f"Hard kill in {max(0.0, 180.0-elapsed):.2f}s."
@@ -420,22 +420,22 @@ Follow these specific instructions:
             async def force_disconnect_timer():
                 try:
                     disconnect_delay = max(0.0, 180.0 - (asyncio.get_event_loop().time() - entrypoint_start_time))
-                    logger.info(f"⏱️ Force-disconnect timer armed: t+{disconnect_delay:.2f}s")
+                    logger.info(f"Force-disconnect timer armed: t+{disconnect_delay:.2f}s")
                     await asyncio.wait_for(_force_disconnect_cancelled.wait(), timeout=disconnect_delay)
                 except asyncio.TimeoutError:
                     pass  # Timeout expired — proceed to disconnect
                 except asyncio.CancelledError:
-                    logger.info("⏱️ Force-disconnect timer cancelled.")
+                    logger.info("Force-disconnect timer cancelled.")
                     return  # Cancelled — exit cleanly
                 else:
-                    logger.info("⏱️ Call ended naturally — force-disconnect timer exiting.")
+                    logger.info("Call ended naturally — force-disconnect timer exiting.")
                     return  # Event was set — call ended naturally, exit cleanly
 
                 if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
-                    logger.warning("⏱️ HARD DISCONNECT: 3m limit reached. Force disconnecting room.")
+                    logger.warning("HARD DISCONNECT: 3m limit reached. Force disconnecting room.")
                     await _force_disconnect_room(ctx)
                 else:
-                    logger.info("⏱️ Room already disconnected — force-disconnect skipping.")
+                    logger.info("Room already disconnected — force-disconnect skipping.")
 
             disconnect_task = asyncio.create_task(force_disconnect_timer())
 
@@ -445,10 +445,10 @@ Follow these specific instructions:
             stage1_delay = max(0.0, 150.0 - (asyncio.get_event_loop().time() - entrypoint_start_time))
             await asyncio.sleep(stage1_delay)
             elapsed = asyncio.get_event_loop().time() - entrypoint_start_time
-            logger.info(f"⏱️ Farewell stage hit at t={elapsed:.2f}s")
+            logger.info(f"Farewell stage hit at t={elapsed:.2f}s")
             
             if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
-                logger.info("⏱️ Updating agent instructions for farewell.")
+                logger.info("Updating agent instructions for farewell.")
                 current_inst = agent.instructions
                 if isinstance(current_inst, str):
                     farewell_inst = (
@@ -457,24 +457,24 @@ Follow these specific instructions:
                         "and do not continue the conversation. Do not ask questions."
                     )
                     await agent.update_instructions(current_inst + "\n\n" + farewell_inst)
-                logger.info("✅ Farewell instructions set.")
+                logger.info("Farewell instructions set.")
                 
                 try:
-                    logger.info("⏱️ Waiting for session to become inactive (25s timeout).")
+                    logger.info("Waiting for session to become inactive (25s timeout).")
                     await asyncio.wait_for(session.wait_for_inactive(), timeout=25.0)
-                    logger.info("✅ Session became inactive naturally.")
+                    logger.info("Session became inactive naturally.")
                 except asyncio.TimeoutError:
-                    logger.warning("⏱️ Session did not go inactive within 25s — force-disconnect at 3m will handle it.")
+                    logger.warning("Session did not go inactive within 25s — force-disconnect at 3m will handle it.")
             else:
-                logger.warning("⏱️ Room already disconnected — skipping farewell.")
+                logger.warning("Room already disconnected — skipping farewell.")
         except asyncio.CancelledError:
-            logger.info("⏱️ Call limiter cancelled (call ended naturally before limits).")
+            logger.info("Call limiter cancelled (call ended naturally before limits).")
             try:
                 _force_disconnect_cancelled.set()
             except Exception:
                 pass
         except Exception as e:
-            logger.error(f"⏱️ Error in call limiter: {e}")
+            logger.error(f"Error in call limiter: {e}")
 
     await session.start(agent=agent, room=ctx.room)
     limiter_task = asyncio.create_task(call_limiter())
