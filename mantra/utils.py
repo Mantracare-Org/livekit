@@ -11,6 +11,7 @@ import logging
 import httpx
 import numpy as np
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 from livekit import rtc
 from livekit.plugins import openai
@@ -18,6 +19,21 @@ from livekit.agents import llm
 import boto3
 
 logger = logging.getLogger("mantra.utils")
+
+def redact_proxy_credentials(proxy_url: str) -> str:
+    """Removes basic auth credentials from proxy URLs before logging."""
+    if not proxy_url:
+        return proxy_url
+    try:
+        parsed = urlparse(proxy_url)
+        if parsed.username or parsed.password:
+            netloc = f"***:***@{parsed.hostname}"
+            if parsed.port:
+                netloc += f":{parsed.port}"
+            return parsed._replace(netloc=netloc).geturl()
+    except Exception:
+        pass
+    return proxy_url
 
 async def send_to_backend(payload: dict, max_retries: int = 3) -> bool:
     """POST the post-call payload to the MantraAssist backend with HMAC signing."""
@@ -60,7 +76,7 @@ async def send_to_backend(payload: dict, max_retries: int = 3) -> bool:
     # The container may need this proxy to resolve external hostnames.
     webhook_proxy = os.getenv("PLIVO_PROXY") or os.getenv("HTTPS_PROXY") or os.getenv("https_proxy")
 
-    logger.info(f"Delivering post-call webhook to: {url}" + (f" via proxy: {webhook_proxy}" if webhook_proxy else ""))
+    logger.info(f"Delivering post-call webhook to: {url}" + (f" via proxy: {redact_proxy_credentials(webhook_proxy)}" if webhook_proxy else ""))
 
     for attempt in range(1, max_retries + 1):
         try:
@@ -111,7 +127,7 @@ def upload_to_s3(file_bytes: bytes, s3_key: str) -> Optional[str]:
             
         s3.put_object(Bucket=bucket_name, Key=s3_key, Body=file_bytes, ContentType='audio/mpeg', ACL='public-read')
         url = f"https://{bucket_name}.s3.{region}.amazonaws.com/{s3_key}"
-        logger.info(f"Uploaded recording to S3: {url}" + (f" (via proxy: {proxy})" if proxy else ""))
+        logger.info(f"Uploaded recording to S3: {url}" + (f" (via proxy: {redact_proxy_credentials(proxy)})" if proxy else ""))
         return url
     except Exception as e:
         logger.error(f"S3 upload failed: {e}", exc_info=True)
