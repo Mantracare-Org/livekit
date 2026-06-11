@@ -266,9 +266,6 @@ class SessionRecorder:
             elif "not interested" in desc or "no further follow" in desc:
                 not_interested_id = sid
 
-        if duration < 10:
-            fallback_stage_id = not_answering_id
-
         # Construct transcript
         transcript_lines = []
         for msg in history:
@@ -304,7 +301,6 @@ Current Stage ID: {current_stage_id}
    - Any other important patient details based on the transcript.
 2. Determine the correct Next Stage ID (`new_stage_id`) from the AVAILABLE CRM STAGES above.
    - Select the stage ID whose description best matches the outcome of the call.
-   - If the call duration is short (e.g., less than 10 seconds), select the stage for "not answering / failed call".
    - If the patient confirmed/booked an appointment, select the stage for "confirmed the appointment".
    - If the patient asked to call back or follow up later, select the stage for "follow up or call later".
    - If the patient showed interest but didn't book yet, select the stage for "shown interest".
@@ -350,7 +346,7 @@ Provide ONLY the JSON object. Do not include markdown code block syntax or other
             
             res_dict = json.loads(text)
             
-            summary = res_dict.get("summary", "")
+            summary = res_dict.get("summary") or ""
             new_stage_id = res_dict.get("new_stage_id")
             next_call_on = res_dict.get("next_call_on")
             appointment_date_time = res_dict.get("appointment_date_time")
@@ -378,9 +374,6 @@ Provide ONLY the JSON object. Do not include markdown code block syntax or other
             doctor = ""
             hospital_location = ""
             sentiment_score = 0.5
-
-        if duration < 10:
-            new_stage_id = not_answering_id
 
         if new_stage_id in [not_answering_id, follow_up_id] and not next_call_on:
             tomorrow = current_time + datetime.timedelta(hours=24)

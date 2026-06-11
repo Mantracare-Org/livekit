@@ -4,27 +4,50 @@ import asyncio
 import os
 import datetime
 import sys
+from typing import Annotated
 
-# import colorama
-# from colorama import Fore, Style
+# ── Suppress OpenTelemetry 429 errors ──────────────────────────────────
+os.environ.setdefault("OTEL_METRICS_EXPORTER", "none")
+os.environ.setdefault("OTEL_LOGS_EXPORTER", "none")
+os.environ.setdefault("OTEL_TRACES_EXPORTER", "none")
 
-# # Initialize colorama for cross-platform colored terminal logs
-# colorama.init(autoreset=True)
+# ── Colorama for cross-platform colored terminal logs ──────────────────
+from colorama import Fore, Back, Style, init as colorama_init
+colorama_init(autoreset=True)
+
+class ColorFormatter(logging.Formatter):
+    LEVEL_COLORS = {
+        logging.DEBUG: Fore.CYAN,
+        logging.INFO: Fore.GREEN,
+        logging.WARNING: Fore.YELLOW,
+        logging.ERROR: Fore.RED,
+        logging.CRITICAL: Fore.RED + Back.WHITE,
+    }
+
+    def format(self, record):
+        record.raw_msg = record.getMessage()
+        color = self.LEVEL_COLORS.get(record.levelno, Fore.WHITE)
+        record.msg = f"{color}{record.msg}{Style.RESET_ALL}"
+        return super().format(record)
+
 # LLM Selection Logic
 _is_inference = os.getenv("LIVEKIT_AGENTS_INFERENCE") == "1"
 _proc_type = "Inference Subprocess" if _is_inference else "Main Worker"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format=f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s",
-    stream=sys.stdout
-)
+_handler = logging.StreamHandler(sys.stdout)
+_handler.setFormatter(ColorFormatter(
+    f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s"
+))
+logging.basicConfig(level=logging.INFO, handlers=[_handler])
 logger = logging.getLogger("mantra.agent")
 logger.info("Initializing process...")
 
+# Also suppress noisy OTEL SDK logs once the SDK initialises
+logging.getLogger("opentelemetry").setLevel(logging.ERROR)
+
 from dotenv import load_dotenv
 
-from livekit import rtc
+from livekit import rtc, api
 from livekit.agents import (
     Agent,
     AgentServer,
@@ -62,8 +85,53 @@ load_dotenv(".env.local", override=True)  # Load .env.local (LiveKit, etc.) and 
 
 server = AgentServer()
 
+class AssistantFunctions:
+    def __init__(self, job_metadata: str, room_name: str):
+        self.job_metadata = job_metadata
+        self.room_name = room_name
+        self.handoff_triggered = False
+        self.agent = None
+
+    # @llm.function_tool(description="Transfer the call to a human assistant when requested or if the issue is too complex.")
+    # async def transfer_to_human(
+    #     self,
+    #     reason: Annotated[str, "The reason why a human is needed"]
+    # ):
+    #     logger.info(f"Handoff requested. Reason: {reason}")
+    #     self.handoff_triggered = True
+    #     
+    #     # Parse metadata to get call/lead IDs
+    #     try:
+    #         payload = json.loads(self.job_metadata) if self.job_metadata else {}
+    #     except Exception:
+    #         payload = {}
+    # 
+    #     # Notify backend
+    #     webhook_payload = {
+    #         "event": "HANDOFF_REQUESTED",
+    #         "data": {
+    #             "room_name": self.room_name,
+    #             "reason": reason,
+    #             "call_id": payload.get("call_id") or payload.get("voice_id"),
+    #             "lead_id": payload.get("lead_id"),
+    #             "client_name": payload.get("client_name", "User"),
+    #         }
+    #     }
+    #     await send_to_backend(webhook_payload)
+    #     
+    #     if self.agent:
+    #         logger.info("Handoff triggered — switching to passive monitoring instructions")
+    #         await self.agent.update_instructions(
+    #             "A human has joined the call. You are now in PASSIVE MONITORING MODE. "
+    #             "DO NOT speak. DO NOT respond to the user. DO NOT generate any audio. "
+    #             "Just observe and maintain the transcript for the final summary."
+    #         )
+    # 
+    #     return "I am connecting you to a human assistant now. Please stay on the line. I will remain on the call to record and summarize our conversation."
+
 @server.rtc_session(agent_name="mantra-agent")
 async def entrypoint(ctx: JobContext):
+    entrypoint_start_time = asyncio.get_event_loop().time()
     # Plain log to verify entrypoint is reached
     logger.info(f"Entrypoint reached for room: {ctx.room.name}")
     
@@ -73,6 +141,10 @@ async def entrypoint(ctx: JobContext):
     logger.info(f"Room: {ctx.room.name}")
     logger.info(f"Job ID: {ctx.job.id}")
     logger.info(f"Metadata: {ctx.job.metadata}")
+
+    # Initialize function context for handoff
+    fnc_ctx = AssistantFunctions(ctx.job.metadata, ctx.room.name)
+    call_state = {"user_joined": False}
 
     # Session ID for S3 key naming
     session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -307,15 +379,105 @@ Follow these specific instructions:
         # Using Hindi STT as it's better at catching Hinglish/Indian English
         stt=deepgram.STT(model="nova-3", language="hi", smart_format=True, numerals=True),
         llm=llm_engine,
+        # # Using Hindi-Multilingual TTS to support both languages natively
+        # tts=cartesia.TTS(
+        #     model="sonic-3",
+        #     voice=voice_id,
+        #     speed=voice_speed,
+        #     language="hi"
+        # ),
+
         # Using Hindi-Multilingual TTS with FallbackAdapter to support multiple API keys
         tts=FallbackAdapter(tts_pool),
     )
 
     agent = Agent(
         instructions=initial_instructions,
+        tools=[] # [fnc_ctx.transfer_to_human] commented out
     )
+    fnc_ctx.agent = agent
+
+    # Call duration limiter logic
+    async def call_limiter():
+        logger.info("Call limiter started — waiting for remote participant to join.")
+        try:
+            # Wait for remote participant to join before starting the 2m/3m timers
+            while not list(ctx.room.remote_participants.values()):
+                await asyncio.sleep(1.0)
+            
+            logger.info("Remote participant detected in room.")
+            elapsed = asyncio.get_event_loop().time() - entrypoint_start_time
+            logger.info(
+                f"Participant joined at t={elapsed:.2f}s. "
+                f"Setting limiter timers: "
+                f"Farewell reply in {max(0.0, 150.0-elapsed):.2f}s, "
+                f"Hard kill in {max(0.0, 180.0-elapsed):.2f}s."
+            )
+            
+            # Event that lets us cancel the force-disconnect if the call ends naturally
+            _force_disconnect_cancelled = asyncio.Event()
+
+            async def force_disconnect_timer():
+                try:
+                    disconnect_delay = max(0.0, 180.0 - (asyncio.get_event_loop().time() - entrypoint_start_time))
+                    logger.info(f"Force-disconnect timer armed: t+{disconnect_delay:.2f}s")
+                    await asyncio.wait_for(_force_disconnect_cancelled.wait(), timeout=disconnect_delay)
+                except asyncio.TimeoutError:
+                    pass  # Timeout expired — proceed to disconnect
+                except asyncio.CancelledError:
+                    logger.info("Force-disconnect timer cancelled.")
+                    return  # Cancelled — exit cleanly
+                else:
+                    logger.info("Call ended naturally — force-disconnect timer exiting.")
+                    return  # Event was set — call ended naturally, exit cleanly
+
+                if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+                    logger.warning("HARD DISCONNECT: 3m limit reached. Force disconnecting room.")
+                    await _force_disconnect_room(ctx)
+                else:
+                    logger.info("Room already disconnected — force-disconnect skipping.")
+
+            disconnect_task = asyncio.create_task(force_disconnect_timer())
+
+            # Stage 1: 2m 30s mark — update agent instructions for a natural farewell
+            # We do NOT call generate_reply() here, so the agent won't interrupt the user.
+            # The updated instructions are picked up on the agent's next natural turn.
+            stage1_delay = max(0.0, 150.0 - (asyncio.get_event_loop().time() - entrypoint_start_time))
+            await asyncio.sleep(stage1_delay)
+            elapsed = asyncio.get_event_loop().time() - entrypoint_start_time
+            logger.info(f"Farewell stage hit at t={elapsed:.2f}s")
+            
+            if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+                logger.info("Updating agent instructions for farewell.")
+                current_inst = agent.instructions
+                if isinstance(current_inst, str):
+                    farewell_inst = (
+                        "IMPORTANT: The call time is ending now. "
+                        "On your next turn, say a quick, natural one-sentence goodbye "
+                        "and do not continue the conversation. Do not ask questions."
+                    )
+                    await agent.update_instructions(current_inst + "\n\n" + farewell_inst)
+                logger.info("Farewell instructions set.")
+                
+                try:
+                    logger.info("Waiting for session to become inactive (25s timeout).")
+                    await asyncio.wait_for(session.wait_for_inactive(), timeout=25.0)
+                    logger.info("Session became inactive naturally.")
+                except asyncio.TimeoutError:
+                    logger.warning("Session did not go inactive within 25s — force-disconnect at 3m will handle it.")
+            else:
+                logger.warning("Room already disconnected — skipping farewell.")
+        except asyncio.CancelledError:
+            logger.info("Call limiter cancelled (call ended naturally before limits).")
+            try:
+                _force_disconnect_cancelled.set()
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"Error in call limiter: {e}")
 
     await session.start(agent=agent, room=ctx.room)
+    limiter_task = asyncio.create_task(call_limiter())
     
     # Check if agent track was already published before we attached the listener
     for publication in ctx.room.local_participant.track_publications.values():
@@ -324,15 +486,22 @@ Follow these specific instructions:
     
     if ctx.room.name.startswith("test_"):
         logger.info("Test room detected. Skipping wait for remote participant to initialize synthesis.")
+        call_state["user_joined"] = True
     else:
         logger.info("Waiting for remote participant to join...")
         while not list(ctx.room.remote_participants.values()):
             await asyncio.sleep(0.5)
             
         logger.info("Remote participant joined. Initializing conversation...")
+        call_state["user_joined"] = True
         await asyncio.sleep(0.5)
     
+    # Start the call limiter only after conversation starts
+    # (Moved wait logic inside the task)
+    
+    logger.info(f"Generating greeting for {client_name}...")
     await session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
+    logger.info("Greeting generation requested.")
     
     # Wait for session to end, then finalize everything
     @session.on("close")
@@ -343,6 +512,9 @@ Follow these specific instructions:
         # llm_engine = session.llm
         logger.info(f"Session closed — spawning finalize (history: {len(history_snapshot)} messages)")
 
+        if not limiter_task.done():
+            limiter_task.cancel()
+            
         async def finalize():
             recording_url = ""
             transcript_data = ""
@@ -386,9 +558,10 @@ Follow these specific instructions:
                 if recorder.start_time and recorder.end_time:
                     duration = int((recorder.end_time - recorder.start_time).total_seconds())
 
-                # Determine call status based on duration
-                call_status = "Completed"
-                if duration < 10:
+                # Determine call status based on whether the user joined
+                if call_state["user_joined"]:
+                    call_status = "Completed"
+                else:
                     call_status = "Incomplete"
 
                 # 5. Run unified analysis to generate summary, stage transition, and metadata
@@ -435,8 +608,10 @@ Follow these specific instructions:
                         "client_id": call_payload.get("lead_id"),
                         "call_id": call_payload.get("call_id") or call_payload.get("voice_id"),
                         "call_status": call_status,
+                        "status": call_status,
                         "call_transcript": transcript_data,
                         "ai_summary": summary_text,
+                        "summary": summary_text,
                         "recording_url": recording_url,
                         "call_duration_seconds": duration,
                         "next_call_on": normalize_to_iso8601(next_call_on),
@@ -447,6 +622,8 @@ Follow these specific instructions:
                         "metadata": call_payload.get("metadata", {}),
                         "client_custom_fields": client_custom_fields,
                         "call_custom_fields": call_payload.get("call_custom_fields", {}),
+                        "client_phone": call_payload.get("client_phone") or call_payload.get("phone"),
+                        "trunk_id": call_payload.get("trunk_id"),
                         "url": ""
                     }
                 }
@@ -462,6 +639,7 @@ Follow these specific instructions:
                         "data": {
                             "ai_call_id": ctx.job.id,
                             "call_status": "Error",
+                            "status": "Error",
                             "notes": "Post-call pipeline encountered an error — minimal payload sent",
                         }
                     }
@@ -483,6 +661,25 @@ Follow these specific instructions:
             )
 
         asyncio.create_task(finalize())
+
+async def _force_disconnect_room(ctx: JobContext):
+    """Delete the room via LiveKit API. Falls back to local disconnect."""
+    try:
+        lk_api = api.LiveKitAPI(
+            url=os.getenv("LIVEKIT_URL"),
+            api_key=os.getenv("LIVEKIT_API_KEY"),
+            api_secret=os.getenv("LIVEKIT_API_SECRET")
+        )
+        await lk_api.room.delete_room(api.DeleteRoomRequest(room=ctx.room.name))
+        await lk_api.aclose()
+        logger.info(f"Room {ctx.room.name} deleted via API.")
+    except Exception as e:
+        logger.error(f"Failed to delete room via API: {e}")
+        try:
+            await ctx.room.disconnect()
+            logger.info(f"Room {ctx.room.name} disconnected locally.")
+        except Exception as e2:
+            logger.error(f"Local disconnect also failed: {e2}")
 
 def run_agent():
     _is_start_cmd = "start" in sys.argv
