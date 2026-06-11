@@ -144,6 +144,7 @@ async def entrypoint(ctx: JobContext):
 
     # Initialize function context for handoff
     fnc_ctx = AssistantFunctions(ctx.job.metadata, ctx.room.name)
+    call_state = {"user_joined": False}
 
     # Session ID for S3 key naming
     session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -485,12 +486,14 @@ Follow these specific instructions:
     
     if ctx.room.name.startswith("test_"):
         logger.info("Test room detected. Skipping wait for remote participant to initialize synthesis.")
+        call_state["user_joined"] = True
     else:
         logger.info("Waiting for remote participant to join...")
         while not list(ctx.room.remote_participants.values()):
             await asyncio.sleep(0.5)
             
         logger.info("Remote participant joined. Initializing conversation...")
+        call_state["user_joined"] = True
         await asyncio.sleep(0.5)
     
     # Start the call limiter only after conversation starts
@@ -555,11 +558,10 @@ Follow these specific instructions:
                 if recorder.start_time and recorder.end_time:
                     duration = int((recorder.end_time - recorder.start_time).total_seconds())
 
-                # Determine call status based on duration
-                call_status = "Completed"
-                if fnc_ctx.handoff_triggered:
-                    call_status = "Handed Off"
-                elif duration < 10:
+                # Determine call status based on whether the user joined
+                if call_state["user_joined"]:
+                    call_status = "Completed"
+                else:
                     call_status = "Incomplete"
 
                 # 5. Run unified analysis to generate summary, stage transition, and metadata
@@ -609,6 +611,7 @@ Follow these specific instructions:
                         "status": call_status,
                         "call_transcript": transcript_data,
                         "ai_summary": summary_text,
+                        "summary": summary_text,
                         "recording_url": recording_url,
                         "call_duration_seconds": duration,
                         "next_call_on": normalize_to_iso8601(next_call_on),
@@ -619,6 +622,8 @@ Follow these specific instructions:
                         "metadata": call_payload.get("metadata", {}),
                         "client_custom_fields": client_custom_fields,
                         "call_custom_fields": call_payload.get("call_custom_fields", {}),
+                        "client_phone": call_payload.get("client_phone") or call_payload.get("phone"),
+                        "trunk_id": call_payload.get("trunk_id"),
                         "url": ""
                     }
                 }
