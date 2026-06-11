@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from livekit import api
 from dotenv import load_dotenv
+from mantra.utils import redact_proxy_credentials
 
 # Load environment variables from .env.local
 load_dotenv(".env.local")
@@ -47,7 +48,7 @@ async def lifespan(app: FastAPI):
 
         plivo_proxy = os.getenv("PLIVO_PROXY")
         if plivo_proxy:
-            logger.info(f"Creating Plivo LiveKit client with proxy: {plivo_proxy}")
+            logger.info(f"Creating Plivo LiveKit client with proxy: {redact_proxy_credentials(plivo_proxy)}")
         else:
             logger.info("Creating Plivo LiveKit client without proxy (PLIVO_PROXY not set)")
         plivo_session = aiohttp.ClientSession(proxy=plivo_proxy)
