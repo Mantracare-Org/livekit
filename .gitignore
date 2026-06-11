@@ -57,5 +57,8 @@ Thumbs.db
 livekit_agent.egg-info/
 
 
-#Test Datas 
+#Test Datas
 recordings/
+
+#Antigravity
+.planning/
