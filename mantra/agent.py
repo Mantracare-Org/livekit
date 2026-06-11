@@ -367,7 +367,8 @@ Follow these specific instructions:
                     if mp3_bytes:
                         call_id = call_payload.get("call_id") or call_payload.get("voice_id")
                         s3_key = f"recordings/{call_id}.mp3" if call_id else f"recordings/{session_id}_{ctx.room.name}.mp3"
-                        recording_url = upload_to_s3(mp3_bytes, s3_key) or ""
+                        loop = asyncio.get_running_loop()
+                        recording_url = await loop.run_in_executor(None, upload_to_s3, mp3_bytes, s3_key) or ""
                         logger.info(f"S3 recording: {'uploaded' if recording_url else 'upload failed'}")
                     else:
                         logger.info("No audio data captured for recording")
