@@ -194,6 +194,9 @@ async def handle_outbound_call_webhook(request: Request):
     # The trunk's destination_country="in" handles Indian region routing at the SIP layer
     try:
         sip_number = payload.get("call_from")
+        if sip_number and not sip_number.startswith("+"):
+            sip_number = f"+{sip_number}"
+            
         logger.info(f"Step 2: Initiating SIP call to {phone_number} via trunk {trunk_id}" + (f" (Caller ID: {sip_number})" if sip_number else ""))
 
         sip_part = await lk_client.sip.create_sip_participant(

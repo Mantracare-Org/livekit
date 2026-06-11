@@ -38,8 +38,15 @@ _handler = logging.StreamHandler(sys.stdout)
 _handler.setFormatter(ColorFormatter(
     f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s"
 ))
-logging.basicConfig(level=logging.INFO, handlers=[_handler])
+
+_file_handler = logging.FileHandler("/tmp/agent.log")
+_file_handler.setFormatter(logging.Formatter(
+    f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s"
+))
+
+logging.basicConfig(level=logging.DEBUG, handlers=[_handler, _file_handler])
 logger = logging.getLogger("mantra.agent")
+logging.getLogger("livekit.agents").setLevel(logging.DEBUG)
 logger.info("Initializing process...")
 
 # Also suppress noisy OTEL SDK logs once the SDK initialises
@@ -48,6 +55,10 @@ logging.getLogger("opentelemetry").setLevel(logging.ERROR)
 from dotenv import load_dotenv
 
 from livekit import rtc, api
+from livekit.agents.llm import (
+    ChatContext,
+    ChatMessage,
+)
 from livekit.agents import (
     Agent,
     AgentServer,
@@ -268,14 +279,14 @@ Follow these specific instructions:
         model_name = "openai"
         voice_input = "arushi"
         voice_id = VOICE_MAPPING["arushi"]
-        voice_speed = 1
+        voice_speed = 1.0
 
     # Safe parsing and clamping for speed (0.1 to 2.0)
     try:
         voice_speed = float(voice_speed)
         voice_speed = max(0.1, min(2.0, voice_speed))
     except (ValueError, TypeError):
-        voice_speed = 1
+        voice_speed = 1.0
 
     # Explicit logs for call configuration
     logger.info("--- CALL CONFIGURATION ---")
@@ -387,7 +398,7 @@ Follow these specific instructions:
         #     language="hi"
         # ),
 
-        # Using Hindi-Multilingual TTS with FallbackAdapter to support multiple API keys
+        # Using FallbackAdapter to support multiple API keys
         tts=FallbackAdapter(tts_pool),
     )
 
@@ -500,7 +511,7 @@ Follow these specific instructions:
     # (Moved wait logic inside the task)
     
     logger.info(f"Generating greeting for {client_name}...")
-    await session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
+    session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
     logger.info("Greeting generation requested.")
     
     # Wait for session to end, then finalize everything
