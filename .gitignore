@@ -59,3 +59,6 @@ livekit_agent.egg-info/
 
 #Test Datas 
 recordings/
+
+#Antigravity
+.planning/

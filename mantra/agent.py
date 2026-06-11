@@ -92,42 +92,42 @@ class AssistantFunctions:
         self.handoff_triggered = False
         self.agent = None
 
-    @llm.function_tool(description="Transfer the call to a human assistant when requested or if the issue is too complex.")
-    async def transfer_to_human(
-        self,
-        reason: Annotated[str, "The reason why a human is needed"]
-    ):
-        logger.info(f"Handoff requested. Reason: {reason}")
-        self.handoff_triggered = True
-        
-        # Parse metadata to get call/lead IDs
-        try:
-            payload = json.loads(self.job_metadata) if self.job_metadata else {}
-        except Exception:
-            payload = {}
-
-        # Notify backend
-        webhook_payload = {
-            "event": "HANDOFF_REQUESTED",
-            "data": {
-                "room_name": self.room_name,
-                "reason": reason,
-                "call_id": payload.get("call_id") or payload.get("voice_id"),
-                "lead_id": payload.get("lead_id"),
-                "client_name": payload.get("client_name", "User"),
-            }
-        }
-        await send_to_backend(webhook_payload)
-        
-        if self.agent:
-            logger.info("Handoff triggered — switching to passive monitoring instructions")
-            self.agent.update_instructions(
-                "A human has joined the call. You are now in PASSIVE MONITORING MODE. "
-                "DO NOT speak. DO NOT respond to the user. DO NOT generate any audio. "
-                "Just observe and maintain the transcript for the final summary."
-            )
-
-        return "I am connecting you to a human assistant now. Please stay on the line. I will remain on the call to record and summarize our conversation."
+    # @llm.function_tool(description="Transfer the call to a human assistant when requested or if the issue is too complex.")
+    # async def transfer_to_human(
+    #     self,
+    #     reason: Annotated[str, "The reason why a human is needed"]
+    # ):
+    #     logger.info(f"Handoff requested. Reason: {reason}")
+    #     self.handoff_triggered = True
+    #     
+    #     # Parse metadata to get call/lead IDs
+    #     try:
+    #         payload = json.loads(self.job_metadata) if self.job_metadata else {}
+    #     except Exception:
+    #         payload = {}
+    # 
+    #     # Notify backend
+    #     webhook_payload = {
+    #         "event": "HANDOFF_REQUESTED",
+    #         "data": {
+    #             "room_name": self.room_name,
+    #             "reason": reason,
+    #             "call_id": payload.get("call_id") or payload.get("voice_id"),
+    #             "lead_id": payload.get("lead_id"),
+    #             "client_name": payload.get("client_name", "User"),
+    #         }
+    #     }
+    #     await send_to_backend(webhook_payload)
+    #     
+    #     if self.agent:
+    #         logger.info("Handoff triggered — switching to passive monitoring instructions")
+    #         await self.agent.update_instructions(
+    #             "A human has joined the call. You are now in PASSIVE MONITORING MODE. "
+    #             "DO NOT speak. DO NOT respond to the user. DO NOT generate any audio. "
+    #             "Just observe and maintain the transcript for the final summary."
+    #         )
+    # 
+    #     return "I am connecting you to a human assistant now. Please stay on the line. I will remain on the call to record and summarize our conversation."
 
 @server.rtc_session(agent_name="mantra-agent")
 async def entrypoint(ctx: JobContext):
@@ -392,7 +392,7 @@ Follow these specific instructions:
 
     agent = Agent(
         instructions=initial_instructions,
-        tools=[fnc_ctx.transfer_to_human]
+        tools=[] # [fnc_ctx.transfer_to_human] commented out
     )
     fnc_ctx.agent = agent
 
@@ -556,7 +556,9 @@ Follow these specific instructions:
 
                 # Determine call status based on duration
                 call_status = "Completed"
-                if duration < 10:
+                if fnc_ctx.handoff_triggered:
+                    call_status = "Handed Off"
+                elif duration < 10:
                     call_status = "Incomplete"
 
                 # 5. Run unified analysis to generate summary, stage transition, and metadata
@@ -603,6 +605,7 @@ Follow these specific instructions:
                         "client_id": call_payload.get("lead_id"),
                         "call_id": call_payload.get("call_id") or call_payload.get("voice_id"),
                         "call_status": call_status,
+                        "status": call_status,
                         "call_transcript": transcript_data,
                         "ai_summary": summary_text,
                         "recording_url": recording_url,
@@ -630,6 +633,7 @@ Follow these specific instructions:
                         "data": {
                             "ai_call_id": ctx.job.id,
                             "call_status": "Error",
+                            "status": "Error",
                             "notes": "Post-call pipeline encountered an error — minimal payload sent",
                         }
                     }
@@ -640,75 +644,6 @@ Follow these specific instructions:
                 logger.error(f"Webhook delivery failed: {e}", exc_info=True)
                 delivered = False
 
-            # 1. Build recording MP3 in memory
-            mp3_bytes = recorder.get_combined_mp3_bytes()
-            
-            # 2. Upload recording to S3
-            recording_url = ""
-            if mp3_bytes:
-                # Priority: call_id -> voice_id
-                call_id = call_payload.get("call_id") or call_payload.get("voice_id")
-                if call_id:
-                    s3_key = f"recordings/{call_id}.mp3"
-                else:
-                    s3_key = f"recordings/{session_id}_{ctx.room.name}.mp3"
-                
-                recording_url = upload_to_s3(mp3_bytes, s3_key) or ""
-            
-            # 3. Build transcript in memory
-            history = session.history.messages()
-            transcript_data = SessionRecorder.build_transcript(history)
-            
-            # 4. Generate summary in memory
-            summary_text = await SessionRecorder.generate_summary(session.llm, history)
-            
-            # 5. Calculate duration
-            duration = 0
-            if recorder.start_time and recorder.end_time:
-                duration = int((recorder.end_time - recorder.start_time).total_seconds())
-            
-            # 6. Parse additional data from summary
-            sentiment_score, next_call_on, parsed_custom_fields = SessionRecorder.parse_summary_data(summary_text)
-            
-            # Combine payload's client_custom_fields with parsed ones
-            client_custom_fields = call_payload.get("client_custom_fields", {})
-            for k, v in parsed_custom_fields.items():
-                if v:  # Only update if the parsed value is not empty
-                    client_custom_fields[k] = v
-            
-            # Determine call status based on duration
-            call_status = "Completed"
-            if fnc_ctx.handoff_triggered:
-                call_status = "Handed Off"
-            elif duration < 10:
-                call_status = "Incomplete"
-            
-            # 8. Build webhook payload
-            webhook_payload = {
-                "event": "CALL_DATA_UPDATE",
-                "data": {
-                    "client_id": call_payload.get("lead_id"),
-                    "call_id": call_payload.get("call_id") or call_payload.get("voice_id"),
-                    "call_status": call_status,
-                    "call_transcript": transcript_data,
-                    "ai_summary": summary_text,
-                    "recording_url": recording_url,
-                    "call_duration_seconds": duration,
-                    "next_call_on": next_call_on,
-                    "ai_call_id": ctx.job.id,
-                    "new_stage_id": call_payload.get("stage_id"),
-                    "process_id": call_payload.get("process_id"),
-                    "notes": "",
-                    "metadata": call_payload.get("metadata", {}),
-                    "client_custom_fields": client_custom_fields,
-                    "call_custom_fields": call_payload.get("call_custom_fields", {}),
-                    "url": ""
-                }
-            }
-            
-            # 9. Send to MantraAssist backend
-            delivered = await send_to_backend(webhook_payload)
-            
             logger.info(
                 f"Post-call processing complete | "
                 f"Call ID: {ctx.job.id} | "
