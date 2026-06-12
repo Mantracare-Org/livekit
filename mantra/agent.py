@@ -183,10 +183,15 @@ PRONUNCIATION (CRITICAL):
 Follow these specific instructions:
 """
     client_name = "User"
+    is_inbound = False
     
     if ctx.job.metadata:
         try:
             payload = json.loads(ctx.job.metadata)
+            
+            if payload.get("direction") == "inbound":
+                is_inbound = True
+
             
             # Normalize client_custom_fileds to client_custom_fields
             if "client_custom_fileds" in payload:
@@ -242,7 +247,16 @@ Follow these specific instructions:
             initial_instructions += "1. NEVER repeat the same question twice. If the user dodges the question or asks a counter-question, answer them and DO NOT repeat your previous question.\n"
             initial_instructions += "2. DO NOT push for an appointment if the user hasn't explicitly agreed or if they are asking about other things. Let the conversation flow naturally.\n"
             initial_instructions += "3. Answer user's questions DIRECTLY without appending a sales pitch or appointment request at the end of every turn.\n"
-            logger.info(f"Loaded full context for {client_name}")
+            
+            if is_inbound:
+                initial_instructions += "\n--- INBOUND CALL CONTEXT ---\n"
+                initial_instructions += "- This is an INBOUND call. The caller reached out to you.\n"
+                initial_instructions += "- Greet warmly and ask how you can help.\n"
+                initial_instructions += "- Do not assume you know why they are calling. Let them explain.\n"
+                initial_instructions += "- Identify yourself: 'Mantra Care' or as instructed in your prompt.\n"
+                initial_instructions += "- If the caller seems confused, help them understand who you are.\n"
+                
+            logger.info(f"Loaded full context for {client_name} (inbound: {is_inbound})")
         except Exception as e:
             logger.error(f"Failed to parse metadata: {e}")
 
@@ -499,8 +513,11 @@ Follow these specific instructions:
     # Start the call limiter only after conversation starts
     # (Moved wait logic inside the task)
     
-    logger.info(f"Generating greeting for {client_name}...")
-    await session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
+    logger.info(f"Generating greeting for {client_name} (inbound: {is_inbound})...")
+    if is_inbound:
+        await session.generate_reply(instructions="Greet the caller warmly. Introduce yourself and ask how you can help them today.")
+    else:
+        await session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
     logger.info("Greeting generation requested.")
     
     # Wait for session to end, then finalize everything

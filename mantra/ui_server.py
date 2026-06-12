@@ -134,6 +134,126 @@ async def dispatch_test(request: Request):
     })
 
 
+@app.post("/api/v1/test/inbound-call")
+async def test_inbound_call(request: Request):
+    """
+    Simulates an inbound call by triggering an outbound SIP call but dispatching
+    the agent with the 'inbound' direction metadata so it acts like an inbound call.
+    """
+    payload = await request.json()
+
+    if not payload:
+        return JSONResponse({"error": "No payload provided"}, status_code=400)
+    
+    logger.info(f"Test inbound call request: {json.dumps(payload, indent=2)}")
+    
+    call_id = int(time.time())
+    room_name = f"test_inbound_{call_id}"
+    
+    # Force the direction to inbound so the agent handles it correctly
+    payload["direction"] = "inbound"
+    payload["call_id"] = call_id
+    
+    # 1. Trigger agent dispatch
+    try:
+        logger.info(f"Dispatching agent to room {room_name}")
+        dispatch = await lk_client.agent_dispatch.create_dispatch(
+            api.CreateAgentDispatchRequest(
+                room=room_name,
+                agent_name="mantra-agent",
+                metadata=json.dumps(payload)
+            )
+        )
+    except Exception as e:
+        logger.error(f"Agent dispatch failed: {e}\n{traceback.format_exc()}")
+        return JSONResponse({"error": f"Agent dispatch failed: {str(e)}"}, status_code=500)
+
+    # 2. Trigger SIP Outbound Call to the tester's phone
+    try:
+        trunk_id = payload.get("trunk_id")
+        client_phone = payload.get("phone")
+        country_code = str(payload.get("country_code", "")).strip("+")
+        
+        if not trunk_id or not client_phone:
+            return JSONResponse({"error": "trunk_id and phone are required"}, status_code=400)
+            
+        if client_phone.startswith("+"):
+            phone_number = client_phone
+        elif country_code and client_phone:
+            phone_number = f"+{country_code}{client_phone}"
+        else:
+            phone_number = client_phone
+            
+        logger.info(f"Initiating test SIP call to {phone_number} via trunk {trunk_id}")
+
+        sip_part = await lk_client.sip.create_sip_participant(
+            api.CreateSIPParticipantRequest(
+                sip_trunk_id=trunk_id,
+                sip_call_to=phone_number,
+                room_name=room_name,
+                participant_identity=f"sip_test_{call_id}",
+                participant_name="SIP Tester"
+            )
+        )
+    except Exception as e:
+        logger.error(f"SIP Call trigger failed: {e}\n{traceback.format_exc()}")
+        return JSONResponse({"error": f"SIP Call trigger failed: {str(e)}"}, status_code=500)
+
+    return JSONResponse({
+        "status": "success",
+        "message": "Test inbound call initiated",
+        "room": room_name,
+        "call_id": call_id
+    })
+
+
+@app.post("/api/v1/sip/dispatch-rules")
+async def create_dispatch_rule(request: Request):
+    """
+    Create a SIP Dispatch Rule to route incoming calls from a specific trunk to agent-controlled rooms.
+    """
+    payload = await request.json()
+    if not payload:
+        return JSONResponse({"error": "No payload provided"}, status_code=400)
+        
+    logger.info(f"Creating dispatch rule with payload: {json.dumps(payload, indent=2)}")
+    
+    trunk_id = payload.get("trunk_id")
+    if not trunk_id:
+        return JSONResponse({"error": "trunk_id is required"}, status_code=400)
+        
+    room_prefix = payload.get("room_prefix", "inbound_")
+    name = payload.get("name", f"rule_{trunk_id}")
+    
+    # Enforce inbound direction for agent payload
+    payload["direction"] = "inbound"
+    
+    try:
+        req = api.CreateSIPDispatchRuleRequest(
+            name=name,
+            metadata=json.dumps(payload),
+            rule=api.SIPDispatchRule(
+                dispatch_rule_individual=api.SIPDispatchRuleIndividual(
+                    room_prefix=room_prefix
+                )
+            ),
+            trunk_ids=[trunk_id]
+        )
+        # Using lk_client directly as rules are managed at LiveKit cloud level
+        rule = await lk_client.sip.create_sip_dispatch_rule(req)
+        
+        return JSONResponse({
+            "status": "success",
+            "sip_dispatch_rule_id": rule.sip_dispatch_rule_id,
+            "name": name,
+            "trunk_ids": [trunk_id],
+            "room_prefix": room_prefix
+        })
+    except Exception as e:
+        logger.error(f"Failed to create dispatch rule: {e}\n{traceback.format_exc()}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.post("/api/v1/webhooks/telephony")
 async def handle_outbound_call_webhook(request: Request):
     """
