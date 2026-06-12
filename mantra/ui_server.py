@@ -9,8 +9,9 @@ import traceback
 from contextlib import asynccontextmanager
 
 import aiohttp
+import redis.asyncio as redis
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from livekit import api
 from dotenv import load_dotenv
@@ -25,10 +26,11 @@ load_dotenv(".env.local")
 lk_client: api.LiveKitAPI = None           # Direct — used for Twilio, Zadarma, and general operations
 plivo_client: api.LiveKitAPI = None        # Proxied — used for Plivo (India routing)
 plivo_session: aiohttp.ClientSession = None  # Owned session for plivo_client; closed manually on shutdown
+redis_client: redis.Redis = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global lk_client, plivo_client, plivo_session
+    global lk_client, plivo_client, plivo_session, redis_client
     api_key = os.getenv("LIVEKIT_API_KEY")
     api_secret = os.getenv("LIVEKIT_API_SECRET")
     lk_url = os.getenv("LIVEKIT_URL")
@@ -55,6 +57,15 @@ async def lifespan(app: FastAPI):
         plivo_client = api.LiveKitAPI(
             url=api_url, api_key=api_key, api_secret=api_secret, session=plivo_session
         )
+
+    # Setup Redis
+    redis_url = os.getenv("REDIS_URL")
+    try:
+        redis_client = redis.from_url(redis_url, decode_responses=True)
+        await redis_client.ping()
+        logger.info("Connected to Redis")
+    except Exception as e:
+        logger.error(f"Failed to connect to Redis: {e}")
 
     yield
 
@@ -533,6 +544,34 @@ async def get_config():
     return JSONResponse({
         "url": os.getenv("LIVEKIT_URL")
     })
+
+# TODO: This should be removed in production
+@app.get("/api/v1/queue/status/stream")
+async def stream_queue_status():
+    """Server-Sent Events endpoint for live Redis queue updates."""
+    async def event_generator():
+        if not redis_client:
+            yield "data: {\"error\": \"Redis not connected\"}\n\n"
+            return
+            
+        while True:
+            try:
+                pending_count = await redis_client.zcard("queue:pending")
+                active_count = await redis_client.hlen("calls:active")
+                
+                data = json.dumps({
+                    "pending_calls": pending_count,
+                    "active_calls": active_count,
+                    "timestamp": time.time()
+                })
+                yield f"data: {data}\n\n"
+            except Exception as e:
+                logger.error(f"SSE stream error: {e}")
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            
+            await asyncio.sleep(1) # Send update every second
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 def main():
     import uvicorn
