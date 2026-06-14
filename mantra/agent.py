@@ -187,9 +187,9 @@ CORE BEHAVIOR:
 - RETAIN CONTEXT & AVOID REPETITION: Remember the user's previous answers. Do NOT repeatedly ask the same questions. If they say no or want to focus on something else, acknowledge it and move on. DO NOT be pushy.
 
 PRONUNCIATION (CRITICAL):
-- ALWAYS write the brand name as "Mantra Care" (two separate words with a space). NEVER write "MantraCare" or "Mantracare" as a single word.
-- ALWAYS write "Mantra Assist" (two separate words). NEVER write "MantraAssist" as one word.
-- These are spoken brand names on a phone call — proper spacing ensures correct pronunciation.
+- ALWAYS write the brand name as "MantraCare" (as a single word). NEVER write "Mantra Care" with a space.
+- ALWAYS write "MantraAssist" (as a single word). NEVER write "Mantra Assist" with a space.
+- These are spoken brand names on a phone call — single-word format ensures correct pronunciation.
 
 Follow these specific instructions:
 """
@@ -333,17 +333,7 @@ Follow these specific instructions:
     if not cartesia_configs:
         cartesia_configs = [{"key": None, "dict_id": os.getenv("CARTESIA_PRONUNCIATION_DICT_ID")}]
 
-    # Priority for Language: ai_payload.language -> payload.language -> default "en"
-    # IMPORTANT: Default to "en" NOT None (auto-detect). Auto-detect causes Cartesia to
-    # apply Hindi phonetics to English words in bilingual conversations (e.g. "Care" → "karey").
-    # Sonic-3 in "en" mode still handles Hindi/Hinglish text correctly.
-    if 'payload' in locals():
-        ai_p = payload.get("ai_payload")
-        if not isinstance(ai_p, dict):
-            ai_p = {}
-        language = ai_p.get("language") or payload.get("language") or "en"
-    else:
-        language = "en"
+    language = "en"
         
     if language:
         language = str(language).lower()
