@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 
 import aiohttp
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from livekit import api
 from dotenv import load_dotenv
@@ -67,6 +67,16 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 logger = logging.getLogger("mantra.ui_server")
 logger.setLevel(logging.INFO)
+
+# Setup file logging to capture all logs including uvicorn
+_file_handler = logging.FileHandler("/home/fardeen/lkt/app.log")
+_file_handler.setFormatter(logging.Formatter(
+    "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+))
+logging.getLogger().addHandler(_file_handler)
+# Also add directly to mantra.ui_server logger to be absolutely sure
+logger.addHandler(_file_handler)
+
 
 # Get the directory of the current file
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -207,6 +217,99 @@ async def test_inbound_call(request: Request):
     })
 
 
+@app.post("/api/v1/sip/trunks/inbound")
+async def create_inbound_trunk(request: Request):
+    """
+    Create a new SIP Inbound Trunk to receive incoming calls from SIP providers (e.g., Plivo).
+    """
+    payload = await request.json()
+    if not payload:
+        return JSONResponse({"error": "No payload provided"}, status_code=400)
+    
+    logger.info(f"Creating SIP Inbound Trunk with payload: {json.dumps(payload, indent=2)}")
+    
+    name = payload.get("name")
+    numbers = payload.get("numbers")
+    auth_username = payload.get("authUsername") or payload.get("auth_username")
+    auth_password = payload.get("authPassword") or payload.get("auth_password")
+    
+    if not all([name, numbers]):
+        return JSONResponse({"error": "Missing required fields: name, numbers"}, status_code=400)
+        
+    if isinstance(numbers, str):
+        numbers = [n.strip() for n in numbers.split(",") if n.strip()]
+    elif not isinstance(numbers, list):
+        numbers = [str(numbers)]
+        
+    try:
+        trunk_request = api.CreateSIPInboundTrunkRequest(
+            trunk=api.SIPInboundTrunkInfo(
+                name=name,
+                numbers=numbers,
+                auth_username=auth_username or "",
+                auth_password=auth_password or "",
+            )
+        )
+        trunk = await lk_client.sip.create_inbound_trunk(trunk_request)
+        return JSONResponse({
+            "status": "success",
+            "sip_trunk_id": trunk.sip_trunk_id,
+            "name": trunk.name,
+            "numbers": list(trunk.numbers)
+        })
+    except Exception as e:
+        logger.error(f"Failed to create inbound trunk: {e}\n{traceback.format_exc()}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/v1/sip/trunks/inbound")
+async def list_sip_inbound_trunks():
+    """
+    List all SIP Inbound Trunks configured in LiveKit.
+    """
+    try:
+        response = await lk_client.sip.list_inbound_trunk(api.ListSIPInboundTrunkRequest())
+        trunk_list = []
+        for item in response.items:
+            trunk_list.append({
+                "sip_trunk_id": item.sip_trunk_id,
+                "name": item.name,
+                "numbers": list(item.numbers)
+            })
+        
+        return JSONResponse({
+            "status": "success",
+            "count": len(trunk_list),
+            "trunks": trunk_list
+        })
+    except Exception as e:
+        logger.error(f"Failed to list SIP inbound trunks: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.delete("/api/v1/sip/trunks/inbound/{trunk_id}")
+async def delete_sip_inbound_trunk(trunk_id: str):
+    """
+    Delete a SIP Inbound Trunk by its ID.
+    """
+    if not trunk_id:
+        return JSONResponse({"error": "Trunk ID is required"}, status_code=400)
+    
+    try:
+        await lk_client.sip.delete_trunk(
+            api.DeleteSIPTrunkRequest(sip_trunk_id=trunk_id)
+        )
+        logger.info(f"Successfully deleted SIP Inbound Trunk: {trunk_id}")
+        
+        return JSONResponse({
+            "status": "success",
+            "message": f"SIP inbound trunk {trunk_id} deleted successfully"
+        })
+    except Exception as e:
+        logger.error(f"Failed to delete SIP inbound trunk {trunk_id}: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.post("/api/v1/sip/dispatch-rules")
 async def create_dispatch_rule(request: Request):
     """
@@ -237,6 +340,14 @@ async def create_dispatch_rule(request: Request):
                     room_prefix=room_prefix
                 )
             ),
+            room_config=api.RoomConfiguration(
+                agents=[
+                    api.RoomAgentDispatch(
+                        agent_name="mantra-agent",
+                        metadata=json.dumps(payload)
+                    )
+                ]
+            ),
             trunk_ids=[trunk_id]
         )
         # Using lk_client directly as rules are managed at LiveKit cloud level
@@ -252,6 +363,133 @@ async def create_dispatch_rule(request: Request):
     except Exception as e:
         logger.error(f"Failed to create dispatch rule: {e}\n{traceback.format_exc()}")
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/v1/sip/dispatch-rules")
+async def list_dispatch_rules():
+    """
+    List all SIP Dispatch Rules configured in LiveKit.
+    """
+    try:
+        response = await lk_client.sip.list_dispatch_rule(api.ListSIPDispatchRuleRequest())
+        rule_list = []
+        for item in response.items:
+            # Safely handle the rule type which could be individual, direct, etc.
+            rule_info = {}
+            if item.rule:
+                if item.rule.dispatch_rule_individual:
+                    rule_info = {"type": "individual", "room_prefix": item.rule.dispatch_rule_individual.room_prefix}
+                elif item.rule.dispatch_rule_direct:
+                    rule_info = {"type": "direct", "room_name": item.rule.dispatch_rule_direct.room_name}
+                elif item.rule.dispatch_rule_caller:
+                    rule_info = {"type": "caller", "room_prefix": item.rule.dispatch_rule_caller.room_prefix, "workspace_uid": item.rule.dispatch_rule_caller.workspace_uid}
+                    
+            rule_list.append({
+                "sip_dispatch_rule_id": item.sip_dispatch_rule_id,
+                "name": item.name,
+                "trunk_ids": list(item.trunk_ids),
+                "rule": rule_info,
+                "metadata": item.metadata
+            })
+        
+        return JSONResponse({
+            "status": "success",
+            "count": len(rule_list),
+            "rules": rule_list
+        })
+    except Exception as e:
+        logger.error(f"Failed to list dispatch rules: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.delete("/api/v1/sip/dispatch-rules/{rule_id}")
+async def delete_dispatch_rule(rule_id: str):
+    """
+    Delete a SIP Dispatch Rule by its ID.
+    """
+    if not rule_id:
+        return JSONResponse({"error": "Rule ID is required"}, status_code=400)
+    
+    try:
+        await lk_client.sip.delete_dispatch_rule(
+            api.DeleteSIPDispatchRuleRequest(sip_dispatch_rule_id=rule_id)
+        )
+        logger.info(f"Successfully deleted SIP Dispatch Rule: {rule_id}")
+        
+        return JSONResponse({
+            "status": "success",
+            "message": f"SIP dispatch rule {rule_id} deleted successfully"
+        })
+    except Exception as e:
+        logger.error(f"Failed to delete dispatch rule {rule_id}: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+
+@app.get("/api/v1/sip/plivo-xml")
+@app.post("/api/v1/sip/plivo-xml")
+async def plivo_xml(request: Request):
+    """
+    Returns XML for Plivo Application to route to the LiveKit SIP Trunk.
+    Passes a dynamic X-Room-Name SIP header to guarantee a unique, non-empty room name.
+    """
+    call_uuid = "unknown"
+    to_number = "918031321203"
+    from_number = "unknown"
+    
+    if request.method == "POST":
+        form_data = await request.form()
+        logger.info(f"Received Plivo XML request via POST: {dict(form_data)}")
+        call_uuid = form_data.get("CallUUID", "unknown")
+        to_number = form_data.get("To", "918031321203")
+        from_number = form_data.get("From", "unknown")
+    elif request.method == "GET":
+        logger.info(f"Received Plivo XML request via GET: {dict(request.query_params)}")
+        call_uuid = request.query_params.get("CallUUID", "unknown")
+        to_number = request.query_params.get("To", "918031321203")
+        from_number = request.query_params.get("From", "unknown")
+        
+    logger.info(f"Plivo XML parameters - CallUUID: {call_uuid}, To: {to_number}, From: {from_number}")
+        
+    lk_url = os.getenv("LIVEKIT_URL", "")
+    host_lk = lk_url.replace("wss://", "").replace("ws://", "")
+    if "mantraassist-0ek43ife" in host_lk:
+        sip_domain = "4mp2ouvchg3.india.sip.livekit.cloud"
+    elif "livekit.cloud" in host_lk:
+        subdomain = host_lk.split(".")[0]
+        # Fallback to default behavior if it's a different project
+        sip_domain = f"{subdomain}.sip.livekit.cloud"
+    else:
+        sip_domain = "4mp2ouvchg3.india.sip.livekit.cloud"
+        
+    # Build absolute action URL dynamically using headers for ngrok support
+    req_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or "localhost:8081"
+    req_scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
+    action_url = f"{req_scheme}://{req_host}/api/v1/sip/plivo-dial-status"
+
+    
+    xml_content = f'''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Dial action="{action_url}" method="POST">
+        <User>sip:ST_9C476YUSTSfm@{sip_domain};transport=tcp</User>
+    </Dial>
+</Response>'''
+    return Response(content=xml_content, media_type="application/xml")
+
+
+
+@app.post("/api/v1/sip/plivo-dial-status")
+async def plivo_dial_status(request: Request):
+    """
+    Callback from Plivo when the Dial attempt completes.
+    """
+    form_data = await request.form()
+    logger.info(f"Received Plivo Dial Status callback: {dict(form_data)}")
+    
+    # Return empty response to Plivo to end the call
+    xml_content = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
+    return Response(content=xml_content, media_type="application/xml")
+
 
 
 @app.post("/api/v1/webhooks/telephony")
@@ -658,7 +896,7 @@ def main():
     import uvicorn
     port = int(os.getenv("PORT", "8081"))
     logger.info(f"UI Server starting on http://0.0.0.0:{port}")
-    uvicorn.run("mantra.ui_server:app", host="0.0.0.0", port=port)
+    uvicorn.run("mantra.ui_server:app", host="0.0.0.0", port=port, reload=True)
 
 if __name__ == "__main__":
     main()

@@ -38,7 +38,11 @@ _handler = logging.StreamHandler(sys.stdout)
 _handler.setFormatter(ColorFormatter(
     f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s"
 ))
-logging.basicConfig(level=logging.INFO, handlers=[_handler])
+_file_handler = logging.FileHandler("/home/fardeen/lkt/app.log")
+_file_handler.setFormatter(logging.Formatter(
+    f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s"
+))
+logging.basicConfig(level=logging.INFO, handlers=[_handler, _file_handler])
 logger = logging.getLogger("mantra.agent")
 logger.info("Initializing process...")
 
@@ -515,9 +519,9 @@ Follow these specific instructions:
     
     logger.info(f"Generating greeting for {client_name} (inbound: {is_inbound})...")
     if is_inbound:
-        await session.generate_reply(instructions="Greet the caller warmly. Introduce yourself and ask how you can help them today.")
+        session.generate_reply(instructions="Greet the caller warmly. Introduce yourself and ask how you can help them today.")
     else:
-        await session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
+        session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
     logger.info("Greeting generation requested.")
     
     # Wait for session to end, then finalize everything
