@@ -476,45 +476,49 @@ Follow these specific instructions:
         except Exception as e:
             logger.error(f"Error in call limiter: {e}")
 
-    await session.start(agent=agent, room=ctx.room)
-    limiter_task = asyncio.create_task(call_limiter())
-    
-    # Check if agent track was already published before we attached the listener
-    for publication in ctx.room.local_participant.track_publications.values():
-        if publication.track and publication.track.kind == rtc.TrackKind.KIND_AUDIO:
-            recorder.start_recording(publication.track, "agent")
-    
-    if ctx.room.name.startswith("test_"):
-        logger.info("Test room detected. Skipping wait for remote participant to initialize synthesis.")
-        call_state["user_joined"] = True
-    else:
-        logger.info("Waiting for remote participant to join...")
-        while not list(ctx.room.remote_participants.values()):
+    try:
+        await session.start(agent=agent, room=ctx.room)
+        limiter_task = asyncio.create_task(call_limiter())
+        
+        # Check if agent track was already published before we attached the listener
+        for publication in ctx.room.local_participant.track_publications.values():
+            if publication.track and publication.track.kind == rtc.TrackKind.KIND_AUDIO:
+                recorder.start_recording(publication.track, "agent")
+        
+        if ctx.room.name.startswith("test_"):
+            logger.info("Test room detected. Skipping wait for remote participant to initialize synthesis.")
+            call_state["user_joined"] = True
+        else:
+            logger.info("Waiting for remote participant to join...")
+            while not list(ctx.room.remote_participants.values()):
+                await asyncio.sleep(0.5)
+                
+            logger.info("Remote participant joined. Initializing conversation...")
+            call_state["user_joined"] = True
             await asyncio.sleep(0.5)
-            
-        logger.info("Remote participant joined. Initializing conversation...")
-        call_state["user_joined"] = True
-        await asyncio.sleep(0.5)
-    
-    # Start the call limiter only after conversation starts
-    # (Moved wait logic inside the task)
-    
-    logger.info(f"Generating greeting for {client_name}...")
-    await session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
-    logger.info("Greeting generation requested.")
-    
-    # Wait for session to end, then finalize everything
-    @session.on("close")
-    def on_session_close():
-        # Capture session data synchronously before async task runs
-        # (avoids race where session cleans up resources before finalize() starts)
-        history_snapshot = list(session.history.messages()) if session.history else []
-        # llm_engine = session.llm
-        logger.info(f"Session closed — spawning finalize (history: {len(history_snapshot)} messages)")
+        
+        logger.info(f"Generating greeting for {client_name}...")
+        await session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
+        logger.info("Greeting generation requested.")
+        
+        # Block until the room connection drops or the session closes
+        while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+            await asyncio.sleep(1.0)
 
-        if not limiter_task.done():
+    except asyncio.CancelledError:
+        logger.info("Call entrypoint coroutine cancelled.")
+    except Exception as e:
+        logger.error(f"Error in entrypoint execution: {e}", exc_info=True)
+    finally:
+        logger.info("Entering entrypoint finally block (cleaning up and finalizing)...")
+        # 1. Cancel limiter task
+        if 'limiter_task' in locals() and not limiter_task.done():
             limiter_task.cancel()
             
+        # 2. Capture history snapshot immediately before session cleans up
+        history_snapshot = list(session.history.messages()) if (session and session.history) else []
+        
+        # 3. Shielded finalization
         async def finalize():
             recording_url = ""
             transcript_data = ""
@@ -660,7 +664,7 @@ Follow these specific instructions:
                 f"Backend: {'✓' if delivered else '✗'}"
             )
 
-        asyncio.create_task(finalize())
+        await asyncio.shield(finalize())
 
 async def _force_disconnect_room(ctx: JobContext):
     """Delete the room via LiveKit API. Falls back to local disconnect."""

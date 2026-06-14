@@ -103,31 +103,10 @@ def upload_to_s3(file_bytes: bytes, s3_key: str) -> Optional[str]:
         return None
 
     try:
-        from botocore.config import Config
-        proxy = os.getenv("PLIVO_PROXY") or os.getenv("HTTPS_PROXY") or os.getenv("https_proxy")
-        config_kwargs = {}
-        if proxy:
-            config_kwargs["proxies"] = {"https": proxy, "http": proxy}
-            
-        boto_config = Config(**config_kwargs) if config_kwargs else None
-        
-        aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID")
-        aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY")
-        
-        if aws_access_key_id and aws_secret_access_key:
-            s3 = boto3.client(
-                's3',
-                region_name=region,
-                config=boto_config,
-                aws_access_key_id=aws_access_key_id,
-                aws_secret_access_key=aws_secret_access_key
-            )
-        else:
-            s3 = boto3.client('s3', region_name=region, config=boto_config)
-            
+        s3 = boto3.client('s3')
         s3.put_object(Bucket=bucket_name, Key=s3_key, Body=file_bytes, ContentType='audio/mpeg', ACL='public-read')
         url = f"https://{bucket_name}.s3.{region}.amazonaws.com/{s3_key}"
-        logger.info(f"Uploaded recording to S3: {url}" + (f" (via proxy: {redact_proxy_credentials(proxy)})" if proxy else ""))
+        logger.info(f"Uploaded recording to S3: {url}")
         return url
     except Exception as e:
         logger.error(f"S3 upload failed: {e}", exc_info=True)
