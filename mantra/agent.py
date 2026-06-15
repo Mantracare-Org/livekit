@@ -10,6 +10,10 @@ from typing import Annotated
 os.environ.setdefault("OTEL_METRICS_EXPORTER", "none")
 os.environ.setdefault("OTEL_LOGS_EXPORTER", "none")
 os.environ.setdefault("OTEL_TRACES_EXPORTER", "none")
+os.environ.pop("HTTPS_PROXY", None)
+os.environ.pop("HTTP_PROXY", None)
+os.environ.pop("https_proxy", None)
+os.environ.pop("http_proxy", None)
 
 # ── Colorama for cross-platform colored terminal logs ──────────────────
 from colorama import Fore, Back, Style, init as colorama_init
@@ -38,8 +42,15 @@ _handler = logging.StreamHandler(sys.stdout)
 _handler.setFormatter(ColorFormatter(
     f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s"
 ))
-logging.basicConfig(level=logging.INFO, handlers=[_handler])
+
+_file_handler = logging.FileHandler("/tmp/agent.log")
+_file_handler.setFormatter(logging.Formatter(
+    f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s"
+))
+
+logging.basicConfig(level=logging.DEBUG, handlers=[_handler, _file_handler])
 logger = logging.getLogger("mantra.agent")
+logging.getLogger("livekit.agents").setLevel(logging.DEBUG)
 logger.info("Initializing process...")
 
 # Also suppress noisy OTEL SDK logs once the SDK initialises
@@ -48,6 +59,10 @@ logging.getLogger("opentelemetry").setLevel(logging.ERROR)
 from dotenv import load_dotenv
 
 from livekit import rtc, api
+from livekit.agents.llm import (
+    ChatContext,
+    ChatMessage,
+)
 from livekit.agents import (
     Agent,
     AgentServer,
@@ -176,9 +191,9 @@ CORE BEHAVIOR:
 - RETAIN CONTEXT & AVOID REPETITION: Remember the user's previous answers. Do NOT repeatedly ask the same questions. If they say no or want to focus on something else, acknowledge it and move on. DO NOT be pushy.
 
 PRONUNCIATION (CRITICAL):
-- ALWAYS write the brand name as "Mantra Care" (two separate words with a space). NEVER write "MantraCare" or "Mantracare" as a single word.
-- ALWAYS write "Mantra Assist" (two separate words). NEVER write "MantraAssist" as one word.
-- These are spoken brand names on a phone call — proper spacing ensures correct pronunciation.
+- ALWAYS write the brand name as "MantraCare" (as a single word). NEVER write "Mantra Care" with a space.
+- ALWAYS write "MantraAssist" (as a single word). NEVER write "Mantra Assist" with a space.
+- These are spoken brand names on a phone call — single-word format ensures correct pronunciation.
 
 Follow these specific instructions:
 """
@@ -268,14 +283,14 @@ Follow these specific instructions:
         model_name = "openai"
         voice_input = "arushi"
         voice_id = VOICE_MAPPING["arushi"]
-        voice_speed = 1
+        voice_speed = 1.0
 
     # Safe parsing and clamping for speed (0.1 to 2.0)
     try:
         voice_speed = float(voice_speed)
         voice_speed = max(0.1, min(2.0, voice_speed))
     except (ValueError, TypeError):
-        voice_speed = 1
+        voice_speed = 1.0
 
     # Explicit logs for call configuration
     logger.info("--- CALL CONFIGURATION ---")
@@ -322,17 +337,7 @@ Follow these specific instructions:
     if not cartesia_configs:
         cartesia_configs = [{"key": None, "dict_id": os.getenv("CARTESIA_PRONUNCIATION_DICT_ID")}]
 
-    # Priority for Language: ai_payload.language -> payload.language -> default "en"
-    # IMPORTANT: Default to "en" NOT None (auto-detect). Auto-detect causes Cartesia to
-    # apply Hindi phonetics to English words in bilingual conversations (e.g. "Care" → "karey").
-    # Sonic-3 in "en" mode still handles Hindi/Hinglish text correctly.
-    if 'payload' in locals():
-        ai_p = payload.get("ai_payload")
-        if not isinstance(ai_p, dict):
-            ai_p = {}
-        language = ai_p.get("language") or payload.get("language") or "en"
-    else:
-        language = "en"
+    language = "en"
         
     if language:
         language = str(language).lower()
@@ -387,7 +392,7 @@ Follow these specific instructions:
         #     language="hi"
         # ),
 
-        # Using Hindi-Multilingual TTS with FallbackAdapter to support multiple API keys
+        # Using FallbackAdapter to support multiple API keys
         tts=FallbackAdapter(tts_pool),
     )
 
@@ -476,45 +481,49 @@ Follow these specific instructions:
         except Exception as e:
             logger.error(f"Error in call limiter: {e}")
 
-    await session.start(agent=agent, room=ctx.room)
-    limiter_task = asyncio.create_task(call_limiter())
-    
-    # Check if agent track was already published before we attached the listener
-    for publication in ctx.room.local_participant.track_publications.values():
-        if publication.track and publication.track.kind == rtc.TrackKind.KIND_AUDIO:
-            recorder.start_recording(publication.track, "agent")
-    
-    if ctx.room.name.startswith("test_"):
-        logger.info("Test room detected. Skipping wait for remote participant to initialize synthesis.")
-        call_state["user_joined"] = True
-    else:
-        logger.info("Waiting for remote participant to join...")
-        while not list(ctx.room.remote_participants.values()):
+    try:
+        await session.start(agent=agent, room=ctx.room)
+        limiter_task = asyncio.create_task(call_limiter())
+        
+        # Check if agent track was already published before we attached the listener
+        for publication in ctx.room.local_participant.track_publications.values():
+            if publication.track and publication.track.kind == rtc.TrackKind.KIND_AUDIO:
+                recorder.start_recording(publication.track, "agent")
+        
+        if ctx.room.name.startswith("test_"):
+            logger.info("Test room detected. Skipping wait for remote participant to initialize synthesis.")
+            call_state["user_joined"] = True
+        else:
+            logger.info("Waiting for remote participant to join...")
+            while not list(ctx.room.remote_participants.values()):
+                await asyncio.sleep(0.5)
+                
+            logger.info("Remote participant joined. Initializing conversation...")
+            call_state["user_joined"] = True
             await asyncio.sleep(0.5)
-            
-        logger.info("Remote participant joined. Initializing conversation...")
-        call_state["user_joined"] = True
-        await asyncio.sleep(0.5)
-    
-    # Start the call limiter only after conversation starts
-    # (Moved wait logic inside the task)
-    
-    logger.info(f"Generating greeting for {client_name}...")
-    await session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
-    logger.info("Greeting generation requested.")
-    
-    # Wait for session to end, then finalize everything
-    @session.on("close")
-    def on_session_close():
-        # Capture session data synchronously before async task runs
-        # (avoids race where session cleans up resources before finalize() starts)
-        history_snapshot = list(session.history.messages()) if session.history else []
-        # llm_engine = session.llm
-        logger.info(f"Session closed — spawning finalize (history: {len(history_snapshot)} messages)")
+        
+        logger.info(f"Generating greeting for {client_name}...")
+        session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
+        logger.info("Greeting generation requested.")
+        
+        # Block until the room connection drops or the session closes
+        while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+            await asyncio.sleep(1.0)
 
-        if not limiter_task.done():
+    except asyncio.CancelledError:
+        logger.info("Call entrypoint coroutine cancelled.")
+    except Exception as e:
+        logger.error(f"Error in entrypoint execution: {e}", exc_info=True)
+    finally:
+        logger.info("Entering entrypoint finally block (cleaning up and finalizing)...")
+        # 1. Cancel limiter task
+        if 'limiter_task' in locals() and not limiter_task.done():
             limiter_task.cancel()
             
+        # 2. Capture history snapshot immediately before session cleans up
+        history_snapshot = list(session.history.messages()) if (session and session.history) else []
+        
+        # 3. Shielded finalization
         async def finalize():
             recording_url = ""
             transcript_data = ""
@@ -644,7 +653,10 @@ Follow these specific instructions:
                         }
                     }
 
-                logger.info(f"Delivering post-call webhook to backend...")
+                # logger.info(f"{Fore.MAGENTA}Delivering post-call webhook to backend...{Style.RESET_ALL}")
+                # logger.info(f"{Fore.CYAN}Webhook Payload:\n{json.dumps(webhook_payload, indent=2)}{Style.RESET_ALL}")
+                logger.info("Delivering post-call webhook to backend...")
+                logger.info(f"Webhook Payload:\n{json.dumps(webhook_payload)}")
                 delivered = await send_to_backend(webhook_payload)
             except Exception as e:
                 logger.error(f"Webhook delivery failed: {e}", exc_info=True)
@@ -660,7 +672,7 @@ Follow these specific instructions:
                 f"Backend: {'✓' if delivered else '✗'}"
             )
 
-        asyncio.create_task(finalize())
+        await asyncio.shield(finalize())
 
 async def _force_disconnect_room(ctx: JobContext):
     """Delete the room via LiveKit API. Falls back to local disconnect."""
