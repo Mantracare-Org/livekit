@@ -161,7 +161,13 @@ class SessionRecorder:
 
         try:
             from pydub import AudioSegment
+            from pydub.silence import detect_nonsilent
             audio = AudioSegment(mixed.tobytes(), frame_rate=self.SAMPLE_RATE, sample_width=self.SAMPLE_WIDTH, channels=self.NUM_CHANNELS)
+            nonsilent = detect_nonsilent(audio, min_silence_len=200, silence_thresh=-40, seek_step=10)
+            if nonsilent:
+                start_ms = nonsilent[0][0]
+                if start_ms > 0:
+                    audio = audio[start_ms:]
             buf = io.BytesIO()
             audio.export(buf, format="mp3", bitrate="128k")
             return buf.getvalue()
