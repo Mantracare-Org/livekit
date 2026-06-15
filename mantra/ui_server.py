@@ -1,7 +1,5 @@
 import os
-
-
-
+import sys
 import logging
 import json
 import time
@@ -19,7 +17,13 @@ from mantra.utils import redact_proxy_credentials
 # Load environment variables from .env.local
 load_dotenv(".env.local")
 
-
+# ── Logger setup (self-sufficient, doesn't depend on uvicorn's root handler) ──
+_log_handler = logging.StreamHandler(sys.stdout)
+_log_handler.setFormatter(logging.Formatter("%(asctime)s INFO %(name)s: %(message)s"))
+logger = logging.getLogger("mantra.ui_server")
+logger.setLevel(logging.INFO)
+logger.addHandler(_log_handler)
+logger.propagate = False  # we own our output
 
 # Persistent LiveKit API clients
 lk_client: api.LiveKitAPI = None           # Direct — used for Twilio, Zadarma, and general operations
@@ -43,7 +47,6 @@ async def lifespan(app: FastAPI):
 
         logger.info(f"Connecting to LiveKit API at {api_url}")
 
-
         lk_client = api.LiveKitAPI(url=api_url, api_key=api_key, api_secret=api_secret)
 
         plivo_proxy = os.getenv("PLIVO_PROXY")
@@ -65,8 +68,6 @@ async def lifespan(app: FastAPI):
         await plivo_session.close()
 
 app = FastAPI(lifespan=lifespan)
-logger = logging.getLogger("mantra.ui_server")
-logger.setLevel(logging.INFO)
 
 # ── Request logging middleware ────────────────────────────────────────
 # Suppress uvicorn's default access log (we handle it ourselves with timing + filtering)
@@ -82,20 +83,23 @@ SCANNER_PATHS = (
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start = time.time()
-    response = await call_next(request)
-    duration = time.time() - start
+    client_host = request.client.host if request.client else "unknown"
     path = request.url.path
+    try:
+        response = await call_next(request)
+        duration = time.time() - start
 
-    # Suppress scanner junk at INFO level
-    if path.startswith(SCANNER_PATHS):
-        logger.debug(f"Scanner: {request.client.host} {request.method} {path} {response.status_code}")
+        # Suppress scanner junk at INFO level
+        if path.startswith(SCANNER_PATHS):
+            logger.debug(f"Scanner: {client_host} {request.method} {path} {response.status_code}")
+        else:
+            logger.info(f"{client_host} {request.method} {path} {response.status_code} in {duration*1000:.0f}ms")
+
         return response
-
-    logger.info(
-        f"{request.client.host} {request.method} {path} "
-        f"{response.status_code} in {duration*1000:.0f}ms"
-    )
-    return response
+    except Exception as e:
+        duration = time.time() - start
+        logger.error(f"{client_host} {request.method} {path} ERROR in {duration*1000:.0f}ms: {e}")
+        raise  # let FastAPI handle the error response
 
 # Get the directory of the current file
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
