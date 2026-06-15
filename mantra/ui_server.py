@@ -1,4 +1,5 @@
 import os
+import sys
 import logging
 import json
 import time
@@ -18,6 +19,10 @@ load_dotenv(".env.local")
 
 logger = logging.getLogger("mantra.ui_server")
 logger.setLevel(logging.INFO)
+_handler = logging.StreamHandler(sys.stdout)
+_handler.setFormatter(logging.Formatter("%(asctime)s INFO %(name)s: %(message)s"))
+logger.addHandler(_handler)
+logger.propagate = False
 
 # Persistent LiveKit API clients
 lk_client: api.LiveKitAPI = None           # Direct — used for Twilio, Zadarma, and general operations
