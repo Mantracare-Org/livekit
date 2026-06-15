@@ -479,6 +479,9 @@ async def create_and_call_plivo(request: Request):
 
         # 4. Initiate SIP Call — use proxied client to route through Plivo's Indian infrastructure
         sip_number = payload.get("call_from")  # Caller ID
+        if sip_number and not sip_number.startswith("+"):
+            sip_number = f"+{sip_number}"
+            
         logger.info(f"Placing SIP call to {phone_number} via trunk {trunk_id} (Caller ID: {sip_number})")
 
         sip_part = await plivo_client.sip.create_sip_participant(
