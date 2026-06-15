@@ -64,7 +64,6 @@ async def lifespan(app: FastAPI):
         if client:
             await client.aclose()
     if plivo_session:
-        await plivo_session.close()
 
 app = FastAPI(lifespan=lifespan)
 
