@@ -1,7 +1,5 @@
 import os
-
-
-
+import sys
 import logging
 import json
 import time
@@ -14,12 +12,17 @@ from fastapi.responses import JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from livekit import api
 from dotenv import load_dotenv
-from mantra.utils import redact_proxy_credentials
+
 
 # Load environment variables from .env.local
 load_dotenv(".env.local")
 
-
+logger = logging.getLogger("mantra.ui_server")
+logger.setLevel(logging.INFO)
+_handler = logging.StreamHandler(sys.stdout)
+_handler.setFormatter(logging.Formatter("%(asctime)s INFO %(name)s: %(message)s"))
+logger.addHandler(_handler)
+logger.propagate = False
 
 # Persistent LiveKit API clients
 lk_client: api.LiveKitAPI = None           # Direct — used for Twilio, Zadarma, and general operations
@@ -43,12 +46,11 @@ async def lifespan(app: FastAPI):
 
         logger.info(f"Connecting to LiveKit API at {api_url}")
 
-
         lk_client = api.LiveKitAPI(url=api_url, api_key=api_key, api_secret=api_secret)
 
         plivo_proxy = os.getenv("PLIVO_PROXY")
         if plivo_proxy:
-            logger.info(f"Creating Plivo LiveKit client with proxy: {redact_proxy_credentials(plivo_proxy)}")
+            logger.info(f"Creating Plivo LiveKit client with proxy: {plivo_proxy}")
         else:
             logger.info("Creating Plivo LiveKit client without proxy (PLIVO_PROXY not set)")
         plivo_session = aiohttp.ClientSession(proxy=plivo_proxy)
@@ -65,8 +67,38 @@ async def lifespan(app: FastAPI):
         await plivo_session.close()
 
 app = FastAPI(lifespan=lifespan)
-logger = logging.getLogger("mantra.ui_server")
-logger.setLevel(logging.INFO)
+
+# ── Request logging middleware ────────────────────────────────────────
+# Suppress uvicorn's default access log (we handle it ourselves with timing + filtering)
+
+SCANNER_PATHS = (
+    "/.well-known/", "/favicon", "/wp-",
+    "/blog/", "/web/", "/wordpress/", "/website/",
+    "/wp/", "/news/", "/2018/", "/2019/", "/shop/",
+    "/wp1/", "/test/", "/media/", "/wp2/", "/site/",
+    "/cms/", "/sito/",
+)
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start = time.time()
+    client_host = request.client.host if request.client else "unknown"
+    path = request.url.path
+    try:
+        response = await call_next(request)
+        duration = time.time() - start
+
+        # Suppress scanner junk at INFO level
+        if path.startswith(SCANNER_PATHS):
+            logger.debug(f"Scanner: {client_host} {request.method} {path} {response.status_code}")
+        else:
+            logger.info(f"{client_host} {request.method} {path} {response.status_code} in {duration*1000:.0f}ms")
+
+        return response
+    except Exception as e:
+        duration = time.time() - start
+        logger.error(f"{client_host} {request.method} {path} ERROR in {duration*1000:.0f}ms: {e}")
+        raise  # let FastAPI handle the error response
 
 # Setup file logging to capture all logs including uvicorn
 _file_handler = logging.FileHandler("/home/fardeen/lkt/app.log")
@@ -105,7 +137,7 @@ async def dispatch_test(request: Request):
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
     
-    logger.info(f"Manual dispatch request with payload: {json.dumps(payload, indent=2)}")
+    logger.info(f"Manual dispatch request with payload: {json.dumps(payload, separators=(',',':'))}")
     
     # Generate a unique room name for this test session using the call_id if provided
     call_id = payload.get("call_id") or int(time.time())
@@ -504,7 +536,7 @@ async def handle_outbound_call_webhook(request: Request):
         return JSONResponse({"error": "No payload provided"}, status_code=400)
     
     event_name = payload.get("event_name", "telephony_dispatch")
-    logger.info(f"Webhook received call request for event {event_name}: {json.dumps(payload, indent=2)}")
+    logger.info(f"Webhook received call request for event {event_name}: {json.dumps(payload, separators=(',',':'))}")
     
     # Use call_id or voice_id from payload if available, otherwise use timestamp
     call_id = payload.get("call_id") or payload.get("voice_id") or payload.get("event_id") or int(time.time())
@@ -552,6 +584,9 @@ async def handle_outbound_call_webhook(request: Request):
     # The trunk's destination_country="in" handles Indian region routing at the SIP layer
     try:
         sip_number = payload.get("call_from")
+        if sip_number and not sip_number.startswith("+"):
+            sip_number = f"+{sip_number}"
+            
         logger.info(f"Step 2: Initiating SIP call to {phone_number} via trunk {trunk_id}" + (f" (Caller ID: {sip_number})" if sip_number else ""))
 
         sip_part = await lk_client.sip.create_sip_participant(
@@ -657,7 +692,7 @@ async def create_zadarma_sip_trunk(request: Request):
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
     
-    logger.info(f"[POST /api/v1/sip/trunks/outbound] Payload received: {json.dumps(payload, indent=2)}")
+    logger.info(f"[POST /api/v1/sip/trunks/outbound] Payload received: {json.dumps(payload, separators=(',',':'))}")
     
     try:
         trunk = await _create_sip_outbound_trunk(
@@ -689,7 +724,7 @@ async def create_twilio_sip_trunk(request: Request):
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
     
-    logger.info(f"[POST /api/v1/sip/trunks/outbound/twilio] Payload received: {json.dumps(payload, indent=2)}")
+    logger.info(f"[POST /api/v1/sip/trunks/outbound/twilio] Payload received: {json.dumps(payload, separators=(',',':'))}")
     
     # Twilio-friendly field mapping (accepting both CLI-style and original keys)
     name = payload.get("name")
@@ -800,11 +835,14 @@ async def create_and_call_plivo(request: Request):
             )
         )
 
-        # 4. Initiate SIP Call — use direct client (trunk's destination_country handles region)
+        # 4. Initiate SIP Call — use proxied client to route through Plivo's Indian infrastructure
         sip_number = payload.get("call_from")  # Caller ID
+        if sip_number and not sip_number.startswith("+"):
+            sip_number = f"+{sip_number}"
+            
         logger.info(f"Placing SIP call to {phone_number} via trunk {trunk_id} (Caller ID: {sip_number})")
 
-        sip_part = await lk_client.sip.create_sip_participant(
+        sip_part = await plivo_client.sip.create_sip_participant(
             api.CreateSIPParticipantRequest(
                 sip_trunk_id=trunk_id,
                 sip_call_to=phone_number,
@@ -896,7 +934,7 @@ def main():
     import uvicorn
     port = int(os.getenv("PORT", "8081"))
     logger.info(f"UI Server starting on http://0.0.0.0:{port}")
-    uvicorn.run("mantra.ui_server:app", host="0.0.0.0", port=port, reload=True)
+    uvicorn.run("mantra.ui_server:app", host="0.0.0.0", port=port, reload=True, access_log=False)
 
 if __name__ == "__main__":
     main()
