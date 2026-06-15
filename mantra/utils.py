@@ -11,7 +11,6 @@ import logging
 import httpx
 import numpy as np
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import urlparse
 
 from livekit import rtc
 from livekit.plugins import openai
@@ -19,21 +18,6 @@ from livekit.agents import llm
 import boto3
 
 logger = logging.getLogger("mantra.utils")
-
-def redact_proxy_credentials(proxy_url: str) -> str:
-    """Removes basic auth credentials from proxy URLs before logging."""
-    if not proxy_url:
-        return proxy_url
-    try:
-        parsed = urlparse(proxy_url)
-        if parsed.username or parsed.password:
-            netloc = f"***:***@{parsed.hostname}"
-            if parsed.port:
-                netloc += f":{parsed.port}"
-            return parsed._replace(netloc=netloc).geturl()
-    except Exception:
-        pass
-    return proxy_url
 
 async def send_to_backend(payload: dict, max_retries: int = 3) -> bool:
     """POST the post-call payload to the MantraAssist backend with HMAC signing."""
@@ -72,15 +56,11 @@ async def send_to_backend(payload: dict, max_retries: int = 3) -> bool:
     else:
         logger.warning("MANTRAASSIST_WEBHOOK_SECRET not set — sending unsigned request")
 
-    # Use PLIVO_PROXY if set (not removed by agent.py proxy cleanup) for outbound webhook.
-    # The container may need this proxy to resolve external hostnames.
-    webhook_proxy = os.getenv("PLIVO_PROXY") or os.getenv("HTTPS_PROXY") or os.getenv("https_proxy")
-
-    logger.info(f"Delivering post-call webhook to: {url}" + (f" via proxy: {redact_proxy_credentials(webhook_proxy)}" if webhook_proxy else ""))
+    logger.info(f"Delivering post-call webhook to: {url}")
 
     for attempt in range(1, max_retries + 1):
         try:
-            async with httpx.AsyncClient(timeout=30.0, proxy=webhook_proxy) as client:
+            async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(url, content=payload_str, headers=headers)
                 resp.raise_for_status()
                 logger.info(f"Backend webhook delivered successfully (HTTP {resp.status_code})")
