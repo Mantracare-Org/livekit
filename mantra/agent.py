@@ -10,6 +10,10 @@ from typing import Annotated
 os.environ.setdefault("OTEL_METRICS_EXPORTER", "none")
 os.environ.setdefault("OTEL_LOGS_EXPORTER", "none")
 os.environ.setdefault("OTEL_TRACES_EXPORTER", "none")
+os.environ.pop("HTTPS_PROXY", None)
+os.environ.pop("HTTP_PROXY", None)
+os.environ.pop("https_proxy", None)
+os.environ.pop("http_proxy", None)
 
 # ── Colorama for cross-platform colored terminal logs ──────────────────
 from colorama import Fore, Back, Style, init as colorama_init

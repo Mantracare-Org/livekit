@@ -1,5 +1,4 @@
 import os
-import sys
 import logging
 import json
 import time
@@ -17,13 +16,8 @@ from mantra.utils import redact_proxy_credentials
 # Load environment variables from .env.local
 load_dotenv(".env.local")
 
-# ── Logger setup (self-sufficient, doesn't depend on uvicorn's root handler) ──
-_log_handler = logging.StreamHandler(sys.stdout)
-_log_handler.setFormatter(logging.Formatter("%(asctime)s INFO %(name)s: %(message)s"))
 logger = logging.getLogger("mantra.ui_server")
 logger.setLevel(logging.INFO)
-logger.addHandler(_log_handler)
-logger.propagate = False  # we own our output
 
 # Persistent LiveKit API clients
 lk_client: api.LiveKitAPI = None           # Direct — used for Twilio, Zadarma, and general operations
