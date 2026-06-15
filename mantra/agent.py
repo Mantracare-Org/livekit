@@ -652,7 +652,7 @@ Follow these specific instructions:
                 # logger.info(f"{Fore.MAGENTA}Delivering post-call webhook to backend...{Style.RESET_ALL}")
                 # logger.info(f"{Fore.CYAN}Webhook Payload:\n{json.dumps(webhook_payload, indent=2)}{Style.RESET_ALL}")
                 logger.info("Delivering post-call webhook to backend...")
-                logger.info(f"Webhook Payload:\n{json.dumps(webhook_payload, indent=2)}")
+                logger.info(f"Webhook Payload:\n{json.dumps(webhook_payload)}")
                 delivered = await send_to_backend(webhook_payload)
             except Exception as e:
                 logger.error(f"Webhook delivery failed: {e}", exc_info=True)

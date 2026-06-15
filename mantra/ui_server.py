@@ -68,6 +68,35 @@ app = FastAPI(lifespan=lifespan)
 logger = logging.getLogger("mantra.ui_server")
 logger.setLevel(logging.INFO)
 
+# ── Request logging middleware ────────────────────────────────────────
+# Suppress uvicorn's default access log (we handle it ourselves with timing + filtering)
+
+SCANNER_PATHS = (
+    "/.well-known/", "/favicon", "/wp-",
+    "/blog/", "/web/", "/wordpress/", "/website/",
+    "/wp/", "/news/", "/2018/", "/2019/", "/shop/",
+    "/wp1/", "/test/", "/media/", "/wp2/", "/site/",
+    "/cms/", "/sito/",
+)
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start = time.time()
+    response = await call_next(request)
+    duration = time.time() - start
+    path = request.url.path
+
+    # Suppress scanner junk at INFO level
+    if path.startswith(SCANNER_PATHS):
+        logger.debug(f"Scanner: {request.client.host} {request.method} {path} {response.status_code}")
+        return response
+
+    logger.info(
+        f"{request.client.host} {request.method} {path} "
+        f"{response.status_code} in {duration*1000:.0f}ms"
+    )
+    return response
+
 # Get the directory of the current file
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -95,7 +124,7 @@ async def dispatch_test(request: Request):
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
     
-    logger.info(f"Manual dispatch request with payload: {json.dumps(payload, indent=2)}")
+    logger.info(f"Manual dispatch request with payload: {json.dumps(payload, separators=(',',':'))}")
     
     # Generate a unique room name for this test session using the call_id if provided
     call_id = payload.get("call_id") or int(time.time())
@@ -146,7 +175,7 @@ async def handle_outbound_call_webhook(request: Request):
         return JSONResponse({"error": "No payload provided"}, status_code=400)
     
     event_name = payload.get("event_name", "telephony_dispatch")
-    logger.info(f"Webhook received call request for event {event_name}: {json.dumps(payload, indent=2)}")
+    logger.info(f"Webhook received call request for event {event_name}: {json.dumps(payload, separators=(',',':'))}")
     
     # Use call_id or voice_id from payload if available, otherwise use timestamp
     call_id = payload.get("call_id") or payload.get("voice_id") or payload.get("event_id") or int(time.time())
@@ -302,7 +331,7 @@ async def create_zadarma_sip_trunk(request: Request):
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
     
-    logger.info(f"[POST /api/v1/sip/trunks/outbound] Payload received: {json.dumps(payload, indent=2)}")
+    logger.info(f"[POST /api/v1/sip/trunks/outbound] Payload received: {json.dumps(payload, separators=(',',':'))}")
     
     try:
         trunk = await _create_sip_outbound_trunk(
@@ -334,7 +363,7 @@ async def create_twilio_sip_trunk(request: Request):
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
     
-    logger.info(f"[POST /api/v1/sip/trunks/outbound/twilio] Payload received: {json.dumps(payload, indent=2)}")
+    logger.info(f"[POST /api/v1/sip/trunks/outbound/twilio] Payload received: {json.dumps(payload, separators=(',',':'))}")
     
     # Twilio-friendly field mapping (accepting both CLI-style and original keys)
     name = payload.get("name")
@@ -541,7 +570,7 @@ def main():
     import uvicorn
     port = int(os.getenv("PORT", "8081"))
     logger.info(f"UI Server starting on http://0.0.0.0:{port}")
-    uvicorn.run("mantra.ui_server:app", host="0.0.0.0", port=port)
+    uvicorn.run("mantra.ui_server:app", host="0.0.0.0", port=port, access_log=False)
 
 if __name__ == "__main__":
     main()
