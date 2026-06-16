@@ -42,12 +42,10 @@ _handler = logging.StreamHandler(sys.stdout)
 _handler.setFormatter(ColorFormatter(
     f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s"
 ))
-
 _file_handler = logging.FileHandler("/tmp/agent.log")
 _file_handler.setFormatter(logging.Formatter(
     f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s"
 ))
-
 logging.basicConfig(level=logging.DEBUG, handlers=[_handler, _file_handler])
 logger = logging.getLogger("mantra.agent")
 logging.getLogger("livekit.agents").setLevel(logging.DEBUG)
@@ -100,49 +98,112 @@ load_dotenv(".env.local", override=True)  # Load .env.local (LiveKit, etc.) and 
 
 server = AgentServer()
 
+# --- Transfer/Handoff Configuration ---
+TRANSFER_NUMBERS = {}
+_raw_transfer = os.getenv("TRANSFER_NUMBERS")
+if _raw_transfer:
+    try:
+        TRANSFER_NUMBERS = json.loads(_raw_transfer)
+        logger.info(f"Loaded {len(TRANSFER_NUMBERS)} department transfer mappings")
+    except Exception:
+        logger.warning("Failed to parse TRANSFER_NUMBERS from env — must be JSON object e.g. {\"refund\": \"+911234567890\"}")
+TRANSFER_DEFAULT_NUMBER = os.getenv("TRANSFER_DEFAULT_NUMBER", "")
+TRANSFER_SIP_TRUNK_ID = os.getenv("TRANSFER_SIP_TRUNK_ID", "")
+if TRANSFER_DEFAULT_NUMBER:
+    logger.info(f"Transfer default number configured: {TRANSFER_DEFAULT_NUMBER}")
+if TRANSFER_SIP_TRUNK_ID:
+    logger.info(f"Transfer SIP trunk configured: {TRANSFER_SIP_TRUNK_ID}")
+# -------------------------------------------------
+
 class AssistantFunctions:
-    def __init__(self, job_metadata: str, room_name: str):
+    def __init__(self, job_metadata: str, room_name: str, room: rtc.Room = None):
         self.job_metadata = job_metadata
         self.room_name = room_name
+        self.room = room
         self.handoff_triggered = False
         self.agent = None
 
-    # @llm.function_tool(description="Transfer the call to a human assistant when requested or if the issue is too complex.")
-    # async def transfer_to_human(
-    #     self,
-    #     reason: Annotated[str, "The reason why a human is needed"]
-    # ):
-    #     logger.info(f"Handoff requested. Reason: {reason}")
-    #     self.handoff_triggered = True
-    #     
-    #     # Parse metadata to get call/lead IDs
-    #     try:
-    #         payload = json.loads(self.job_metadata) if self.job_metadata else {}
-    #     except Exception:
-    #         payload = {}
-    # 
-    #     # Notify backend
-    #     webhook_payload = {
-    #         "event": "HANDOFF_REQUESTED",
-    #         "data": {
-    #             "room_name": self.room_name,
-    #             "reason": reason,
-    #             "call_id": payload.get("call_id") or payload.get("voice_id"),
-    #             "lead_id": payload.get("lead_id"),
-    #             "client_name": payload.get("client_name", "User"),
-    #         }
-    #     }
-    #     await send_to_backend(webhook_payload)
-    #     
-    #     if self.agent:
-    #         logger.info("Handoff triggered — switching to passive monitoring instructions")
-    #         await self.agent.update_instructions(
-    #             "A human has joined the call. You are now in PASSIVE MONITORING MODE. "
-    #             "DO NOT speak. DO NOT respond to the user. DO NOT generate any audio. "
-    #             "Just observe and maintain the transcript for the final summary."
-    #         )
-    # 
-    #     return "I am connecting you to a human assistant now. Please stay on the line. I will remain on the call to record and summarize our conversation."
+    @llm.function_tool(
+        description="Transfer the call to a human agent in a specific department when the user requests it, "
+                    "you cannot resolve their issue, or they seem frustrated. "
+                    "Specify the department (e.g., 'refund', 'support', 'billing', 'general') "
+                    "based on what the user needs."
+    )
+    async def transfer_to_human(
+        self,
+        reason: Annotated[str, "Why the human agent is needed — be specific about the user's request"],
+        department: Annotated[str, "The department to transfer to (e.g., refund, support, billing, general)"] = "general"
+    ):
+        logger.info(f"Handoff requested. Reason: {reason}, Department: {department}")
+        self.handoff_triggered = True
+
+        # Parse metadata to get call/lead IDs
+        try:
+            payload = json.loads(self.job_metadata) if self.job_metadata else {}
+        except Exception:
+            payload = {}
+
+        # Determine target number from department mapping
+        dept_lower = department.lower().strip()
+        target_number = TRANSFER_NUMBERS.get(dept_lower, TRANSFER_DEFAULT_NUMBER)
+        trunk_id = TRANSFER_SIP_TRUNK_ID or payload.get("trunk_id") or payload.get("call_from_id") or ""
+
+        if target_number and trunk_id:
+            try:
+                lk_api = api.LiveKitAPI(
+                    url=os.getenv("LIVEKIT_URL"),
+                    api_key=os.getenv("LIVEKIT_API_KEY"),
+                    api_secret=os.getenv("LIVEKIT_API_SECRET")
+                )
+                timestamp = datetime.datetime.now().strftime("%H%M%S%f")
+                call_id = payload.get("call_id") or payload.get("voice_id") or self.room_name
+                human_identity = f"human_{call_id}_{timestamp}"
+                await lk_api.sip.create_sip_participant(
+                    api.CreateSIPParticipantRequest(
+                        sip_trunk_id=trunk_id,
+                        sip_call_to=target_number,
+                        room_name=self.room_name,
+                        participant_identity=human_identity,
+                        participant_name=f"Human - {department.title()}"
+                    )
+                )
+                await lk_api.aclose()
+                logger.info(f"Human agent ({target_number}) added to room {self.room_name} for {department} department")
+            except Exception as e:
+                logger.error(f"Failed to add human agent via SIP: {e}")
+        else:
+            missing = []
+            if not target_number:
+                missing.append("target phone number")
+            if not trunk_id:
+                missing.append("SIP trunk ID")
+            logger.warning(f"Cannot transfer: missing {', '.join(missing)}. Backend notification sent anyway.")
+
+        # Notify backend
+        webhook_payload = {
+            "event": "HANDOFF_REQUESTED",
+            "data": {
+                "room_name": self.room_name,
+                "reason": reason,
+                "department": department,
+                "call_id": payload.get("call_id") or payload.get("voice_id"),
+                "lead_id": payload.get("lead_id"),
+                "client_name": payload.get("client_name", "User"),
+            }
+        }
+        await send_to_backend(webhook_payload)
+
+        # Physically mute the agent's audio — can't speak if no output
+        if self.room:
+            try:
+                for pub in self.room.local_participant.track_publications.values():
+                    if pub.kind == rtc.TrackKind.KIND_AUDIO:
+                        await pub.mute()
+                        logger.info("Agent audio muted — silent mode engaged")
+            except Exception as e:
+                logger.error(f"Failed to mute agent audio: {e}")
+
+        return ""
 
 @server.rtc_session(agent_name="mantra-agent")
 async def entrypoint(ctx: JobContext):
@@ -158,7 +219,7 @@ async def entrypoint(ctx: JobContext):
     logger.info(f"Metadata: {ctx.job.metadata}")
 
     # Initialize function context for handoff
-    fnc_ctx = AssistantFunctions(ctx.job.metadata, ctx.room.name)
+    fnc_ctx = AssistantFunctions(ctx.job.metadata, ctx.room.name, ctx.room)
     call_state = {"user_joined": False}
 
     # Session ID for S3 key naming
@@ -190,6 +251,13 @@ CORE BEHAVIOR:
 - ACTIVELY LISTEN: If the user asks a question (e.g., about directions, a bus stand, or any other detail), address it directly and helpfully BEFORE returning to the main topic. Never ignore the user's questions or blindly repeat your script.
 - RETAIN CONTEXT & AVOID REPETITION: Remember the user's previous answers. Do NOT repeatedly ask the same questions. If they say no or want to focus on something else, acknowledge it and move on. DO NOT be pushy.
 
+TRANSFER CAPABILITY (CRITICAL):
+- You HAVE a function called "transfer_to_human" that transfers the call to a real human agent.
+- When the user asks to speak to a human, you cannot resolve their issue, or they seem frustrated — USE the transfer_to_human function IMMEDIATELY. Do NOT say you cannot transfer. You CAN transfer. Use the function.
+- If the user mentions a specific department (refund, billing, support), pass it as the department parameter. Otherwise use "general".
+- After the function executes, you will be muted. Say nothing. The human takes over.
+- NEVER say "I can't transfer" or "I don't have that capability" — you DO have it. Call the function.
+
 PRONUNCIATION (CRITICAL):
 - ALWAYS write the brand name as "MantraCare" (as a single word). NEVER write "Mantra Care" with a space.
 - ALWAYS write "MantraAssist" (as a single word). NEVER write "Mantra Assist" with a space.
@@ -198,10 +266,15 @@ PRONUNCIATION (CRITICAL):
 Follow these specific instructions:
 """
     client_name = "User"
+    is_inbound = False
     
     if ctx.job.metadata:
         try:
             payload = json.loads(ctx.job.metadata)
+            
+            if payload.get("direction") == "inbound":
+                is_inbound = True
+
             
             # Normalize client_custom_fileds to client_custom_fields
             if "client_custom_fileds" in payload:
@@ -257,7 +330,17 @@ Follow these specific instructions:
             initial_instructions += "1. NEVER repeat the same question twice. If the user dodges the question or asks a counter-question, answer them and DO NOT repeat your previous question.\n"
             initial_instructions += "2. DO NOT push for an appointment if the user hasn't explicitly agreed or if they are asking about other things. Let the conversation flow naturally.\n"
             initial_instructions += "3. Answer user's questions DIRECTLY without appending a sales pitch or appointment request at the end of every turn.\n"
-            logger.info(f"Loaded full context for {client_name}")
+
+            
+            if is_inbound:
+                initial_instructions += "\n--- INBOUND CALL CONTEXT ---\n"
+                initial_instructions += "- This is an INBOUND call. The caller reached out to you.\n"
+                initial_instructions += "- Greet warmly and ask how you can help.\n"
+                initial_instructions += "- Do not assume you know why they are calling. Let them explain.\n"
+                initial_instructions += "- Identify yourself: 'Mantra Care' or as instructed in your prompt.\n"
+                initial_instructions += "- If the caller seems confused, help them understand who you are.\n"
+                
+            logger.info(f"Loaded full context for {client_name} (inbound: {is_inbound})")
         except Exception as e:
             logger.error(f"Failed to parse metadata: {e}")
 
@@ -398,86 +481,62 @@ Follow these specific instructions:
 
     agent = Agent(
         instructions=initial_instructions,
-        tools=[] # [fnc_ctx.transfer_to_human] commented out
+        tools=[fnc_ctx.transfer_to_human]
     )
     fnc_ctx.agent = agent
+    logger.info(f"Agent initialized with transfer_to_human tool: {fnc_ctx.transfer_to_human is not None}")
 
     # Call duration limiter logic
     async def call_limiter():
         logger.info("Call limiter started — waiting for remote participant to join.")
         try:
-            # Wait for remote participant to join before starting the 2m/3m timers
+            # Wait for remote participant to join
             while not list(ctx.room.remote_participants.values()):
                 await asyncio.sleep(1.0)
-            
-            logger.info("Remote participant detected in room.")
-            elapsed = asyncio.get_event_loop().time() - entrypoint_start_time
-            logger.info(
-                f"Participant joined at t={elapsed:.2f}s. "
-                f"Setting limiter timers: "
-                f"Farewell reply in {max(0.0, 150.0-elapsed):.2f}s, "
-                f"Hard kill in {max(0.0, 180.0-elapsed):.2f}s."
-            )
-            
-            # Event that lets us cancel the force-disconnect if the call ends naturally
-            _force_disconnect_cancelled = asyncio.Event()
 
-            async def force_disconnect_timer():
-                try:
-                    disconnect_delay = max(0.0, 180.0 - (asyncio.get_event_loop().time() - entrypoint_start_time))
-                    logger.info(f"Force-disconnect timer armed: t+{disconnect_delay:.2f}s")
-                    await asyncio.wait_for(_force_disconnect_cancelled.wait(), timeout=disconnect_delay)
-                except asyncio.TimeoutError:
-                    pass  # Timeout expired — proceed to disconnect
-                except asyncio.CancelledError:
-                    logger.info("Force-disconnect timer cancelled.")
-                    return  # Cancelled — exit cleanly
+            logger.info("Remote participant detected in room. Starting polling loop.")
+            farewell_done = False
+
+            while True:
+                elapsed = asyncio.get_event_loop().time() - entrypoint_start_time
+
+                # Check if participants still exist
+                if not ctx.room.remote_participants:
+                    logger.info("No remote participants left — call ended naturally.")
+                    return
+
+                # Determine limits based on handoff state
+                if fnc_ctx.handoff_triggered:
+                    max_duration = 600.0  # 10 minutes when handoff is active
                 else:
-                    logger.info("Call ended naturally — force-disconnect timer exiting.")
-                    return  # Event was set — call ended naturally, exit cleanly
+                    max_duration = 180.0  # 3 minutes normally
 
-                if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
-                    logger.warning("HARD DISCONNECT: 3m limit reached. Force disconnecting room.")
-                    await _force_disconnect_room(ctx)
-                else:
-                    logger.info("Room already disconnected — force-disconnect skipping.")
+                # Farewell stage: 2m 30s (only if no handoff)
+                if not farewell_done and not fnc_ctx.handoff_triggered and elapsed >= 150.0:
+                    logger.info(f"Farewell stage hit at t={elapsed:.2f}s")
+                    if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+                        current_inst = agent.instructions
+                        if isinstance(current_inst, str):
+                            farewell_inst = (
+                                "IMPORTANT: The call time is ending now. "
+                                "On your next turn, say a quick, natural one-sentence goodbye "
+                                "and do not continue the conversation. Do not ask questions."
+                            )
+                            await agent.update_instructions(current_inst + "\n\n" + farewell_inst)
+                        logger.info("Farewell instructions set.")
+                    farewell_done = True
 
-            disconnect_task = asyncio.create_task(force_disconnect_timer())
+                # Hard disconnect check
+                if elapsed >= max_duration:
+                    logger.warning(f"HARD DISCONNECT: {max_duration/60:.0f}m limit reached. Force disconnecting room.")
+                    if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+                        await _force_disconnect_room(ctx)
+                    return
 
-            # Stage 1: 2m 30s mark — update agent instructions for a natural farewell
-            # We do NOT call generate_reply() here, so the agent won't interrupt the user.
-            # The updated instructions are picked up on the agent's next natural turn.
-            stage1_delay = max(0.0, 150.0 - (asyncio.get_event_loop().time() - entrypoint_start_time))
-            await asyncio.sleep(stage1_delay)
-            elapsed = asyncio.get_event_loop().time() - entrypoint_start_time
-            logger.info(f"Farewell stage hit at t={elapsed:.2f}s")
-            
-            if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
-                logger.info("Updating agent instructions for farewell.")
-                current_inst = agent.instructions
-                if isinstance(current_inst, str):
-                    farewell_inst = (
-                        "IMPORTANT: The call time is ending now. "
-                        "On your next turn, say a quick, natural one-sentence goodbye "
-                        "and do not continue the conversation. Do not ask questions."
-                    )
-                    await agent.update_instructions(current_inst + "\n\n" + farewell_inst)
-                logger.info("Farewell instructions set.")
-                
-                try:
-                    logger.info("Waiting for session to become inactive (25s timeout).")
-                    await asyncio.wait_for(session.wait_for_inactive(), timeout=25.0)
-                    logger.info("Session became inactive naturally.")
-                except asyncio.TimeoutError:
-                    logger.warning("Session did not go inactive within 25s — force-disconnect at 3m will handle it.")
-            else:
-                logger.warning("Room already disconnected — skipping farewell.")
+                await asyncio.sleep(2.0)
+
         except asyncio.CancelledError:
             logger.info("Call limiter cancelled (call ended naturally before limits).")
-            try:
-                _force_disconnect_cancelled.set()
-            except Exception:
-                pass
         except Exception as e:
             logger.error(f"Error in call limiter: {e}")
 
@@ -502,14 +561,20 @@ Follow these specific instructions:
             call_state["user_joined"] = True
             await asyncio.sleep(0.5)
         
-        logger.info(f"Generating greeting for {client_name}...")
-        session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
+        logger.info(f"Generating greeting for {client_name} (inbound: {is_inbound})...")
+        if is_inbound:
+            session.generate_reply(instructions="Greet the caller warmly. Introduce yourself and ask how you can help them today.")
+        else:
+            session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
         logger.info("Greeting generation requested.")
         
-        # Block until the room connection drops or the session closes
-        while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
-            await asyncio.sleep(1.0)
-
+        @session.on("close")
+        def on_session_close():
+            history_snapshot = list(session.history.messages()) if session.history else []
+            logger.info(f"Session closed — spawning finalize (history: {len(history_snapshot)} messages)")
+        
+        await session.wait_for_inactive()
+    
     except asyncio.CancelledError:
         logger.info("Call entrypoint coroutine cancelled.")
     except Exception as e:
@@ -542,23 +607,53 @@ Follow these specific instructions:
                     logger.error(f"Failed to parse metadata: {e}")
                     call_payload = {}
 
-                # 2. Build recording and upload to S3
+                # 2. Build recording and save locally + upload to S3
+                local_recording_path = None
                 try:
                     mp3_bytes = recorder.get_combined_mp3_bytes()
                     if mp3_bytes:
                         call_id = call_payload.get("call_id") or call_payload.get("voice_id")
-                        s3_key = f"recordings/{call_id}.mp3" if call_id else f"recordings/{session_id}_{ctx.room.name}.mp3"
+                        filename = f"{call_id}.mp3" if call_id else f"{session_id}_{ctx.room.name}.mp3"
+
+                        # Always save locally
+                        recordings_dir = "recordings"
+                        os.makedirs(recordings_dir, exist_ok=True)
+                        local_recording_path = os.path.join(recordings_dir, filename)
+                        with open(local_recording_path, "wb") as f:
+                            f.write(mp3_bytes)
+                        # Standard name for easy access (overwrites each call)
+                        with open(os.path.join(recordings_dir, "recording.mp3"), "wb") as f:
+                            f.write(mp3_bytes)
+                        logger.info(f"Recording saved locally: {local_recording_path}")
+
+                        # Also upload to S3
+                        s3_key = f"recordings/{filename}"
                         loop = asyncio.get_running_loop()
                         recording_url = await loop.run_in_executor(None, upload_to_s3, mp3_bytes, s3_key) or ""
                         logger.info(f"S3 recording: {'uploaded' if recording_url else 'upload failed'}")
                     else:
                         logger.info("No audio data captured for recording")
                 except Exception as e:
-                    logger.error(f"Recording/S3 step failed: {e}", exc_info=True)
+                    logger.error(f"Recording step failed: {e}", exc_info=True)
 
                 # 3. Build transcript from captured history snapshot
+                local_transcript_path = None
                 try:
                     transcript_data = SessionRecorder.build_transcript(list(history_snapshot))
+
+                    # Save transcript locally
+                    recordings_dir = "recordings"
+                    os.makedirs(recordings_dir, exist_ok=True)
+                    call_id = call_payload.get("call_id") or call_payload.get("voice_id")
+                    transcript_filename = f"{call_id}_transcript.json" if call_id else f"{session_id}_{ctx.room.name}_transcript.json"
+                    local_transcript_path = os.path.join(recordings_dir, transcript_filename)
+                    with open(local_transcript_path, "w") as f:
+                        f.write(transcript_data)
+                    # Standard name for easy access
+                    with open(os.path.join(recordings_dir, "transcript.json"), "w") as f:
+                        f.write(transcript_data)
+                    logger.info(f"Transcript saved locally: {local_transcript_path}")
+
                     logger.info(f"Transcript built ({len(history_snapshot)} messages)")
                 except Exception as e:
                     logger.error(f"Transcript step failed: {e}", exc_info=True)
@@ -605,6 +700,18 @@ Follow these specific instructions:
                             client_custom_fields["hospital_location"] = analysis["hospital_location"]
                         
                         logger.info(f"Analysis completed. New Stage ID: {new_stage_id}, Next Call On: {next_call_on}")
+
+                        # Save summary locally
+                        try:
+                            summary_filename = f"{call_payload.get('call_id') or call_payload.get('voice_id') or session_id}_summary.txt"
+                            summary_path = os.path.join("recordings", summary_filename)
+                            with open(summary_path, "w") as f:
+                                f.write(summary_text)
+                            with open(os.path.join("recordings", "summary.txt"), "w") as f:
+                                f.write(summary_text)
+                            logger.info(f"Summary saved locally: {summary_path}")
+                        except Exception as e:
+                            logger.error(f"Summary save failed: {e}")
                     else:
                         logger.warning("Skipping analysis: LLM or history unavailable after session close")
                 except Exception as e:
@@ -636,6 +743,18 @@ Follow these specific instructions:
                         "url": ""
                     }
                 }
+
+                # Save webhook payload locally
+                try:
+                    wh_filename = f"{call_payload.get('call_id') or call_payload.get('voice_id') or session_id}_webhook_payload.json"
+                    wh_path = os.path.join("recordings", wh_filename)
+                    with open(wh_path, "w") as f:
+                        json.dump(webhook_payload, f, indent=2)
+                    with open(os.path.join("recordings", "webhook.json"), "w") as f:
+                        json.dump(webhook_payload, f, indent=2)
+                    logger.info(f"Webhook payload saved locally: {wh_path}")
+                except Exception as e:
+                    logger.error(f"Webhook payload save failed: {e}")
 
             except Exception as e:
                 logger.error(f"Pipeline error in finalize: {e}", exc_info=True)
