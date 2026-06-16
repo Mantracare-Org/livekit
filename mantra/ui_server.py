@@ -100,15 +100,6 @@ async def log_requests(request: Request, call_next):
         logger.error(f"{client_host} {request.method} {path} ERROR in {duration*1000:.0f}ms: {e}")
         raise  # let FastAPI handle the error response
 
-# Setup file logging to capture all logs including uvicorn
-_file_handler = logging.FileHandler("/home/fardeen/lkt/app.log")
-_file_handler.setFormatter(logging.Formatter(
-    "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-))
-logging.getLogger().addHandler(_file_handler)
-# Also add directly to mantra.ui_server logger to be absolutely sure
-logger.addHandler(_file_handler)
-
 
 # Get the directory of the current file
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
