@@ -61,7 +61,7 @@ USER appuser
 
 # Download required models so they are cached in the image
 # We run this as appuser so the cache is correctly owned and located
-RUN uv run python -m mantra.agent download-files
+RUN uv run --no-project python -m mantra.agent download-files
 
 # Copy and setup entrypoint
 COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
