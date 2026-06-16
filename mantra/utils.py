@@ -10,7 +10,7 @@ import datetime
 import logging
 import httpx
 import numpy as np
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 
 from livekit import rtc
 from livekit.plugins import openai
@@ -115,7 +115,7 @@ class SessionRecorder:
         self._recording_tasks: List[asyncio.Task] = []
         self.start_time = datetime.datetime.now()
         self.end_time = None
-        
+
         self.SAMPLE_RATE = 48000
         self.NUM_CHANNELS = 1
         self.SAMPLE_WIDTH = 2 # 16-bit
@@ -142,12 +142,12 @@ class SessionRecorder:
         self.end_time = datetime.datetime.now()
         if not self._tracks:
             return b""
-        
+
         track_arrays = []
         for frames in self._tracks.values():
             if frames:
                 track_arrays.append(np.frombuffer(b"".join(frames), dtype=np.int16))
-        
+
         if not track_arrays:
             return b""
 
@@ -175,8 +175,10 @@ class SessionRecorder:
             logger.error(f"MP3 conversion failed: {e}")
             return b""
 
+        return before_mp3, after_mp3
+
     @staticmethod
-    def build_transcript(history: list) -> str:
+    def build_transcript(history: list, handoff_info: dict = None) -> str:
         structured = []
         for msg in history:
             role = msg.role.name if hasattr(msg.role, "name") else str(msg.role)
@@ -184,6 +186,9 @@ class SessionRecorder:
             if content:
                 role_label = "bot" if role.lower() == "assistant" else "user"
                 structured.append({role_label: content})
+        if handoff_info:
+            structured.append({"handoff": handoff_info})
+            structured.append({"info": "Speech after this point is human agent conversation, not yet transcribed"})
         return json.dumps(structured)
 
     @staticmethod

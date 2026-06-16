@@ -136,6 +136,8 @@ class AssistantFunctions:
     ):
         logger.info(f"Handoff requested. Reason: {reason}, Department: {department}")
         self.handoff_triggered = True
+        self.last_reason = reason
+        self.last_department = department
 
         # Parse metadata to get call/lead IDs
         try:
@@ -193,6 +195,18 @@ class AssistantFunctions:
         }
         await send_to_backend(webhook_payload)
 
+        # Override agent instructions to enforce absolute silence
+        if self.agent:
+            try:
+                await self.agent.update_instructions(
+                    "You are SILENT. The call has been transferred to a human agent. "
+                    "Say absolutely nothing. Do not speak, do not acknowledge, do not say goodbye. "
+                    "The human agent handles everything from here. SILENT."
+                )
+                logger.info("Agent instructions overridden to enforce silence")
+            except Exception as e:
+                logger.error(f"Failed to update agent instructions: {e}")
+
         # Physically mute the agent's audio — can't speak if no output
         if self.room:
             try:
@@ -203,7 +217,7 @@ class AssistantFunctions:
             except Exception as e:
                 logger.error(f"Failed to mute agent audio: {e}")
 
-        return ""
+        return "TRANSFER_COMPLETE. Do not speak."
 
 @server.rtc_session(agent_name="mantra-agent")
 async def entrypoint(ctx: JobContext):
@@ -219,14 +233,13 @@ async def entrypoint(ctx: JobContext):
     logger.info(f"Metadata: {ctx.job.metadata}")
 
     # Initialize function context for handoff
+    # Fully in-memory recorder — no disk I/O
+    recorder = SessionRecorder()
     fnc_ctx = AssistantFunctions(ctx.job.metadata, ctx.room.name, ctx.room)
     call_state = {"user_joined": False}
 
     # Session ID for S3 key naming
     session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    # Fully in-memory recorder — no disk I/O
-    recorder = SessionRecorder()
 
     @ctx.room.on("track_subscribed")
     def on_track_subscribed(track: rtc.Track, publication: rtc.TrackPublication, participant: rtc.RemoteParticipant):
@@ -330,6 +343,7 @@ Follow these specific instructions:
             initial_instructions += "1. NEVER repeat the same question twice. If the user dodges the question or asks a counter-question, answer them and DO NOT repeat your previous question.\n"
             initial_instructions += "2. DO NOT push for an appointment if the user hasn't explicitly agreed or if they are asking about other things. Let the conversation flow naturally.\n"
             initial_instructions += "3. Answer user's questions DIRECTLY without appending a sales pitch or appointment request at the end of every turn.\n"
+            initial_instructions += "4. If the user asks to speak to a human, asks to be transferred, or mentions a department — you MUST call the transfer_to_human function IMMEDIATELY. Do NOT keep talking. Call the function.\n"
 
             
             if is_inbound:
@@ -437,7 +451,7 @@ Follow these specific instructions:
             speed=voice_speed,
             language=language,
             api_key=cfg["key"],
-            pronunciation_dict_id=cfg["dict_id"],
+            pronunciation_dict_id=None,
         )
         for cfg in cartesia_configs
     ]
@@ -573,7 +587,9 @@ Follow these specific instructions:
             history_snapshot = list(session.history.messages()) if session.history else []
             logger.info(f"Session closed — spawning finalize (history: {len(history_snapshot)} messages)")
         
-        await session.wait_for_inactive()
+        # Wait for the call_limiter to decide the call is done
+        # (participant leaves, timeout reached, or hard disconnect)
+        await limiter_task
     
     except asyncio.CancelledError:
         logger.info("Call entrypoint coroutine cancelled.")
@@ -607,58 +623,44 @@ Follow these specific instructions:
                     logger.error(f"Failed to parse metadata: {e}")
                     call_payload = {}
 
-                # 2. Build recording and save locally + upload to S3
-                local_recording_path = None
+                # 2. Determine session directory
+                call_id = call_payload.get("call_id") or call_payload.get("voice_id") or "unknown"
+                lead_id = call_payload.get("lead_id") or "unknown"
+                session_dir_name = f"session_{lead_id}_call_{call_id}"
+                session_dir = os.path.join("recordings", session_dir_name)
+                os.makedirs(session_dir, exist_ok=True)
+
+                # 3. Build recordings and save locally + upload to S3
                 try:
                     mp3_bytes = recorder.get_combined_mp3_bytes()
                     if mp3_bytes:
-                        call_id = call_payload.get("call_id") or call_payload.get("voice_id")
-                        filename = f"{call_id}.mp3" if call_id else f"{session_id}_{ctx.room.name}.mp3"
-
-                        # Always save locally
-                        recordings_dir = "recordings"
-                        os.makedirs(recordings_dir, exist_ok=True)
-                        local_recording_path = os.path.join(recordings_dir, filename)
-                        with open(local_recording_path, "wb") as f:
+                        recording_path = os.path.join(session_dir, "recording.mp3")
+                        with open(recording_path, "wb") as f:
                             f.write(mp3_bytes)
-                        # Standard name for easy access (overwrites each call)
-                        with open(os.path.join(recordings_dir, "recording.mp3"), "wb") as f:
-                            f.write(mp3_bytes)
-                        logger.info(f"Recording saved locally: {local_recording_path}")
-
-                        # Also upload to S3
-                        s3_key = f"recordings/{filename}"
+                        logger.info(f"Recording saved: {recording_path}")
                         loop = asyncio.get_running_loop()
-                        recording_url = await loop.run_in_executor(None, upload_to_s3, mp3_bytes, s3_key) or ""
+                        recording_url = await loop.run_in_executor(None, upload_to_s3, mp3_bytes, f"recordings/{session_dir_name}/recording.mp3") or ""
                         logger.info(f"S3 recording: {'uploaded' if recording_url else 'upload failed'}")
                     else:
                         logger.info("No audio data captured for recording")
                 except Exception as e:
                     logger.error(f"Recording step failed: {e}", exc_info=True)
 
-                # 3. Build transcript from captured history snapshot
-                local_transcript_path = None
+                # 4. Build transcript from captured history snapshot
                 try:
-                    transcript_data = SessionRecorder.build_transcript(list(history_snapshot))
-
-                    # Save transcript locally
-                    recordings_dir = "recordings"
-                    os.makedirs(recordings_dir, exist_ok=True)
-                    call_id = call_payload.get("call_id") or call_payload.get("voice_id")
-                    transcript_filename = f"{call_id}_transcript.json" if call_id else f"{session_id}_{ctx.room.name}_transcript.json"
-                    local_transcript_path = os.path.join(recordings_dir, transcript_filename)
-                    with open(local_transcript_path, "w") as f:
+                    handoff_info = {"triggered": fnc_ctx.handoff_triggered}
+                    if fnc_ctx.handoff_triggered:
+                        handoff_info["reason"] = getattr(fnc_ctx, 'last_reason', "")
+                        handoff_info["department"] = getattr(fnc_ctx, 'last_department', "general")
+                    transcript_data = SessionRecorder.build_transcript(list(history_snapshot), handoff_info)
+                    transcript_path = os.path.join(session_dir, "transcript.txt")
+                    with open(transcript_path, "w") as f:
                         f.write(transcript_data)
-                    # Standard name for easy access
-                    with open(os.path.join(recordings_dir, "transcript.json"), "w") as f:
-                        f.write(transcript_data)
-                    logger.info(f"Transcript saved locally: {local_transcript_path}")
-
-                    logger.info(f"Transcript built ({len(history_snapshot)} messages)")
+                    logger.info(f"Transcript saved: {transcript_path} ({len(history_snapshot)} messages)")
                 except Exception as e:
                     logger.error(f"Transcript step failed: {e}", exc_info=True)
 
-                # 4. Calculate duration
+                # 5. Calculate duration
                 if recorder.start_time and recorder.end_time:
                     duration = int((recorder.end_time - recorder.start_time).total_seconds())
 
@@ -668,7 +670,7 @@ Follow these specific instructions:
                 else:
                     call_status = "Incomplete"
 
-                # 5. Run unified analysis to generate summary, stage transition, and metadata
+                # 6. Run unified analysis to generate summary, stage transition, and metadata
                 current_stage_id = call_payload.get("stage_id")
                 stage_details = call_payload.get("stageDetails", [])
                 
@@ -703,13 +705,10 @@ Follow these specific instructions:
 
                         # Save summary locally
                         try:
-                            summary_filename = f"{call_payload.get('call_id') or call_payload.get('voice_id') or session_id}_summary.txt"
-                            summary_path = os.path.join("recordings", summary_filename)
+                            summary_path = os.path.join(session_dir, "summary.txt")
                             with open(summary_path, "w") as f:
                                 f.write(summary_text)
-                            with open(os.path.join("recordings", "summary.txt"), "w") as f:
-                                f.write(summary_text)
-                            logger.info(f"Summary saved locally: {summary_path}")
+                            logger.info(f"Summary saved: {summary_path}")
                         except Exception as e:
                             logger.error(f"Summary save failed: {e}")
                     else:
@@ -717,7 +716,7 @@ Follow these specific instructions:
                 except Exception as e:
                     logger.error(f"Analysis or summary generation failed: {e}", exc_info=True)
 
-                # 6. Build webhook payload
+                # 7. Build webhook payload
                 webhook_payload = {
                     "event": "CALL_DATA_UPDATE",
                     "data": {
@@ -744,22 +743,19 @@ Follow these specific instructions:
                     }
                 }
 
-                # Save webhook payload locally
+                # 8. Save webhook payload locally
                 try:
-                    wh_filename = f"{call_payload.get('call_id') or call_payload.get('voice_id') or session_id}_webhook_payload.json"
-                    wh_path = os.path.join("recordings", wh_filename)
+                    wh_path = os.path.join(session_dir, "webhook_payload.json")
                     with open(wh_path, "w") as f:
                         json.dump(webhook_payload, f, indent=2)
-                    with open(os.path.join("recordings", "webhook.json"), "w") as f:
-                        json.dump(webhook_payload, f, indent=2)
-                    logger.info(f"Webhook payload saved locally: {wh_path}")
+                    logger.info(f"Webhook payload saved: {wh_path}")
                 except Exception as e:
                     logger.error(f"Webhook payload save failed: {e}")
 
             except Exception as e:
                 logger.error(f"Pipeline error in finalize: {e}", exc_info=True)
 
-            # 8. Send to MantraAssist backend (always attempted, even if pipeline failed)
+            # 7. Send to MantraAssist backend (always attempted, even if pipeline failed)
             try:
                 if webhook_payload is None:
                     webhook_payload = {
