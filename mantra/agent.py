@@ -4,6 +4,7 @@ import asyncio
 import os
 import datetime
 import sys
+import time
 from typing import Annotated
 
 # ── Suppress OpenTelemetry 429 errors ──────────────────────────────────
@@ -76,7 +77,7 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from livekit.plugins import openai, google, cartesia, silero, deepgram
 
 # Import our production helpers
-from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend, normalize_to_iso8601
+from mantra.utils import SessionRecorder, send_to_backend, normalize_to_iso8601
 
 
 
@@ -135,6 +136,12 @@ class AssistantFunctions:
         department: Annotated[str, "The department to transfer to (e.g., refund, support, billing, general)"] = "general"
     ):
         logger.info(f"Handoff requested. Reason: {reason}, Department: {department}")
+
+        # Guard: prevent duplicate transfers if LLM calls this twice
+        if self.handoff_triggered:
+            logger.warning("Handoff already in progress — ignoring duplicate request")
+            return "TRANSFER_ALREADY_IN_PROGRESS."
+
         self.handoff_triggered = True
         self.last_reason = reason
         self.last_department = department
@@ -181,19 +188,20 @@ class AssistantFunctions:
                 missing.append("SIP trunk ID")
             logger.warning(f"Cannot transfer: missing {', '.join(missing)}. Backend notification sent anyway.")
 
-        # Notify backend
-        webhook_payload = {
-            "event": "HANDOFF_REQUESTED",
-            "data": {
-                "room_name": self.room_name,
-                "reason": reason,
-                "department": department,
-                "call_id": payload.get("call_id") or payload.get("voice_id"),
-                "lead_id": payload.get("lead_id"),
-                "client_name": payload.get("client_name", "User"),
+        # Notify backend (skip if no URL configured)
+        if os.getenv("MANTRAASSIST_BACKEND_URL"):
+            webhook_payload = {
+                "event": "HANDOFF_REQUESTED",
+                "data": {
+                    "room_name": self.room_name,
+                    "reason": reason,
+                    "department": department,
+                    "call_id": payload.get("call_id") or payload.get("voice_id"),
+                    "lead_id": payload.get("lead_id"),
+                    "client_name": payload.get("client_name", "User"),
+                }
             }
-        }
-        await send_to_backend(webhook_payload)
+            await send_to_backend(webhook_payload)
 
         # Override agent instructions to enforce absolute silence
         if self.agent:
@@ -207,15 +215,13 @@ class AssistantFunctions:
             except Exception as e:
                 logger.error(f"Failed to update agent instructions: {e}")
 
-        # Physically mute the agent's audio — can't speak if no output
-        if self.room:
-            try:
-                for pub in self.room.local_participant.track_publications.values():
-                    if pub.kind == rtc.TrackKind.KIND_AUDIO:
-                        await pub.mute()
-                        logger.info("Agent audio muted — silent mode engaged")
-            except Exception as e:
-                logger.error(f"Failed to mute agent audio: {e}")
+        # Interrupt any in-progress speech from the agent
+        try:
+            if self.agent and self.agent._session:
+                self.agent._session.interrupt()
+                logger.info("Agent speech interrupted for handoff")
+        except Exception as e:
+            logger.debug(f"Agent interrupt unavailable (non-fatal): {e}")
 
         return "TRANSFER_COMPLETE. Do not speak."
 
@@ -233,23 +239,49 @@ async def entrypoint(ctx: JobContext):
     logger.info(f"Metadata: {ctx.job.metadata}")
 
     # Initialize function context for handoff
-    # Fully in-memory recorder — no disk I/O
-    recorder = SessionRecorder()
     fnc_ctx = AssistantFunctions(ctx.job.metadata, ctx.room.name, ctx.room)
     call_state = {"user_joined": False}
+    call_start_time = datetime.datetime.now()
 
-    # Session ID for S3 key naming
+    # Session ID for naming
     session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Simple local recording: track_id -> metadata and raw PCM frames dict
+    recording_tracks: dict = {}
+    recording_tasks: list = []
+    recording_start_time = time.time()
+
+    def start_record_track(track: rtc.Track, label: str):
+        tid = track.sid or str(id(track))
+        if tid in recording_tracks:
+            return
+        recording_tracks[tid] = {
+            "frames": [],
+            "first_frame_time": None,
+            "label": label
+        }
+        async def consume():
+            stream = rtc.AudioStream(track)
+            try:
+                async for ev in stream:
+                    if recording_tracks[tid]["first_frame_time"] is None:
+                        recording_tracks[tid]["first_frame_time"] = time.time()
+                    recording_tracks[tid]["frames"].append(bytes(ev.frame.data))
+            except Exception as e:
+                logger.error(f"Record error {label}: {e}")
+            finally:
+                await stream.aclose()
+        recording_tasks.append(asyncio.create_task(consume()))
 
     @ctx.room.on("track_subscribed")
     def on_track_subscribed(track: rtc.Track, publication: rtc.TrackPublication, participant: rtc.RemoteParticipant):
         if track.kind == rtc.TrackKind.KIND_AUDIO:
-            recorder.start_recording(track, f"participant_{participant.identity}")
+            start_record_track(track, f"participant_{participant.identity}")
 
     @ctx.room.on("local_track_published")
     def on_local_track_published(publication: rtc.LocalTrackPublication, track: rtc.Track):
         if track.kind == rtc.TrackKind.KIND_AUDIO:
-            recorder.start_recording(track, "agent")
+            start_record_track(track, "agent")
 
     initial_instructions = """You are a warm, professional Care Support Assistant on a phone call.
 
@@ -557,12 +589,12 @@ Follow these specific instructions:
     try:
         await session.start(agent=agent, room=ctx.room)
         limiter_task = asyncio.create_task(call_limiter())
-        
-        # Check if agent track was already published before we attached the listener
-        for publication in ctx.room.local_participant.track_publications.values():
-            if publication.track and publication.track.kind == rtc.TrackKind.KIND_AUDIO:
-                recorder.start_recording(publication.track, "agent")
-        
+
+        # Capture any already-published agent track
+        for pub in ctx.room.local_participant.track_publications.values():
+            if pub.track and pub.track.kind == rtc.TrackKind.KIND_AUDIO:
+                start_record_track(pub.track, "agent")
+
         if ctx.room.name.startswith("test_"):
             logger.info("Test room detected. Skipping wait for remote participant to initialize synthesis.")
             call_state["user_joined"] = True
@@ -630,21 +662,56 @@ Follow these specific instructions:
                 session_dir = os.path.join("recordings", session_dir_name)
                 os.makedirs(session_dir, exist_ok=True)
 
-                # 3. Build recordings and save locally + upload to S3
+                # 3. Mix and save recording locally
                 try:
-                    mp3_bytes = recorder.get_combined_mp3_bytes()
-                    if mp3_bytes:
-                        recording_path = os.path.join(session_dir, "recording.mp3")
-                        with open(recording_path, "wb") as f:
-                            f.write(mp3_bytes)
-                        logger.info(f"Recording saved: {recording_path}")
-                        loop = asyncio.get_running_loop()
-                        recording_url = await loop.run_in_executor(None, upload_to_s3, mp3_bytes, f"recordings/{session_dir_name}/recording.mp3") or ""
-                        logger.info(f"S3 recording: {'uploaded' if recording_url else 'upload failed'}")
+                    if recording_tracks:
+                        raw_frames = {}
+                        for tid, track_info in recording_tracks.items():
+                            frames = track_info["frames"]
+                            if not frames:
+                                continue
+                            
+                            joined_bytes = b"".join(frames)
+                            first_time = track_info["first_frame_time"]
+                            if first_time is not None:
+                                offset = first_time - recording_start_time
+                                if offset > 0:
+                                    num_silent_samples = int(offset * 48000)
+                                    padding = b"\x00" * (num_silent_samples * 2)
+                                    joined_bytes = padding + joined_bytes
+                                    logger.info(f"Padded track '{track_info['label']}' with {offset:.2f}s of silence")
+                            
+                            raw_frames[tid] = joined_bytes
+
+                        if raw_frames:
+                            import numpy as np
+                            from pydub import AudioSegment
+                            from pydub.silence import detect_nonsilent
+
+                            arrays = [np.frombuffer(f, dtype=np.int16) for f in raw_frames.values()]
+                            max_len = max(len(a) for a in arrays)
+                            mixed = np.zeros(max_len, dtype=np.float32)
+                            for arr in arrays:
+                                if len(arr) < max_len:
+                                    arr = np.pad(arr, (0, max_len - len(arr)))
+                                mixed += arr.astype(np.float32)
+                            mixed = np.clip(mixed, -32768, 32767).astype(np.int16)
+
+                            audio = AudioSegment(mixed.tobytes(), frame_rate=48000, sample_width=2, channels=1)
+                            nonsilent = detect_nonsilent(audio, min_silence_len=200, silence_thresh=-40, seek_step=10)
+                            if nonsilent and nonsilent[0][0] > 0:
+                                audio = audio[nonsilent[0][0]:]
+
+                            recording_path = os.path.join(session_dir, "recording.mp3")
+                            audio.export(recording_path, format="mp3", bitrate="128k")
+                            recording_url = recording_path
+                            logger.info(f"Recording saved: {recording_path}")
+                        else:
+                            logger.info("No audio data captured")
                     else:
-                        logger.info("No audio data captured for recording")
+                        logger.info("No tracks recorded")
                 except Exception as e:
-                    logger.error(f"Recording step failed: {e}", exc_info=True)
+                    logger.error(f"Recording failed: {e}", exc_info=True)
 
                 # 4. Build transcript from captured history snapshot
                 try:
@@ -661,8 +728,7 @@ Follow these specific instructions:
                     logger.error(f"Transcript step failed: {e}", exc_info=True)
 
                 # 5. Calculate duration
-                if recorder.start_time and recorder.end_time:
-                    duration = int((recorder.end_time - recorder.start_time).total_seconds())
+                duration = int((datetime.datetime.now() - call_start_time).total_seconds())
 
                 # Determine call status based on whether the user joined
                 if call_state["user_joined"]:
@@ -755,26 +821,29 @@ Follow these specific instructions:
             except Exception as e:
                 logger.error(f"Pipeline error in finalize: {e}", exc_info=True)
 
-            # 7. Send to MantraAssist backend (always attempted, even if pipeline failed)
-            try:
-                if webhook_payload is None:
-                    webhook_payload = {
-                        "event": "CALL_DATA_UPDATE",
-                        "data": {
-                            "ai_call_id": ctx.job.id,
-                            "call_status": "Error",
-                            "status": "Error",
-                            "notes": "Post-call pipeline encountered an error — minimal payload sent",
+            # 7. Send to MantraAssist backend (skipped if no URL configured)
+            backend_url = os.getenv("MANTRAASSIST_BACKEND_URL", "")
+            if backend_url:
+                try:
+                    if webhook_payload is None:
+                        webhook_payload = {
+                            "event": "CALL_DATA_UPDATE",
+                            "data": {
+                                "ai_call_id": ctx.job.id,
+                                "call_status": "Error",
+                                "status": "Error",
+                                "notes": "Post-call pipeline encountered an error — minimal payload sent",
+                            }
                         }
-                    }
 
-                # logger.info(f"{Fore.MAGENTA}Delivering post-call webhook to backend...{Style.RESET_ALL}")
-                # logger.info(f"{Fore.CYAN}Webhook Payload:\n{json.dumps(webhook_payload, indent=2)}{Style.RESET_ALL}")
-                logger.info("Delivering post-call webhook to backend...")
-                logger.info(f"Webhook Payload:\n{json.dumps(webhook_payload)}")
-                delivered = await send_to_backend(webhook_payload)
-            except Exception as e:
-                logger.error(f"Webhook delivery failed: {e}", exc_info=True)
+                    logger.info("Delivering post-call webhook to backend...")
+                    logger.info(f"Webhook Payload:\n{json.dumps(webhook_payload)}")
+                    delivered = await send_to_backend(webhook_payload)
+                except Exception as e:
+                    logger.error(f"Webhook delivery failed: {e}", exc_info=True)
+                    delivered = False
+            else:
+                logger.info("MANTRAASSIST_BACKEND_URL not set — skipped backend webhook")
                 delivered = False
 
             logger.info(

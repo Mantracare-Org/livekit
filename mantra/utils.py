@@ -1,6 +1,4 @@
 import os
-import io
-import wave
 import json
 import time
 import hmac
@@ -9,8 +7,7 @@ import asyncio
 import datetime
 import logging
 import httpx
-import numpy as np
-from typing import Dict, List
+from typing import Optional, List, Dict
 
 from livekit import rtc
 from livekit.plugins import openai
@@ -110,75 +107,21 @@ def upload_to_s3(file_bytes: bytes, s3_key: str) -> Optional[str]:
         os.environ.update(_saved)
 
 class SessionRecorder:
-    def __init__(self):
-        self._tracks: Dict[str, List[bytes]] = {}
-        self._recording_tasks: List[asyncio.Task] = []
-        self.start_time = datetime.datetime.now()
-        self.end_time = None
-
-        self.SAMPLE_RATE = 48000
-        self.NUM_CHANNELS = 1
-        self.SAMPLE_WIDTH = 2 # 16-bit
-
-    def start_recording(self, track: rtc.Track, label: str):
-        track_id = track.sid or str(id(track))
-        if track_id in self._tracks:
-            return
-        self._tracks[track_id] = []
-        task = asyncio.create_task(self._consume_track(track, track_id, label))
-        self._recording_tasks.append(task)
-
-    async def _consume_track(self, track: rtc.Track, track_id: str, label: str):
-        audio_stream = rtc.AudioStream(track)
-        try:
-            async for frame_event in audio_stream:
-                self._tracks[track_id].append(bytes(frame_event.frame.data))
-        except Exception as e:
-            logger.error(f"Error recording track {label}: {e}")
-        finally:
-            await audio_stream.aclose()
-
-    def get_combined_mp3_bytes(self) -> bytes:
-        self.end_time = datetime.datetime.now()
-        if not self._tracks:
-            return b""
-
-        track_arrays = []
-        for frames in self._tracks.values():
-            if frames:
-                track_arrays.append(np.frombuffer(b"".join(frames), dtype=np.int16))
-
-        if not track_arrays:
-            return b""
-
-        max_len = max(len(a) for a in track_arrays)
-        mixed = np.zeros(max_len, dtype=np.float32)
-        for arr in track_arrays:
-            if len(arr) < max_len:
-                arr = np.pad(arr, (0, max_len - len(arr)), mode="constant")
-            mixed += arr.astype(np.float32)
-        mixed = np.clip(mixed, -32768, 32767).astype(np.int16)
-
-        try:
-            from pydub import AudioSegment
-            from pydub.silence import detect_nonsilent
-            audio = AudioSegment(mixed.tobytes(), frame_rate=self.SAMPLE_RATE, sample_width=self.SAMPLE_WIDTH, channels=self.NUM_CHANNELS)
-            nonsilent = detect_nonsilent(audio, min_silence_len=200, silence_thresh=-40, seek_step=10)
-            if nonsilent:
-                start_ms = nonsilent[0][0]
-                if start_ms > 0:
-                    audio = audio[start_ms:]
-            buf = io.BytesIO()
-            audio.export(buf, format="mp3", bitrate="128k")
-            return buf.getvalue()
-        except Exception as e:
-            logger.error(f"MP3 conversion failed: {e}")
-            return b""
-
-        return before_mp3, after_mp3
+    """Namespace for call recording utilities: transcript building, summary, analysis."""
 
     @staticmethod
     def build_transcript(history: list, handoff_info: dict = None) -> str:
+        structured = []
+        for msg in history:
+            role = msg.role.name if hasattr(msg.role, "name") else str(msg.role)
+            content = " ".join([str(c) for c in msg.content]) if isinstance(msg.content, list) else msg.content
+            if content:
+                role_label = "bot" if role.lower() == "assistant" else "user"
+                structured.append({role_label: content})
+        if handoff_info:
+            structured.append({"handoff": handoff_info})
+            structured.append({"info": "Speech after this point is human agent conversation, not yet transcribed"})
+        return json.dumps(structured)
         structured = []
         for msg in history:
             role = msg.role.name if hasattr(msg.role, "name") else str(msg.role)
