@@ -138,6 +138,17 @@ class SessionRecorder:
         finally:
             await audio_stream.aclose()
 
+    async def stop_recording(self):
+        self.end_time = datetime.datetime.now()
+        cancelled = []
+        for task in self._recording_tasks:
+            if not task.done():
+                task.cancel()
+                cancelled.append(task)
+        if cancelled:
+            await asyncio.gather(*cancelled, return_exceptions=True)
+        self._recording_tasks.clear()
+
     def get_combined_mp3_bytes(self) -> bytes:
         self.end_time = datetime.datetime.now()
         if not self._tracks:

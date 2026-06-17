@@ -16,15 +16,16 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml uv.lock ./
-RUN uv sync --locked
+RUN uv sync --locked --no-install-project --no-dev
 
 COPY . .
+RUN uv sync --locked --no-dev
 
 # --- Production stage ---
 FROM base
 
 ENV UV_COMPILE_BYTECODE=1
-ENV UV_SYSTEM_PYTHON=1
+ENV PATH="/app/.venv/bin:$PATH"
 # Set model cache directories to be inside /app
 ENV HF_HOME=/app/.cache/huggingface
 ENV HF_HUB_CACHE=/app/.cache/huggingface

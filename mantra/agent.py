@@ -542,8 +542,9 @@ Follow these specific instructions:
                     logger.error(f"Failed to parse metadata: {e}")
                     call_payload = {}
 
-                # 2. Build recording and upload to S3
+                # 2. Flush recording tasks and build recording
                 try:
+                    await recorder.stop_recording()
                     mp3_bytes = recorder.get_combined_mp3_bytes()
                     if mp3_bytes:
                         call_id = call_payload.get("call_id") or call_payload.get("voice_id")
