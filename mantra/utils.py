@@ -36,7 +36,8 @@ async def send_to_backend(payload: dict, max_retries: int = 3) -> bool:
         payload_str = '{}'
     else:
         payload_str = json.dumps(payload, separators=(',', ':'))
-    
+
+
     data_to_sign = f"{payload_str}.{timestamp}"
     
     headers = {
