@@ -613,7 +613,7 @@ async def stream_queue_status():
 
 def main():
     import uvicorn
-    port = int(os.getenv("PORT", "8086"))
+    port = int(os.getenv("PORT", "8081"))
     logger.info(f"UI Server starting on http://0.0.0.0:{port}")
     uvicorn.run("mantra.ui_server:app", host="0.0.0.0", port=port, access_log=False)
 
