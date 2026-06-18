@@ -351,25 +351,19 @@ Follow these specific instructions:
     else:
         logger.info("Using OpenAI LLM")
         llm_engine = openai.LLM(model="gpt-4o-mini")
-    # Collect Cartesia API keys dynamically from environment variables, pairing each with its account-specific pronunciation dictionary
-    cartesia_configs = []
-    for key_env, dict_env in [
-        ("CARTESIA_API_KEY", "CARTESIA_PRONUNCIATION_DICT_ID"),
-        ("CARTESIA_API_KEY_2", "CARTESIA_PRONUNCIATION_DICT_ID_2"),
-        ("CARTESIA_API_KEY_3", "CARTESIA_PRONUNCIATION_DICT_ID_3")
-    ]:
+    # Collect Cartesia API keys dynamically from environment variables
+    cartesia_keys = []
+    for key_env in ["CARTESIA_API_KEY", "CARTESIA_API_KEY_2", "CARTESIA_API_KEY_3"]:
         key_val = os.getenv(key_env)
-        dict_val = os.getenv(dict_env)
         if key_val:
             if "," in key_val:
-                # If multiple keys are given in a comma-separated string, they share the same dict_id
-                cartesia_configs.extend([{"key": k.strip(), "dict_id": dict_val.strip() if dict_val else None} for k in key_val.split(",") if k.strip()])
+                cartesia_keys.extend([k.strip() for k in key_val.split(",") if k.strip()])
             else:
-                cartesia_configs.append({"key": key_val.strip(), "dict_id": dict_val.strip() if dict_val else None})
+                cartesia_keys.append(key_val.strip())
     
     # If no keys are specified in variables, let it default to standard CARTESIA_API_KEY logic
-    if not cartesia_configs:
-        cartesia_configs = [{"key": None, "dict_id": os.getenv("CARTESIA_PRONUNCIATION_DICT_ID")}]
+    if not cartesia_keys:
+        cartesia_keys = [None]
 
     language = "en"
         
@@ -378,7 +372,7 @@ Follow these specific instructions:
 
     # Diagnostic: log the resolved TTS language so we can verify in production
     logger.info(f"TTS Language resolved to: '{language}' (None means auto-detect)")
-    logger.info(f"TTS Pronunciation Dicts: {[cfg['dict_id'] for cfg in cartesia_configs]} ({len(cartesia_configs)} keys)")
+    logger.info(f"TTS Keys count: {len(cartesia_keys)}")
     logger.info(f"TTS Model: sonic-3 | Voice: {voice_id} | Speed: {voice_speed}")
 
     # Setup Fallback TTS using the pool of keys to cycle on rate limits (429) / connection failures
@@ -388,10 +382,9 @@ Follow these specific instructions:
             voice=voice_id,
             speed=voice_speed,
             language=language,
-            api_key=cfg["key"],
-            pronunciation_dict_id=cfg["dict_id"],
+            api_key=api_key,
         )
-        for cfg in cartesia_configs
+        for api_key in cartesia_keys
     ]
 
     session = AgentSession(
