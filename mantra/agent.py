@@ -162,6 +162,37 @@ async def entrypoint(ctx: JobContext):
     # Session ID for S3 key naming
     session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
+    # Parse metadata to get call_id safely
+    call_id = ctx.job.id
+    if ctx.job.metadata:
+        try:
+            payload = json.loads(ctx.job.metadata)
+            call_id = payload.get("call_id") or payload.get("voice_id") or ctx.job.id
+        except:
+            pass
+
+    # Ensure call is tracked in Redis (critical for inbound calls that bypass the queue)
+    try:
+        redis_url = os.getenv("REDIS_URL")
+        import redis.asyncio as redis
+        r = redis.from_url(redis_url, decode_responses=True)
+        # If it's an inbound call, it won't be in the hash yet.
+        is_tracked = await r.hexists("calls:active", call_id)
+        if not is_tracked:
+            CARTESIA_MAX_CONCURRENCY = int(os.getenv("CARTESIA_MAX_CONCURRENCY", "5"))
+            active_count = await r.hlen("calls:active")
+            if active_count >= CARTESIA_MAX_CONCURRENCY:
+                logger.warning(f"Capacity full ({active_count}/{CARTESIA_MAX_CONCURRENCY}). Rejecting inbound call {call_id}.")
+                await r.aclose()
+                await ctx.room.disconnect()
+                return
+            await r.hset("calls:active", call_id, ctx.room.name)
+            await r.set(f"calls:status:{call_id}", "in_progress_inbound")
+            logger.info(f"Registered inbound call {call_id} in Redis calls:active")
+        await r.aclose()
+    except Exception as e:
+        logger.error(f"Failed to register active call in Redis: {e}")
+
     # Fully in-memory recorder — no disk I/O
     recorder = SessionRecorder()
 
@@ -709,6 +740,20 @@ Follow these specific instructions:
             except Exception as e:
                 logger.error(f"Webhook delivery failed: {e}", exc_info=True)
                 delivered = False
+
+            # 9. Free Cartesia Capacity slot in Redis
+            try:
+                call_id = call_payload.get("call_id")
+                if call_id:
+                    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+                    import redis.asyncio as redis
+                    r = redis.from_url(redis_url, decode_responses=True)
+                    await r.hdel("calls:active", call_id)
+                    await r.set(f"calls:status:{call_id}", "completed")
+                    await r.aclose()
+                    logger.info(f"Freed capacity slot for call {call_id} in Redis")
+            except Exception as e:
+                logger.error(f"Failed to free Redis capacity slot: {e}")
 
             logger.info(
                 f"Post-call processing complete | "
