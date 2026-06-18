@@ -43,12 +43,9 @@ _handler.setFormatter(ColorFormatter(
     f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s"
 ))
 
-_file_handler = logging.FileHandler("/tmp/agent.log")
-_file_handler.setFormatter(logging.Formatter(
-    f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s"
-))
 
-logging.basicConfig(level=logging.DEBUG, handlers=[_handler, _file_handler])
+
+logging.basicConfig(level=logging.DEBUG, handlers=[_handler])
 logger = logging.getLogger("mantra.agent")
 logging.getLogger("livekit.agents").setLevel(logging.DEBUG)
 logger.info("Initializing process...")
@@ -152,6 +149,7 @@ async def entrypoint(ctx: JobContext):
     
     await ctx.connect()
 
+    # logger.info(f"{Fore.GREEN}➕ Room Created / Connected: {ctx.room.name}{Style.RESET_ALL}")
     logger.info(f"--- Starting agent session ---")
     logger.info(f"Room: {ctx.room.name}")
     logger.info(f"Job ID: {ctx.job.id}")
@@ -163,6 +161,37 @@ async def entrypoint(ctx: JobContext):
 
     # Session ID for S3 key naming
     session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Parse metadata to get call_id safely
+    call_id = ctx.job.id
+    if ctx.job.metadata:
+        try:
+            payload = json.loads(ctx.job.metadata)
+            call_id = payload.get("call_id") or payload.get("voice_id") or ctx.job.id
+        except:
+            pass
+
+    # Ensure call is tracked in Redis (critical for inbound calls that bypass the queue)
+    try:
+        redis_url = os.getenv("REDIS_URL")
+        import redis.asyncio as redis
+        r = redis.from_url(redis_url, decode_responses=True)
+        # If it's an inbound call, it won't be in the hash yet.
+        is_tracked = await r.hexists("calls:active", call_id)
+        if not is_tracked:
+            CARTESIA_MAX_CONCURRENCY = int(os.getenv("CARTESIA_MAX_CONCURRENCY", "5"))
+            active_count = await r.hlen("calls:active")
+            if active_count >= CARTESIA_MAX_CONCURRENCY:
+                logger.warning(f"Capacity full ({active_count}/{CARTESIA_MAX_CONCURRENCY}). Rejecting inbound call {call_id}.")
+                await r.aclose()
+                await ctx.room.disconnect()
+                return
+            await r.hset("calls:active", call_id, ctx.room.name)
+            await r.set(f"calls:status:{call_id}", "in_progress_inbound")
+            logger.info(f"Registered inbound call {call_id} in Redis calls:active")
+        await r.aclose()
+    except Exception as e:
+        logger.error(f"Failed to register active call in Redis: {e}")
 
     # Fully in-memory recorder — no disk I/O
     recorder = SessionRecorder()
@@ -176,6 +205,11 @@ async def entrypoint(ctx: JobContext):
     def on_local_track_published(publication: rtc.LocalTrackPublication, track: rtc.Track):
         if track.kind == rtc.TrackKind.KIND_AUDIO:
             recorder.start_recording(track, "agent")
+
+    @ctx.room.on("participant_disconnected")
+    def on_participant_disconnected(participant: rtc.RemoteParticipant):
+        logger.info(f"Participant {participant.identity} disconnected. Force-ending call.")
+        asyncio.create_task(_force_disconnect_room(ctx))
 
     initial_instructions = """You are a warm, professional Care Support Assistant on a phone call.
 
@@ -317,25 +351,19 @@ Follow these specific instructions:
     else:
         logger.info("Using OpenAI LLM")
         llm_engine = openai.LLM(model="gpt-4o-mini")
-    # Collect Cartesia API keys dynamically from environment variables, pairing each with its account-specific pronunciation dictionary
-    cartesia_configs = []
-    for key_env, dict_env in [
-        ("CARTESIA_API_KEY", "CARTESIA_PRONUNCIATION_DICT_ID"),
-        ("CARTESIA_API_KEY_2", "CARTESIA_PRONUNCIATION_DICT_ID_2"),
-        ("CARTESIA_API_KEY_3", "CARTESIA_PRONUNCIATION_DICT_ID_3")
-    ]:
+    # Collect Cartesia API keys dynamically from environment variables
+    cartesia_keys = []
+    for key_env in ["CARTESIA_API_KEY", "CARTESIA_API_KEY_2", "CARTESIA_API_KEY_3"]:
         key_val = os.getenv(key_env)
-        dict_val = os.getenv(dict_env)
         if key_val:
             if "," in key_val:
-                # If multiple keys are given in a comma-separated string, they share the same dict_id
-                cartesia_configs.extend([{"key": k.strip(), "dict_id": dict_val.strip() if dict_val else None} for k in key_val.split(",") if k.strip()])
+                cartesia_keys.extend([k.strip() for k in key_val.split(",") if k.strip()])
             else:
-                cartesia_configs.append({"key": key_val.strip(), "dict_id": dict_val.strip() if dict_val else None})
+                cartesia_keys.append(key_val.strip())
     
     # If no keys are specified in variables, let it default to standard CARTESIA_API_KEY logic
-    if not cartesia_configs:
-        cartesia_configs = [{"key": None, "dict_id": os.getenv("CARTESIA_PRONUNCIATION_DICT_ID")}]
+    if not cartesia_keys:
+        cartesia_keys = [None]
 
     language = "en"
         
@@ -344,7 +372,8 @@ Follow these specific instructions:
 
     # Diagnostic: log the resolved TTS language so we can verify in production
     logger.info(f"TTS Language resolved to: '{language}' (None means auto-detect)")
-    logger.info(f"TTS Pronunciation Dicts: {[cfg['dict_id'] for cfg in cartesia_configs]} ({len(cartesia_configs)} keys)")
+    logger.info(f"TTS Keys count: {len(cartesia_keys)}")
+    logger.info(f"TTS Model: sonic-3 | Voice: {voice_id} | Speed: {voice_speed}")
 
     # Setup Fallback TTS using the pool of keys to cycle on rate limits (429) / connection failures
     tts_pool = [
@@ -353,10 +382,9 @@ Follow these specific instructions:
             voice=voice_id,
             speed=voice_speed,
             language=language,
-            api_key=cfg["key"],
-            pronunciation_dict_id=cfg["dict_id"],
+            api_key=api_key,
         )
-        for cfg in cartesia_configs
+        for api_key in cartesia_keys
     ]
 
     session = AgentSession(
@@ -401,6 +429,46 @@ Follow these specific instructions:
         tools=[] # [fnc_ctx.transfer_to_human] commented out
     )
     fnc_ctx.agent = agent
+
+    @session.on("agent_state_changed")
+    def on_agent_state(ev):
+        call_state["agent_state"] = ev.new_state
+        if getattr(ev, "old_state", None) == "speaking" and ev.new_state != "speaking":
+            call_state["last_activity"] = asyncio.get_event_loop().time()
+
+    @session.on("user_state_changed")
+    def on_user_state(ev):
+        if ev.new_state == "speaking":
+            call_state["last_activity"] = asyncio.get_event_loop().time()
+            call_state["prompted_inactivity"] = False
+
+    async def inactivity_monitor():
+        logger.info("Inactivity monitor started.")
+        while not call_state.get("user_joined"):
+            await asyncio.sleep(1.0)
+            
+        call_state["last_activity"] = asyncio.get_event_loop().time()
+        call_state["prompted_inactivity"] = False
+        
+        while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+            await asyncio.sleep(1.0)
+            now = asyncio.get_event_loop().time()
+            agent_state = call_state.get("agent_state", "initializing")
+            last_activity = call_state.get("last_activity", now)
+            
+            time_since_activity = now - last_activity
+            
+            if agent_state in ["listening", "idle"]:
+                if time_since_activity > 10.0:
+                    # logger.warning(f"{Fore.YELLOW}No response for 10s. Destroying room.{Style.RESET_ALL}")
+                    asyncio.create_task(_force_disconnect_room(ctx))
+                    break
+                elif time_since_activity > 5.0 and not call_state.get("prompted_inactivity", False):
+                    logger.info("No response for 5s. Prompting user...")
+                    call_state["prompted_inactivity"] = True
+                    session.generate_reply(
+                        user_input="[System: The user has been silent. Briefly ask if they are still there (e.g. 'Are you still there?' or 'Hello?'). Keep it extremely short.]"
+                    )
 
     # Call duration limiter logic
     async def call_limiter():
@@ -484,6 +552,7 @@ Follow these specific instructions:
     try:
         await session.start(agent=agent, room=ctx.room)
         limiter_task = asyncio.create_task(call_limiter())
+        inactivity_task = asyncio.create_task(inactivity_monitor())
         
         # Check if agent track was already published before we attached the listener
         for publication in ctx.room.local_participant.track_publications.values():
@@ -519,6 +588,8 @@ Follow these specific instructions:
         # 1. Cancel limiter task
         if 'limiter_task' in locals() and not limiter_task.done():
             limiter_task.cancel()
+        if 'inactivity_task' in locals() and not inactivity_task.done():
+            inactivity_task.cancel()
             
         # 2. Capture history snapshot immediately before session cleans up
         history_snapshot = list(session.history.messages()) if (session and session.history) else []
@@ -547,8 +618,8 @@ Follow these specific instructions:
                     await recorder.stop_recording()
                     mp3_bytes = recorder.get_combined_mp3_bytes()
                     if mp3_bytes:
-                        call_id = call_payload.get("call_id") or call_payload.get("voice_id")
-                        s3_key = f"recordings/{call_id}.mp3" if call_id else f"recordings/{session_id}_{ctx.room.name}.mp3"
+                        call_id = call_payload.get("call_id") or call_payload.get("voice_id") or ctx.job.id
+                        s3_key = f"recordings/{call_id}.mp3"
                         loop = asyncio.get_running_loop()
                         recording_url = await loop.run_in_executor(None, upload_to_s3, mp3_bytes, s3_key) or ""
                         logger.info(f"S3 recording: {'uploaded' if recording_url else 'upload failed'}")
@@ -663,6 +734,20 @@ Follow these specific instructions:
                 logger.error(f"Webhook delivery failed: {e}", exc_info=True)
                 delivered = False
 
+            # 9. Free Cartesia Capacity slot in Redis
+            try:
+                call_id = call_payload.get("call_id")
+                if call_id:
+                    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+                    import redis.asyncio as redis
+                    r = redis.from_url(redis_url, decode_responses=True)
+                    await r.hdel("calls:active", call_id)
+                    await r.set(f"calls:status:{call_id}", "completed")
+                    await r.aclose()
+                    logger.info(f"Freed capacity slot for call {call_id} in Redis")
+            except Exception as e:
+                logger.error(f"Failed to free Redis capacity slot: {e}")
+
             logger.info(
                 f"Post-call processing complete | "
                 f"Call ID: {ctx.job.id} | "
@@ -685,12 +770,12 @@ async def _force_disconnect_room(ctx: JobContext):
         )
         await lk_api.room.delete_room(api.DeleteRoomRequest(room=ctx.room.name))
         await lk_api.aclose()
-        logger.info(f"Room {ctx.room.name} deleted via API.")
+        # logger.info(f"{Fore.RED}➖ Room Destroyed via API: {ctx.room.name}{Style.RESET_ALL}")
     except Exception as e:
         logger.error(f"Failed to delete room via API: {e}")
         try:
             await ctx.room.disconnect()
-            logger.info(f"Room {ctx.room.name} disconnected locally.")
+            # logger.info(f"{Fore.RED}➖ Room Disconnected locally: {ctx.room.name}{Style.RESET_ALL}")
         except Exception as e2:
             logger.error(f"Local disconnect also failed: {e2}")
 
