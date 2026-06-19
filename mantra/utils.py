@@ -193,7 +193,7 @@ class SessionRecorder:
         for msg in history:
             role = msg.role.name if hasattr(msg.role, "name") else str(msg.role)
             content = " ".join([str(c) for c in msg.content]) if isinstance(msg.content, list) else msg.content
-            if content:
+            if content and not content.startswith("[System:"):
                 role_label = "bot" if role.lower() == "assistant" else "user"
                 structured.append({role_label: content})
         return json.dumps(structured)
@@ -209,7 +209,8 @@ class SessionRecorder:
         for msg in history:
             role = msg.role.name if hasattr(msg.role, "name") else str(msg.role)
             content = " ".join([str(c) for c in msg.content]) if isinstance(msg.content, list) else msg.content
-            summary_prompt += f"{role.upper()}: {content}\n"
+            if content and not content.startswith("[System:"):
+                summary_prompt += f"{role.upper()}: {content}\n"
         
         try:
             messages = [
@@ -265,7 +266,7 @@ class SessionRecorder:
         for msg in history:
             role = msg.role.name if hasattr(msg.role, "name") else str(msg.role)
             content = " ".join([str(c) for c in msg.content]) if isinstance(msg.content, list) else msg.content
-            if content:
+            if content and not content.startswith("[System:"):
                 role_label = "Assistant" if role.lower() == "assistant" else "User"
                 transcript_lines.append(f"{role_label}: {content}")
         transcript_text = "\n".join(transcript_lines)
