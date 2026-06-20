@@ -36,6 +36,7 @@ COPY mantra/ ./mantra
 # --- Production stage ---
 FROM base
 
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 ENV PATH="/app/.venv/bin:$PATH"
 
 ARG UID=10001
@@ -56,6 +57,10 @@ WORKDIR /app
 
 USER appuser
 
+COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 EXPOSE 8081
 
-CMD ["python", "-m", "mantra.ui_server"]
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["ui"]

@@ -62,3 +62,7 @@ recordings/
 
 #Antigravity
 .planning/
+
+#Docker
+Dockerfile.agent
+Dockerfile.ui
