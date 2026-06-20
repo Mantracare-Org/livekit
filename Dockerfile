@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
 
-FROM python:3.12-slim-bookworm AS base
+ARG PYTHON_VERSION=3.12
+FROM ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-bookworm-slim AS base
 
 ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
 WORKDIR /app
 
 # --- Build stage ---
@@ -15,29 +15,22 @@ RUN apt-get update && apt-get install -y \
     python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
-
-RUN uv venv /app/.venv
-ENV PATH="/app/.venv/bin:$PATH"
-
 COPY pyproject.toml uv.lock ./
-RUN uv pip install --no-cache \
-    "fastapi[standard]>=0.115.0" \
-    "uvicorn[standard]>=0.34.0" \
-    "livekit-api>=1.1.0" \
-    "redis>=8.0.0" \
-    "aiohttp>=3.9.0" \
-    "python-dotenv>=1.0.0" \
-    "httpx>=0.27.0" \
-    "boto3>=1.35.0"
+RUN uv sync --locked --no-install-project --no-dev
 
-COPY mantra/ ./mantra
+COPY . .
+RUN uv sync --locked --no-dev
 
 # --- Production stage ---
 FROM base
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+ENV UV_COMPILE_BYTECODE=1
 ENV PATH="/app/.venv/bin:$PATH"
+ENV UV_CACHE_DIR=/tmp/uv-cache
+ENV HF_HOME=/app/.cache/huggingface
+ENV HF_HUB_CACHE=/app/.cache/huggingface
+ENV TORCH_HOME=/app/.cache/torch
+ENV SILERO_VAD_CACHE=/app/.cache/silero
 
 ARG UID=10001
 RUN adduser \
@@ -49,11 +42,18 @@ RUN adduser \
     appuser
 
 RUN apt-get update && apt-get install -y \
+    libgomp1 \
+    libglib2.0-0 \
+    libasound2 \
+    libatomic1 \
+    libportaudio2 \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build --chown=appuser:appuser /app /app
 WORKDIR /app
+
+RUN mkdir -p /app/.cache /tmp/uv-cache && chown -R appuser:appuser /app/.cache /tmp/uv-cache
 
 USER appuser
 
@@ -63,4 +63,4 @@ RUN chmod +x /app/entrypoint.sh
 EXPOSE 8081
 
 ENTRYPOINT ["/app/entrypoint.sh"]
-CMD ["ui"]
+CMD ["agent"]
