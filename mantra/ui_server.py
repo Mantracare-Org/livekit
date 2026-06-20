@@ -233,16 +233,16 @@ async def handle_outbound_call_webhook(request: Request):
         logger.error(f"Agent dispatch failed: {e}\n{traceback.format_exc()}")
         return JSONResponse({"error": f"Agent dispatch failed: {str(e)}"}, status_code=500)
 
-    # Trigger SIP outbound call — always use lk_client (direct, no proxy)
-    # The trunk's destination_country="in" handles Indian region routing at the SIP layer
+    # Use proxied client for Plivo (Indian routing), direct for others
+    sip_client = plivo_client if provider == "plivo" else lk_client
     try:
         sip_number = payload.get("call_from")
         if sip_number and not sip_number.startswith("+"):
             sip_number = f"+{sip_number}"
             
-        logger.info(f"Step 2: Initiating SIP call to {phone_number} via trunk {trunk_id}" + (f" (Caller ID: {sip_number})" if sip_number else ""))
+        logger.info(f"Step 2: Initiating SIP call to {phone_number} via trunk {trunk_id} (client: {'plivo_proxied' if provider == 'plivo' else 'direct'})" + (f" (Caller ID: {sip_number})" if sip_number else ""))
 
-        sip_part = await lk_client.sip.create_sip_participant(
+        sip_part = await sip_client.sip.create_sip_participant(
             api.CreateSIPParticipantRequest(
                 sip_trunk_id=trunk_id,
                 sip_call_to=phone_number,

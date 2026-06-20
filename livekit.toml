@@ -2,4 +2,11 @@
   subdomain = "mantraassist-0ek43ife"
 
 [agent]
-  id = "CA_iwvL6CWRVNA6"
+  id = "CA_erzeTWioc8YT"
+
+[deployment.production.scaling]
+  min_instances = 1
+  max_instances = 1
+  min_replicas = 1
+  max_replicas = 1
+  
