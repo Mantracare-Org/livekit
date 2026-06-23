@@ -575,8 +575,9 @@ Follow these specific instructions:
         session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
         logger.info("Greeting generation requested.")
         
-        logger.info("Waiting for session to become inactive...")
-        await session.wait_for_inactive()
+        # Block until the room connection drops or the session closes
+        while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+            await asyncio.sleep(1.0)
 
     except asyncio.CancelledError:
         logger.info("Call entrypoint coroutine cancelled.")
