@@ -7,9 +7,9 @@ import sys
 from typing import Annotated
 
 # ── Suppress OpenTelemetry 429 errors ──────────────────────────────────
-os.environ.setdefault("OTEL_METRICS_EXPORTER", "none")
-os.environ.setdefault("OTEL_LOGS_EXPORTER", "none")
-os.environ.setdefault("OTEL_TRACES_EXPORTER", "none")
+os.environ.pop("OTEL_METRICS_EXPORTER", None); os.environ["OTEL_METRICS_EXPORTER"] = "none"
+os.environ.pop("OTEL_LOGS_EXPORTER", None); os.environ["OTEL_LOGS_EXPORTER"] = "none"
+os.environ.pop("OTEL_TRACES_EXPORTER", None); os.environ["OTEL_TRACES_EXPORTER"] = "none"
 os.environ.pop("HTTPS_PROXY", None)
 os.environ.pop("HTTP_PROXY", None)
 os.environ.pop("https_proxy", None)
