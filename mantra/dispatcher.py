@@ -68,7 +68,9 @@ async def dispatch_call(lk_client: api.LiveKitAPI, payload: dict):
                 sip_number=sip_number,
                 room_name=room_name,
                 participant_identity=f"sip_{call_id}",
-                participant_name="Mantra Voice"
+                participant_name="Mantra Voice",
+                play_ringtone=False,
+                wait_until_answered=True
             )
         )
         logger.info(f"[Call {call_id}] SIP Participant created: {sip_part.participant_identity}")
