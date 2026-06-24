@@ -312,6 +312,7 @@ async def _create_sip_outbound_trunk(
 
 
 DEFAULT_PROVIDER = "zadarma"
+KNOWN_PROVIDERS = ("twilio", "plivo", "telnyx")
 
 async def _get_provider_from_trunk(trunk_id: str) -> str:
     """Fetch the specific trunk by ID and infer the provider from its address."""
@@ -322,11 +323,7 @@ async def _get_provider_from_trunk(trunk_id: str) -> str:
         if response.items:
             trunk = response.items[0]
             address = (trunk.address or "").lower()
-            if "twilio" in address:
-                return "twilio"
-            elif "plivo" in address:
-                return "plivo"
-            return DEFAULT_PROVIDER
+            return next((p for p in KNOWN_PROVIDERS if p in address), DEFAULT_PROVIDER)
         logger.warning(f"Trunk {trunk_id} not found — defaulting to {DEFAULT_PROVIDER}")
         return DEFAULT_PROVIDER
     except Exception as e:
@@ -400,6 +397,45 @@ async def create_twilio_sip_trunk(request: Request):
             "sip_trunk_id": trunk.sip_trunk_id,
             "name": trunk.name,
             "provider": "twilio",
+            "address": trunk.address
+        })
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/v1/sip/trunks/outbound/telnyx")
+async def create_telnyx_sip_trunk(request: Request):
+    """
+    Create a new Telnyx SIP trunk.
+    Aligns with LiveKit CLI parameters: auth_user, auth_pass.
+    """
+    payload = await request.json()
+    if not payload:
+        return JSONResponse({"error": "No payload provided"}, status_code=400)
+    
+    logger.info(f"[POST /api/v1/sip/trunks/outbound/telnyx] Payload received: {json.dumps(payload, separators=(',',':'))}")
+    
+    trunk_data = payload.get("trunk") or payload
+    name = trunk_data.get("name")
+    address = trunk_data.get("address") or "sip.telnyx.com"
+    numbers = trunk_data.get("numbers")
+    auth_username = trunk_data.get("authUsername") or trunk_data.get("auth_username") or trunk_data.get("auth_user")
+    auth_password = trunk_data.get("authPassword") or trunk_data.get("auth_password") or trunk_data.get("auth_pass")
+    
+    try:
+        trunk = await _create_sip_outbound_trunk(
+            name=name,
+            address=address,
+            numbers=numbers,
+            auth_username=auth_username,
+            auth_password=auth_password
+        )
+        
+        return JSONResponse({
+            "status": "success",
+            "sip_trunk_id": trunk.sip_trunk_id,
+            "name": trunk.name,
+            "provider": "telnyx",
             "address": trunk.address
         })
     except Exception as e:
