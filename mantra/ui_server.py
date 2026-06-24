@@ -249,7 +249,9 @@ async def handle_outbound_call_webhook(request: Request):
                 sip_number=sip_number,
                 room_name=room_name,
                 participant_identity=f"sip_{call_id}",
-                participant_name="SIP Caller"
+                participant_name="SIP Caller",
+                play_ringtone=False,
+                wait_until_answered=True
             )
         )
         logger.info(f"SIP Participant created: {sip_part.participant_identity}")
@@ -502,7 +504,9 @@ async def create_and_call_plivo(request: Request):
                 sip_number=sip_number,
                 room_name=room_name,
                 participant_identity=f"sip_{call_id}",
-                participant_name="Mantra Voice"
+                participant_name="Mantra Voice",
+                play_ringtone=False,
+                wait_until_answered=True
             )
         )
 
