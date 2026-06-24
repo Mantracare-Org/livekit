@@ -558,6 +558,12 @@ Follow these specific instructions:
         for publication in ctx.room.local_participant.track_publications.values():
             if publication.track and publication.track.kind == rtc.TrackKind.KIND_AUDIO:
                 recorder.start_recording(publication.track, "agent")
+
+        # Check if remote tracks were already subscribed before we attached the listener
+        for participant in ctx.room.remote_participants.values():
+            for publication in participant.track_publications.values():
+                if publication.track and publication.track.kind == rtc.TrackKind.KIND_AUDIO:
+                    recorder.start_recording(publication.track, f"participant_{participant.identity}")
         
         if ctx.room.name.startswith("test_"):
             logger.info("Test room detected. Skipping wait for remote participant to initialize synthesis.")

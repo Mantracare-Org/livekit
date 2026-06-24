@@ -130,7 +130,11 @@ class SessionRecorder:
         self._recording_tasks.append(task)
 
     async def _consume_track(self, track: rtc.Track, track_id: str, label: str):
-        audio_stream = rtc.AudioStream(track)
+        audio_stream = rtc.AudioStream(
+            track,
+            sample_rate=self.SAMPLE_RATE,
+            num_channels=self.NUM_CHANNELS
+        )
         try:
             async for frame_event in audio_stream:
                 self._tracks[track_id].append(bytes(frame_event.frame.data))
