@@ -10,6 +10,7 @@ import datetime
 import logging
 import httpx
 import numpy as np
+import asyncpg
 from typing import Dict, List, Optional, Tuple
 
 from livekit import rtc
@@ -18,6 +19,42 @@ from livekit.agents import llm
 import boto3
 
 logger = logging.getLogger("mantra.utils")
+
+async def save_call_log_to_db(call_id: str, call_log: str, status: str, recording_url: str):
+    """Save call details to the isolated PostgreSQL logging database."""
+    db_user = os.getenv("POSTGRES_USER")
+    db_password = os.getenv("POSTGRES_PASSWORD")
+    db_name = os.getenv("POSTGRES_DB")
+    db_host = os.getenv("POSTGRES_HOST")
+    db_port = os.getenv("POSTGRES_PORT")
+    
+    conn = None
+    try:
+        conn = await asyncpg.connect(
+            user=db_user,
+            password=db_password,
+            database=db_name,
+            host=db_host,
+            port=db_port
+        )
+        
+        # Insert or update the call log
+        query = """
+        INSERT INTO call_logs (call_id, call_log, status, recording_url)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (call_id) DO UPDATE 
+        SET call_log = EXCLUDED.call_log,
+            status = EXCLUDED.status,
+            recording_url = EXCLUDED.recording_url;
+        """
+        await conn.execute(query, call_id, call_log, status, recording_url)
+        logger.info(f"Successfully saved call log to DB for call_id: {call_id}")
+    except Exception as e:
+        logger.error(f"Failed to save call log to DB: {e}")
+    finally:
+        if conn:
+            await conn.close()
+
 
 async def send_to_backend(payload: dict, max_retries: int = 3) -> bool:
     """POST the post-call payload to the MantraAssist backend with HMAC signing."""
@@ -116,6 +153,7 @@ class SessionRecorder:
         self._recording_tasks: List[asyncio.Task] = []
         self.start_time = datetime.datetime.now()
         self.end_time = None
+        self.recording_duration_seconds = 0.0
         
         self.SAMPLE_RATE = 48000
         self.NUM_CHANNELS = 1
@@ -184,6 +222,9 @@ class SessionRecorder:
                 start_ms = nonsilent[0][0]
                 if start_ms > 0:
                     audio = audio[start_ms:]
+            
+            self.recording_duration_seconds = len(audio) / 1000.0
+            
             buf = io.BytesIO()
             audio.export(buf, format="mp3", bitrate="128k")
             return buf.getvalue()

@@ -75,7 +75,7 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from livekit.plugins import openai, google, cartesia, silero, deepgram
 
 # Import our production helpers
-from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend, normalize_to_iso8601
+from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend, normalize_to_iso8601, save_call_log_to_db
 
 
 
@@ -157,7 +157,10 @@ async def entrypoint(ctx: JobContext):
 
     # Initialize function context for handoff
     fnc_ctx = AssistantFunctions(ctx.job.metadata, ctx.room.name)
-    call_state = {"user_joined": False}
+    call_state = {
+        "user_joined": False,
+        "timeline": [{"event": "Agent Session Started", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"}]
+    }
 
     # Session ID for S3 key naming
     session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -208,6 +211,7 @@ async def entrypoint(ctx: JobContext):
 
     @ctx.room.on("participant_disconnected")
     def on_participant_disconnected(participant: rtc.RemoteParticipant):
+        call_state["timeline"].append({"event": "Remote Participant Disconnected", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
         logger.info(f"Participant {participant.identity} disconnected. Force-ending call.")
         asyncio.create_task(_force_disconnect_room(ctx))
 
@@ -461,6 +465,7 @@ Follow these specific instructions:
             if agent_state in ["listening", "idle"]:
                 if time_since_activity > 10.0:
                     # logger.warning(f"{Fore.YELLOW}No response for 10s. Destroying room.{Style.RESET_ALL}")
+                    call_state["timeline"].append({"event": "Inactivity Timeout Disconnect", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
                     asyncio.create_task(_force_disconnect_room(ctx))
                     break
                 elif time_since_activity > 5.0 and not call_state.get("prompted_inactivity", False):
@@ -506,6 +511,7 @@ Follow these specific instructions:
 
                 if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
                     logger.warning("HARD DISCONNECT: 3m limit reached. Force disconnecting room.")
+                    call_state["timeline"].append({"event": "Max Call Duration Reached", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
                     await _force_disconnect_room(ctx)
                 else:
                     logger.info("Room already disconnected — force-disconnect skipping.")
@@ -580,6 +586,7 @@ Follow these specific instructions:
                 
             logger.info("Remote participant joined. Initializing conversation...")
             call_state["user_joined"] = True
+            call_state["timeline"].append({"event": "Remote Participant Joined", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
             await asyncio.sleep(0.5)
         
         logger.info(f"Generating greeting for {client_name}...")
@@ -619,6 +626,8 @@ Follow these specific instructions:
 
             try:
                 logger.info("Starting post-call processing...")
+                if "timeline" in call_state:
+                    call_state["timeline"].append({"event": "Call Finalization Started", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
 
                 # 1. Pre-load call metadata
                 try:
@@ -690,8 +699,10 @@ Follow these specific instructions:
                     logger.error(f"Transcript step failed: {e}", exc_info=True)
 
                 # 4. Calculate duration
-                if recorder.start_time and recorder.end_time:
-                    duration = int((recorder.end_time - recorder.start_time).total_seconds())
+                if hasattr(recorder, "recording_duration_seconds"):
+                    duration = int(recorder.recording_duration_seconds)
+                else:
+                    duration = 0
 
 
                 # 5. Run unified analysis to generate summary, stage transition, and metadata
@@ -770,14 +781,15 @@ Follow these specific instructions:
                         "call_custom_fields": call_payload.get("call_custom_fields", {}),
                         "client_phone": call_payload.get("client_phone") or call_payload.get("phone"),
                         "trunk_id": call_payload.get("trunk_id"),
-                        "url": ""
+                        "url": "",
+                        "timeline": call_state.get("timeline", [])
                     }
                 }
 
             except Exception as e:
                 logger.error(f"Pipeline error in finalize: {e}", exc_info=True)
 
-            # 8. Send to MantraAssist backend (always attempted, even if pipeline failed)
+            # 8. Send to MantraAssist backend and save to local DB
             try:
                 if webhook_payload is None:
                     webhook_payload = {
@@ -790,8 +802,18 @@ Follow these specific instructions:
                         }
                     }
 
-                # logger.info(f"{Fore.MAGENTA}Delivering post-call webhook to backend...{Style.RESET_ALL}")
-                # logger.info(f"{Fore.CYAN}Webhook Payload:\n{json.dumps(webhook_payload, indent=2)}{Style.RESET_ALL}")
+                # Save to local Postgres DB
+                try:
+                    c_id = webhook_payload.get("data", {}).get("call_id", ctx.job.id)
+                    await save_call_log_to_db(
+                        call_id=str(c_id),
+                        call_log=json.dumps(webhook_payload.get("data", {}), indent=2),
+                        status=call_status,
+                        recording_url=recording_url
+                    )
+                except Exception as db_err:
+                    logger.error(f"Error calling save_call_log_to_db: {db_err}")
+
                 logger.info("Delivering post-call webhook to backend...")
                 logger.info(f"Webhook Payload:\n{json.dumps(webhook_payload)}")
                 delivered = await send_to_backend(webhook_payload)
