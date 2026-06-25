@@ -635,8 +635,30 @@ Follow these specific instructions:
                         user_spoke = True
                         break
 
-                if not call_state["user_joined"]:
-                    call_status = "Busy"
+                call_id = call_payload.get("call_id") or call_payload.get("voice_id") or ctx.job.id
+                
+                # Always check if there was a SIP-level error in Redis first
+                redis_status = None
+                try:
+                    redis_url = os.getenv("REDIS_URL")
+                    import redis.asyncio as redis
+                    r = redis.from_url(redis_url, decode_responses=True)
+                    redis_status = await r.get(f"sip_error_status:{call_id}")
+                    await r.aclose()
+                except Exception as redis_err:
+                    logger.error(f"Failed to fetch precise SIP status from Redis: {redis_err}")
+                
+                if redis_status:
+                    # If UI server caught a SIP error (Busy/No Answer), trust it completely
+                    call_status = redis_status
+                elif not call_state["user_joined"]:
+                    # Fallback: if it waited less than 25s before terminating, it's Busy/Rejected.
+                    # If it waited more than 25s, it's a No Answer timeout.
+                    elapsed_time = asyncio.get_event_loop().time() - entrypoint_start_time
+                    if elapsed_time >= 25.0:
+                        call_status = "No Answer"
+                    else:
+                        call_status = "Busy"
                 elif not user_spoke:
                     call_status = "No Answer"
                 else:
