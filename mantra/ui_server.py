@@ -263,7 +263,12 @@ async def handle_outbound_call_webhook(request: Request):
             # Store exact SIP failure reason in Redis for the agent to read
             if redis_client:
                 err_str = str(e).lower()
-                status_guess = "No Answer" if ("408" in err_str or "timeout" in err_str) else "Busy"
+                if any(token in err_str for token in ("408", "timeout", "no answer")):
+                    status_guess = "No Answer"
+                elif any(token in err_str for token in ("486", "busy", "603", "decline", "rejected")):
+                    status_guess = "Busy"
+                else:
+                    status_guess = "Incomplete"
                 try:
                     await redis_client.set(f"sip_error_status:{call_id}", status_guess, ex=300)
                 except Exception as re:
