@@ -215,7 +215,7 @@ async def handle_outbound_call_webhook(request: Request):
         return JSONResponse({"error": "No SIP trunk ID configured"}, status_code=500)
 
     provider = await _get_provider_from_trunk(trunk_id)
-    logger.info(f"Provider detected: {provider} — using direct LiveKit client for API calls")
+    logger.info(f"Provider detected: {provider}")
 
     # Trigger agent dispatch — always use lk_client (direct, no proxy)
     # LiveKit Cloud API calls don't need the Indian proxy; region pinning is on the trunk itself
@@ -233,16 +233,17 @@ async def handle_outbound_call_webhook(request: Request):
         logger.error(f"Agent dispatch failed: {e}\n{traceback.format_exc()}")
         return JSONResponse({"error": f"Agent dispatch failed: {str(e)}"}, status_code=500)
 
-    # Trigger SIP outbound call — always use lk_client (direct, no proxy)
-    # The trunk's destination_country="in" handles Indian region routing at the SIP layer
+    # Trigger SIP outbound call
     try:
         sip_number = payload.get("call_from")
         if sip_number and not sip_number.startswith("+"):
             sip_number = f"+{sip_number}"
             
-        logger.info(f"Step 2: Initiating SIP call to {phone_number} via trunk {trunk_id}" + (f" (Caller ID: {sip_number})" if sip_number else ""))
+        sip_client = plivo_client if provider == "plivo" and plivo_client else lk_client
+        proxy_msg = "proxied Plivo client" if sip_client == plivo_client else "direct LiveKit client"
+        logger.info(f"Step 2: Initiating SIP call to {phone_number} via trunk {trunk_id} using {proxy_msg}" + (f" (Caller ID: {sip_number})" if sip_number else ""))
 
-        sip_part = await lk_client.sip.create_sip_participant(
+        sip_part = await sip_client.sip.create_sip_participant(
             api.CreateSIPParticipantRequest(
                 sip_trunk_id=trunk_id,
                 sip_call_to=phone_number,
