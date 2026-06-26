@@ -3,12 +3,18 @@ import sys
 import logging
 import json
 import time
+import hashlib
 import traceback
+import asyncio
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 
+import jwt
 import aiohttp
+import asyncpg
 import redis.asyncio as redis
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
+from email_alerts import send_crash_email
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from livekit import api
@@ -30,6 +36,24 @@ lk_client: api.LiveKitAPI = None           # Direct — used for Twilio, Zadarma
 plivo_client: api.LiveKitAPI = None        # Proxied — used for Plivo (India routing)
 plivo_session: aiohttp.ClientSession = None  # Owned session for plivo_client; closed manually on shutdown
 redis_client: redis.Redis = None
+
+# ── Authentication ───────────────────────────────────────────────────────
+JWT_SECRET = os.getenv("JWT_SECRET", "mantraassist-dashboard-jwt-secret-2024")
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRY_HOURS = 24
+ADMIN_USERNAME_HASH = os.getenv("ADMIN_USERNAME_HASH", "")
+ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH", "")
+
+
+async def get_db_connection():
+    """Create a PostgreSQL connection for dashboard queries."""
+    return await asyncpg.connect(
+        user=os.getenv("POSTGRES_USER"),
+        password=os.getenv("POSTGRES_PASSWORD"),
+        database=os.getenv("POSTGRES_DB"),
+        host=os.getenv("POSTGRES_HOST"),
+        port=os.getenv("POSTGRES_PORT"),
+    )
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -90,6 +114,29 @@ SCANNER_PATHS = (
     "/cms/", "/sito/",
 )
 
+@app.exception_handler(Exception)
+async def global_crash_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Error in UI server: {exc}", exc_info=True)
+    
+    context_data = {
+        "Request URL": str(request.url),
+        "HTTP Method" : request.method,
+        "User-Agent": request.headers.get("User-Agent"),
+        "Client IP": request.client.host if request.client else None,
+        
+    }
+
+    await send_crash_email(
+        service_name="Mantra UI Server",
+        error=exc,
+        context_data=context_data
+    )
+
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Internal server error, An Automated alert has been dispatched. The technical team is working on resolving this issue."}
+    )
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start = time.time()
@@ -115,12 +162,63 @@ async def log_requests(request: Request, call_next):
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 
-# Mount static files
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+# Mount static files (with HTML files as default)
+app.mount("/static", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 
 @app.get("/")
 async def index():
-    """Serve the main UI."""
+    """Serve the login page."""
+    return FileResponse(os.path.join(STATIC_DIR, "login.html"))
+
+# ── Authentication ───────────────────────────────────────────────────────
+
+@app.post("/api/v1/auth/login")
+async def login(request: Request):
+    """Authenticate with username/password, return JWT."""
+    body = await request.json()
+    username = body.get("username", "")
+    password = body.get("password", "")
+
+    username_hash = hashlib.sha256(username.encode()).hexdigest()
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+
+    if not ADMIN_USERNAME_HASH or not ADMIN_PASSWORD_HASH:
+        raise HTTPException(status_code=500, detail="Auth not configured")
+
+    if username_hash != ADMIN_USERNAME_HASH or password_hash != ADMIN_PASSWORD_HASH:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    expiry = datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRY_HOURS)
+    token = jwt.encode(
+        {"sub": username, "exp": expiry, "iat": datetime.now(timezone.utc)},
+        JWT_SECRET,
+        algorithm=JWT_ALGORITHM,
+    )
+
+    return {"token": token, "expires_in": JWT_EXPIRY_HOURS * 3600, "username": username}
+
+
+def require_auth(request: Request):
+    """Dependency to protect routes via JWT Bearer token."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid token")
+    try:
+        payload = jwt.decode(auth.split(" ", 1)[1], JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        request.state.user = payload
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+@app.get("/dashboard")
+async def dashboard_page(request: Request):
+    """Serve the dashboard page (auth required; JS handles redirect if no token)."""
+    return FileResponse(os.path.join(STATIC_DIR, "dashboard.html"))
+
+
+@app.get("/console")
+async def console_page(request: Request):
+    """Serve the test console (auth required; JS handles redirect if no token)."""
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
 @app.get("/health")
@@ -640,6 +738,169 @@ async def stream_queue_status():
             await asyncio.sleep(1) # Send update every second
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+# ── Dashboard API (authenticated) ────────────────────────────────────────
+
+@app.get("/api/v1/dashboard/stream")
+async def dashboard_stream(request: Request):
+    """SSE endpoint with real-time queue status + active call details."""
+    require_auth(request)
+
+    async def event_generator():
+        if not redis_client:
+            yield "data: {\"error\": \"Redis not connected\"}\n\n"
+            return
+
+        max_concurrency = int(os.getenv("CARTESIA_MAX_CONCURRENCY", "5"))
+
+        while True:
+            try:
+                pending_count = await redis_client.zcard("queue:pending")
+                active_calls_map = await redis_client.hgetall("calls:active")
+                active_count = len(active_calls_map)
+
+                active_details = []
+                for call_id, room_name in active_calls_map.items():
+                    status = await redis_client.get(f"calls:status:{call_id}")
+                    active_details.append({
+                        "call_id": call_id,
+                        "room_name": room_name,
+                        "status": status or "unknown",
+                    })
+
+                data = json.dumps({
+                    "pending_calls": pending_count,
+                    "active_calls": active_count,
+                    "max_concurrency": max_concurrency,
+                    "active_call_details": active_details,
+                    "timestamp": time.time(),
+                })
+                yield f"data: {data}\n\n"
+            except Exception as e:
+                logger.error(f"Dashboard SSE error: {e}")
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+            await asyncio.sleep(2)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.get("/api/v1/dashboard/metrics")
+async def dashboard_metrics(request: Request):
+    """Today's call metrics from PostgreSQL."""
+    require_auth(request)
+
+    try:
+        conn = await get_db_connection()
+        try:
+            row = await conn.fetchrow("""
+                SELECT
+                    COUNT(*)::int AS total_calls,
+                    COUNT(*) FILTER (WHERE status = 'Completed')::int AS completed_calls,
+                    COUNT(*) FILTER (WHERE status = 'Busy')::int AS busy_calls,
+                    COUNT(*) FILTER (WHERE status = 'No Answer')::int AS no_answer_calls,
+                    COUNT(*) FILTER (WHERE status = 'Error')::int AS error_calls,
+                    COUNT(*) FILTER (WHERE status = 'Incomplete')::int AS incomplete_calls,
+                    ROUND(
+                        AVG(
+                            CAST(NULLIF(call_log::json ->> 'call_duration_seconds', '') AS integer)
+                        ) FILTER (
+                            WHERE call_log::json ->> 'call_duration_seconds' ~ '^\d+$'
+                        )
+                    )::int AS avg_duration_seconds
+                FROM call_logs
+                WHERE created_at >= CURRENT_DATE
+            """)
+        finally:
+            await conn.close()
+
+        metrics = dict(row) if row else {
+            "total_calls": 0, "completed_calls": 0, "busy_calls": 0,
+            "no_answer_calls": 0, "error_calls": 0, "incomplete_calls": 0,
+            "avg_duration_seconds": 0,
+        }
+
+        answer_rate = round(
+            metrics["completed_calls"] / metrics["total_calls"] * 100, 1
+        ) if metrics["total_calls"] > 0 else 0
+
+        return {
+            **metrics,
+            "answer_rate": answer_rate,
+        }
+    except Exception as e:
+        logger.error(f"Dashboard metrics error: {e}")
+        return {"error": str(e)}
+
+
+@app.get("/api/v1/dashboard/calls")
+async def dashboard_calls(request: Request, limit: int = 20, offset: int = 0):
+    """Paginated call history from PostgreSQL."""
+    require_auth(request)
+
+    try:
+        conn = await get_db_connection()
+        try:
+            rows = await conn.fetch(
+                """
+                SELECT call_id, status, recording_url, created_at,
+                       call_log::json AS call_log
+                FROM call_logs
+                ORDER BY created_at DESC
+                LIMIT $1 OFFSET $2
+                """,
+                limit, offset
+            )
+
+            count_row = await conn.fetchrow("SELECT COUNT(*)::int AS total FROM call_logs")
+            total = count_row["total"] if count_row else 0
+        finally:
+            await conn.close()
+
+        calls = []
+        for row in rows:
+            cl = row["call_log"] if isinstance(row["call_log"], dict) else {}
+            calls.append({
+                "call_id": row["call_id"],
+                "status": row["status"],
+                "recording_url": row["recording_url"] or "",
+                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                "client_name": cl.get("client_name") or cl.get("client_id") or "",
+                "client_phone": cl.get("client_phone") or "",
+                "duration": cl.get("call_duration_seconds"),
+                "summary": cl.get("ai_summary") or "",
+                "purpose": (cl.get("prompt") or "")[:120],
+            })
+
+        return {"calls": calls, "total": total, "limit": limit, "offset": offset}
+    except Exception as e:
+        logger.error(f"Dashboard calls error: {e}")
+        return {"error": str(e), "calls": [], "total": 0}
+
+
+@app.get("/api/v1/dashboard/active-calls")
+async def dashboard_active_calls(request: Request):
+    """Current active calls from Redis."""
+    require_auth(request)
+
+    if not redis_client:
+        return {"active_calls": [], "error": "Redis not connected"}
+
+    try:
+        active_map = await redis_client.hgetall("calls:active")
+        calls = []
+        for call_id, room_name in active_map.items():
+            status = await redis_client.get(f"calls:status:{call_id}")
+            calls.append({
+                "call_id": call_id,
+                "room_name": room_name,
+                "status": status or "unknown",
+            })
+        return {"active_calls": calls}
+    except Exception as e:
+        logger.error(f"Active calls error: {e}")
+        return {"active_calls": [], "error": str(e)}
+
 
 def main():
     import uvicorn

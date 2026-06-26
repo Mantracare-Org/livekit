@@ -2,7 +2,8 @@ import logging
 import json
 import asyncio
 import os
-import datetime
+from datetime import datetime
+from mantra.email_alerts import send_crash_email
 import sys
 from typing import Annotated
 
@@ -604,6 +605,21 @@ Follow these specific instructions:
         logger.info("Call entrypoint coroutine cancelled.")
     except Exception as e:
         logger.error(f"Error in entrypoint execution: {e}", exc_info=True)
+        context_data = {
+            "Room Name": getattr(ctx.room, "name", "N/A"),
+            "Job ID": getattr(ctx.job, "id", "N/A"),
+            "Process ID (PID)": os.getpid()
+        }
+        try:
+            if ctx.job.metadata:
+                context_data["Job metadata"] = ctx.job.metadata
+        except:
+            pass
+        # Do not block main exception handling logic, the email function handles to_thread internally
+        try:
+            await send_crash_email(service_name="Livekit Voice Agent worker", error=e, context_data=context_data)
+        except Exception as email_err:
+            logger.error(f"Failed to dispatch crash email: {email_err}")
     finally:
         logger.info("Entering entrypoint finally block (cleaning up and finalizing)...")
         # 1. Cancel limiter task
@@ -719,6 +735,7 @@ Follow these specific instructions:
                 if call_status in ["Busy", "Incomplete", "No Answer"]:
                     logger.info(f"Call status is {call_status}. Skipping LLM analysis and applying 'Not Answering' logic.")
                     summary_text = f"Call failed with status: {call_status}. The user did not speak or answer."
+                    duration = 0
                     not_answering_id = current_stage_id
                     for stage in stage_details:
                         desc = stage.get("description", "").lower()
@@ -876,6 +893,8 @@ def run_agent():
     except Exception as e:
         logger.error(f"Failed to run agent server: {e}", exc_info=True)
         raise
+
+
 
 if __name__ == "__main__":
     run_agent()
