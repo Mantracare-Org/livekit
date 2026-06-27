@@ -22,12 +22,19 @@ async def send_crash_email(service_name: str, error: Exception, context_data: di
     smtp_pass = os.getenv("SMTP_PASSWORD")
     from_email = os.getenv("SMTP_FROM_EMAIL", smtp_user)
     alert_emails_str = os.getenv("ALERT_EMAIL_IDS", "")
+    admin_emails_str = os.getenv("ADMIN_MAIL_ID", "")
     
-    if not all([smtp_host, smtp_user, smtp_pass, alert_emails_str, from_email]):
+    if not all([smtp_host, smtp_user, smtp_pass, from_email]):
         # Silently skip if email configurations are missing
         return
 
-    to_emails = [email.strip() for email in alert_emails_str.split(",") if email.strip()]
+    all_emails = set()
+    for email in alert_emails_str.split(",") + admin_emails_str.split(","):
+        email = email.strip()
+        if email:
+            all_emails.add(email)
+            
+    to_emails = list(all_emails)
     if not to_emails:
         return
 
@@ -116,13 +123,13 @@ async def send_crash_email(service_name: str, error: Exception, context_data: di
                          ("\\", "~b"), ("<", "~l"), (">", "~g"), ('"', "''")]:
                 text = text.replace(o, n)
             return urllib.parse.quote(text)
-        admin_mail_id = os.getenv("ADMIN_MAIL_ID", "").strip().lower()
+        admin_mail_ids = [m.strip().lower() for m in os.getenv("ADMIN_MAIL_ID", "").split(",") if m.strip()]
 
         try:
             port = int(smtp_port)
             
             def send_to_recipient(smtp_conn, recipient):
-                is_meme_recipient = bool(admin_mail_id and recipient.lower() == admin_mail_id)
+                is_meme_recipient = bool(recipient.lower() in admin_mail_ids)
                 
                 # We need "related" to embed inline images properly
                 msg = MIMEMultipart("related")
