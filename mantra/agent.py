@@ -3,6 +3,7 @@ import json
 import asyncio
 import os
 import datetime
+from mantra.email_alerts import send_crash_email
 import sys
 from typing import Annotated
 
@@ -75,7 +76,7 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from livekit.plugins import openai, google, cartesia, silero, deepgram
 
 # Import our production helpers
-from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend, normalize_to_iso8601
+from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend, normalize_to_iso8601, save_call_log_to_db
 
 
 
@@ -157,7 +158,10 @@ async def entrypoint(ctx: JobContext):
 
     # Initialize function context for handoff
     fnc_ctx = AssistantFunctions(ctx.job.metadata, ctx.room.name)
-    call_state = {"user_joined": False}
+    call_state = {
+        "user_joined": False,
+        "timeline": [{"event": "Agent Session Started", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"}]
+    }
 
     # Session ID for S3 key naming
     session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -208,6 +212,7 @@ async def entrypoint(ctx: JobContext):
 
     @ctx.room.on("participant_disconnected")
     def on_participant_disconnected(participant: rtc.RemoteParticipant):
+        call_state["timeline"].append({"event": "Remote Participant Disconnected", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
         logger.info(f"Participant {participant.identity} disconnected. Force-ending call.")
         asyncio.create_task(_force_disconnect_room(ctx))
 
@@ -461,14 +466,20 @@ Follow these specific instructions:
             if agent_state in ["listening", "idle"]:
                 if time_since_activity > 10.0:
                     # logger.warning(f"{Fore.YELLOW}No response for 10s. Destroying room.{Style.RESET_ALL}")
+                    call_state["timeline"].append({"event": "Inactivity Timeout Disconnect", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
                     asyncio.create_task(_force_disconnect_room(ctx))
                     break
                 elif time_since_activity > 5.0 and not call_state.get("prompted_inactivity", False):
                     logger.info("No response for 5s. Prompting user...")
                     call_state["prompted_inactivity"] = True
-                    session.generate_reply(
-                        user_input="[System: The user has been silent. Briefly ask if they are still there (e.g. 'Are you still there?' or 'Hello?'). Keep it extremely short.]"
-                    )
+                    try:
+                        session.generate_reply(
+                            user_input="[System: The user has been silent. Briefly ask if they are still there (e.g. 'Are you still there?' or 'Hello?'). Keep it extremely short.]"
+                        )
+                    except RuntimeError as e:
+                        logger.warning(f"Failed to generate inactivity reply (session may be closing): {e}")
+                    except Exception as e:
+                        logger.error(f"Unexpected error generating inactivity reply: {e}")
 
     # Call duration limiter logic
     async def call_limiter():
@@ -506,6 +517,7 @@ Follow these specific instructions:
 
                 if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
                     logger.warning("HARD DISCONNECT: 3m limit reached. Force disconnecting room.")
+                    call_state["timeline"].append({"event": "Max Call Duration Reached", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
                     await _force_disconnect_room(ctx)
                 else:
                     logger.info("Room already disconnected — force-disconnect skipping.")
@@ -558,22 +570,37 @@ Follow these specific instructions:
         for publication in ctx.room.local_participant.track_publications.values():
             if publication.track and publication.track.kind == rtc.TrackKind.KIND_AUDIO:
                 recorder.start_recording(publication.track, "agent")
+
+        # Check if remote tracks were already subscribed before we attached the listener
+        for participant in ctx.room.remote_participants.values():
+            for publication in participant.track_publications.values():
+                if publication.track and publication.track.kind == rtc.TrackKind.KIND_AUDIO:
+                    recorder.start_recording(publication.track, f"participant_{participant.identity}")
         
         if ctx.room.name.startswith("test_"):
             logger.info("Test room detected. Skipping wait for remote participant to initialize synthesis.")
             call_state["user_joined"] = True
         else:
             logger.info("Waiting for remote participant to join...")
+            wait_start = asyncio.get_event_loop().time()
             while not list(ctx.room.remote_participants.values()):
                 await asyncio.sleep(0.5)
+                if asyncio.get_event_loop().time() - wait_start > 60.0:
+                    logger.warning("Remote participant did not join within 60 seconds (likely no answer). Disconnecting.")
+                    await _force_disconnect_room(ctx)
+                    return
                 
             logger.info("Remote participant joined. Initializing conversation...")
             call_state["user_joined"] = True
+            call_state["timeline"].append({"event": "Remote Participant Joined", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
             await asyncio.sleep(0.5)
         
         logger.info(f"Generating greeting for {client_name}...")
-        session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
-        logger.info("Greeting generation requested.")
+        try:
+            session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
+            logger.info("Greeting generation requested.")
+        except RuntimeError as e:
+            logger.warning(f"Could not generate greeting (session may be closed): {e}")
         
         # Block until the room connection drops or the session closes
         while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
@@ -583,6 +610,21 @@ Follow these specific instructions:
         logger.info("Call entrypoint coroutine cancelled.")
     except Exception as e:
         logger.error(f"Error in entrypoint execution: {e}", exc_info=True)
+        context_data = {
+            "Room Name": getattr(ctx.room, "name", "N/A"),
+            "Job ID": getattr(ctx.job, "id", "N/A"),
+            "Process ID (PID)": os.getpid()
+        }
+        try:
+            if ctx.job.metadata:
+                context_data["Job metadata"] = ctx.job.metadata
+        except:
+            pass
+        # Do not block main exception handling logic, the email function handles to_thread internally
+        try:
+            await send_crash_email(service_name="Livekit Voice Agent worker", error=e, context_data=context_data)
+        except Exception as email_err:
+            logger.error(f"Failed to dispatch crash email: {email_err}")
     finally:
         logger.info("Entering entrypoint finally block (cleaning up and finalizing)...")
         # 1. Cancel limiter task
@@ -605,6 +647,8 @@ Follow these specific instructions:
 
             try:
                 logger.info("Starting post-call processing...")
+                if "timeline" in call_state:
+                    call_state["timeline"].append({"event": "Call Finalization Started", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
 
                 # 1. Pre-load call metadata
                 try:
@@ -613,18 +657,58 @@ Follow these specific instructions:
                     logger.error(f"Failed to parse metadata: {e}")
                     call_payload = {}
 
+                # Determine call status based on whether the user joined and actually spoke
+                user_spoke = False
+                for msg in history_snapshot:
+                    role = msg.role.name if hasattr(msg.role, "name") else str(msg.role)
+                    if role.lower() == "user":
+                        user_spoke = True
+                        break
+
+                call_id = call_payload.get("call_id") or call_payload.get("voice_id") or ctx.job.id
+                
+                # Always check if there was a SIP-level error in Redis first
+                redis_status = None
+                try:
+                    redis_url = os.getenv("REDIS_URL")
+                    import redis.asyncio as redis
+                    r = redis.from_url(redis_url, decode_responses=True)
+                    redis_status = await r.get(f"sip_error_status:{call_id}")
+                    await r.aclose()
+                except Exception as redis_err:
+                    logger.error(f"Failed to fetch precise SIP status from Redis: {redis_err}")
+                
+                if redis_status:
+                    # If UI server caught a SIP error (Busy/No Answer), trust it completely
+                    call_status = redis_status
+                elif not call_state["user_joined"]:
+                    # Fallback: if it waited less than 25s before terminating, it's Busy/Rejected.
+                    # If it waited more than 25s, it's a No Answer timeout.
+                    elapsed_time = asyncio.get_event_loop().time() - entrypoint_start_time
+                    if elapsed_time >= 25.0:
+                        call_status = "No Answer"
+                    else:
+                        call_status = "Busy"
+                elif not user_spoke:
+                    call_status = "No Answer"
+                else:
+                    call_status = "Completed"
+
                 # 2. Flush recording tasks and build recording
                 try:
                     await recorder.stop_recording()
-                    mp3_bytes = recorder.get_combined_mp3_bytes()
-                    if mp3_bytes:
-                        call_id = call_payload.get("call_id") or call_payload.get("voice_id") or ctx.job.id
-                        s3_key = f"recordings/{call_id}.mp3"
-                        loop = asyncio.get_running_loop()
-                        recording_url = await loop.run_in_executor(None, upload_to_s3, mp3_bytes, s3_key) or ""
-                        logger.info(f"S3 recording: {'uploaded' if recording_url else 'upload failed'}")
+                    if call_status == "Completed":
+                        mp3_bytes = recorder.get_combined_mp3_bytes()
+                        if mp3_bytes:
+                            call_id = call_payload.get("call_id") or call_payload.get("voice_id") or ctx.job.id
+                            s3_key = f"recordings/{call_id}.mp3"
+                            loop = asyncio.get_running_loop()
+                            recording_url = await loop.run_in_executor(None, upload_to_s3, mp3_bytes, s3_key) or ""
+                            logger.info(f"S3 recording: {'uploaded' if recording_url else 'upload failed'}")
+                        else:
+                            logger.info("No audio data captured for recording")
                     else:
-                        logger.info("No audio data captured for recording")
+                        logger.info(f"Skipping recording upload because call_status is {call_status}")
                 except Exception as e:
                     logger.error(f"Recording/S3 step failed: {e}", exc_info=True)
 
@@ -636,14 +720,11 @@ Follow these specific instructions:
                     logger.error(f"Transcript step failed: {e}", exc_info=True)
 
                 # 4. Calculate duration
-                if recorder.start_time and recorder.end_time:
-                    duration = int((recorder.end_time - recorder.start_time).total_seconds())
-
-                # Determine call status based on whether the user joined
-                if call_state["user_joined"]:
-                    call_status = "Completed"
+                if hasattr(recorder, "recording_duration_seconds"):
+                    duration = int(recorder.recording_duration_seconds)
                 else:
-                    call_status = "Incomplete"
+                    duration = 0
+
 
                 # 5. Run unified analysis to generate summary, stage transition, and metadata
                 current_stage_id = call_payload.get("stage_id")
@@ -656,31 +737,48 @@ Follow these specific instructions:
                 if not isinstance(client_custom_fields, dict):
                     client_custom_fields = {}
 
-                try:
-                    if llm_engine and history_snapshot:
-                        analysis = await SessionRecorder.analyze_call(
-                            llm_engine=llm_engine,
-                            history=list(history_snapshot),
-                            current_stage_id=current_stage_id,
-                            stage_details=stage_details,
-                            duration=duration
-                        )
-                        summary_text = analysis["summary"]
-                        new_stage_id = analysis["new_stage_id"]
-                        next_call_on = analysis["next_call_on"]
-                        
-                        if analysis.get("appointment_date_time"):
-                            client_custom_fields["appointment_date_time"] = analysis["appointment_date_time"]
-                        if analysis.get("doctor"):
-                            client_custom_fields["doctor"] = analysis["doctor"]
-                        if analysis.get("hospital_location"):
-                            client_custom_fields["hospital_location"] = analysis["hospital_location"]
-                        
-                        logger.info(f"Analysis completed. New Stage ID: {new_stage_id}, Next Call On: {next_call_on}")
-                    else:
-                        logger.warning("Skipping analysis: LLM or history unavailable after session close")
-                except Exception as e:
-                    logger.error(f"Analysis or summary generation failed: {e}", exc_info=True)
+                if call_status in ["Busy", "Incomplete", "No Answer"]:
+                    logger.info(f"Call status is {call_status}. Skipping LLM analysis and applying 'Not Answering' logic.")
+                    summary_text = f"Call failed with status: {call_status}. The user did not speak or answer."
+                    duration = 0
+                    not_answering_id = current_stage_id
+                    for stage in stage_details:
+                        desc = stage.get("description", "").lower()
+                        if "not answering" in desc or "failed" in desc or "incomplete" in desc or "busy" in desc:
+                            not_answering_id = stage.get("stage_id")
+                            break
+                    new_stage_id = not_answering_id
+                    
+                    # Set next_call_on to 24 hours from now
+                    current_time = datetime.datetime.now()
+                    tomorrow = current_time + datetime.timedelta(hours=24)
+                    next_call_on = tomorrow.strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    try:
+                        if llm_engine and history_snapshot:
+                            analysis = await SessionRecorder.analyze_call(
+                                llm_engine=llm_engine,
+                                history=list(history_snapshot),
+                                current_stage_id=current_stage_id,
+                                stage_details=stage_details,
+                                duration=duration
+                            )
+                            summary_text = analysis["summary"]
+                            new_stage_id = analysis["new_stage_id"]
+                            next_call_on = analysis["next_call_on"]
+                            
+                            if analysis.get("appointment_date_time"):
+                                client_custom_fields["appointment_date_time"] = analysis["appointment_date_time"]
+                            if analysis.get("doctor"):
+                                client_custom_fields["doctor"] = analysis["doctor"]
+                            if analysis.get("hospital_location"):
+                                client_custom_fields["hospital_location"] = analysis["hospital_location"]
+                            
+                            logger.info(f"Analysis completed. New Stage ID: {new_stage_id}, Next Call On: {next_call_on}")
+                        else:
+                            logger.warning("Skipping analysis: LLM or history unavailable after session close")
+                    except Exception as e:
+                        logger.error(f"Analysis or summary generation failed: {e}", exc_info=True)
 
                 # 6. Build webhook payload
                 webhook_payload = {
@@ -705,14 +803,15 @@ Follow these specific instructions:
                         "call_custom_fields": call_payload.get("call_custom_fields", {}),
                         "client_phone": call_payload.get("client_phone") or call_payload.get("phone"),
                         "trunk_id": call_payload.get("trunk_id"),
-                        "url": ""
+                        "url": "",
+                        "timeline": call_state.get("timeline", [])
                     }
                 }
 
             except Exception as e:
                 logger.error(f"Pipeline error in finalize: {e}", exc_info=True)
 
-            # 8. Send to MantraAssist backend (always attempted, even if pipeline failed)
+            # 8. Send to MantraAssist backend and save to local DB
             try:
                 if webhook_payload is None:
                     webhook_payload = {
@@ -725,8 +824,18 @@ Follow these specific instructions:
                         }
                     }
 
-                # logger.info(f"{Fore.MAGENTA}Delivering post-call webhook to backend...{Style.RESET_ALL}")
-                # logger.info(f"{Fore.CYAN}Webhook Payload:\n{json.dumps(webhook_payload, indent=2)}{Style.RESET_ALL}")
+                # Save to local Postgres DB
+                try:
+                    c_id = webhook_payload.get("data", {}).get("call_id", ctx.job.id)
+                    await save_call_log_to_db(
+                        call_id=str(c_id),
+                        call_log=json.dumps(webhook_payload.get("data", {}), indent=2),
+                        status=call_status,
+                        recording_url=recording_url
+                    )
+                except Exception as db_err:
+                    logger.error(f"Error calling save_call_log_to_db: {db_err}")
+
                 logger.info("Delivering post-call webhook to backend...")
                 logger.info(f"Webhook Payload:\n{json.dumps(webhook_payload)}")
                 delivered = await send_to_backend(webhook_payload)
@@ -738,7 +847,7 @@ Follow these specific instructions:
             try:
                 call_id = call_payload.get("call_id")
                 if call_id:
-                    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+                    redis_url = os.getenv("REDIS_URL")
                     import redis.asyncio as redis
                     r = redis.from_url(redis_url, decode_responses=True)
                     await r.hdel("calls:active", call_id)
@@ -789,6 +898,8 @@ def run_agent():
     except Exception as e:
         logger.error(f"Failed to run agent server: {e}", exc_info=True)
         raise
+
+
 
 if __name__ == "__main__":
     run_agent()

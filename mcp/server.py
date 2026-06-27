@@ -116,21 +116,26 @@ async def execute_query(query: str) -> str:
         return f"Error: {e}"
 
 @mcp.tool()
-async def insert_call_log(log_data: dict) -> str:
-    """Insert a new call log entry into the call_logs table."""
+async def call_logs(log_data: dict) -> str:
+    """Upsert a call log entry into the call_logs table based on call_id.
+    Expected keys in log_data may include: call_id, call_log, status, recording_url.
+    """
     conn = await get_db_connection()
     if not conn:
         return "Error: Could not connect to database"
     
     try:
-        # Construct the query dynamically based on log_data keys
-        columns = ", ".join(log_data.keys())
-        placeholders = ", ".join(f"${i+1}" for i in range(len(log_data)))
+        if "call_id" not in log_data:
+            return "Error: 'call_id' is required in log_data for upsert."
+            
+        columns_list = list(log_data.keys())
+        columns = ", ".join(columns_list)
+        placeholders = ", ".join(f"${i+1}" for i in range(len(columns_list)))
+        
         values = []
         for val in log_data.values():
             if isinstance(val, str):
                 try:
-                    # Attempt to parse ISO format strings into datetime objects
                     if len(val) >= 10 and (val[4] == "-" and val[7] == "-"):
                         values.append(datetime.datetime.fromisoformat(val.replace("Z", "+00:00")))
                     elif val.strip().strip("*-• ").lower() in ["none", "null", "n/a", "na", ""] or "none" in val.lower():
@@ -138,40 +143,35 @@ async def insert_call_log(log_data: dict) -> str:
                     else:
                         values.append(val)
                 except (ValueError, TypeError):
-                    # If it looked like a date but failed to parse, use None
                     values.append(None)
             else:
                 values.append(val)
+                
+        # Build the ON CONFLICT clause
+        update_assignments = ", ".join(
+            f"{col} = EXCLUDED.{col}" 
+            for col in columns_list if col != "call_id"
+        )
         
-        query = f"INSERT INTO call_logs ({columns}) VALUES ({placeholders}) RETURNING id"
-        
-        try:
-            row = await conn.fetchrow(query, *values)
-        except asyncpg.exceptions.ForeignKeyViolationError as fk_err:
-            # If lead_id caused the violation, retry without it
-            if "lead_id" in str(fk_err) and "lead_id" in log_data:
-                logger.info(f"Foreign Key violation on lead_id={log_data['lead_id']}. Retrying without lead_id...")
-                # Find and remove lead_id from keys and values by index
-                keys_list = list(log_data.keys())
-                idx = keys_list.index("lead_id")
-                keys_list.pop(idx)
-                values.pop(idx)
-                # Rebuild query
-                columns = ", ".join(keys_list)
-                placeholders = ", ".join(f"${i+1}" for i in range(len(keys_list)))
-                retry_query = f"INSERT INTO call_logs ({columns}) VALUES ({placeholders}) RETURNING id"
-                row = await conn.fetchrow(retry_query, *values)
-                await conn.close()
-                return f"Successfully inserted call log with ID: {row['id']} (lead_id omitted due to FK violation)"
-            raise fk_err
+        if update_assignments:
+            conflict_clause = f" ON CONFLICT (call_id) DO UPDATE SET {update_assignments}"
+        else:
+            conflict_clause = " ON CONFLICT (call_id) DO NOTHING"
             
+        query = f"INSERT INTO call_logs ({columns}) VALUES ({placeholders}){conflict_clause} RETURNING id"
+        
+        row = await conn.fetchrow(query, *values)
         await conn.close()
         
-        return f"Successfully inserted call log with ID: {row['id']}"
+        if row:
+            return f"Successfully processed call log with ID: {row['id']}"
+        else:
+            return f"Successfully processed call log for call_id: {log_data['call_id']}"
+            
     except Exception as e:
         if conn:
             await conn.close()
-        return f"Error inserting call log: {e}"
+        return f"Error processing call log: {e}"
 
 if __name__ == "__main__":
     mcp.run()
