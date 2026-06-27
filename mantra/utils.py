@@ -30,14 +30,16 @@ async def save_call_log_to_db(call_id: str, call_log: str, status: str, recordin
     
     conn = None
     try:
+        logger.info(f"Attempting to connect to PostgreSQL at {db_host}:{db_port} for call_id: {call_id}...")
         conn = await asyncpg.connect(
             user=db_user,
             password=db_password,
             database=db_name,
             host=db_host,
-            port=db_port
+            port=db_port,
+            timeout=5.0
         )
-        
+        logger.info(f"Successfully connected to PostgreSQL at {db_host}:{db_port}")
         # Insert or update the call log
         query = """
         INSERT INTO call_logs (call_id, call_log, status, recording_url)
