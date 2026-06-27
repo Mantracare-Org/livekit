@@ -2,7 +2,7 @@ import logging
 import json
 import asyncio
 import os
-from datetime import datetime
+import datetime
 from mantra.email_alerts import send_crash_email
 import sys
 from typing import Annotated
@@ -472,9 +472,14 @@ Follow these specific instructions:
                 elif time_since_activity > 5.0 and not call_state.get("prompted_inactivity", False):
                     logger.info("No response for 5s. Prompting user...")
                     call_state["prompted_inactivity"] = True
-                    session.generate_reply(
-                        user_input="[System: The user has been silent. Briefly ask if they are still there (e.g. 'Are you still there?' or 'Hello?'). Keep it extremely short.]"
-                    )
+                    try:
+                        session.generate_reply(
+                            user_input="[System: The user has been silent. Briefly ask if they are still there (e.g. 'Are you still there?' or 'Hello?'). Keep it extremely short.]"
+                        )
+                    except RuntimeError as e:
+                        logger.warning(f"Failed to generate inactivity reply (session may be closing): {e}")
+                    except Exception as e:
+                        logger.error(f"Unexpected error generating inactivity reply: {e}")
 
     # Call duration limiter logic
     async def call_limiter():
