@@ -49,6 +49,13 @@ The agent is integrated with a SIP-based outbound system. Trigger calls by sendi
 3. **Access the Interface:**
    Visit `http://localhost:8081` to monitor and trigger tests.
 
+### Infrastructure & Logging
+
+This project relies on an isolated database environment (`lkdb`) to store call logs and transcripts. 
+- **PostgreSQL & Adminer:** Are managed independently in the `lkdb` directory via its own `docker-compose.yml`.
+- **Redis:** Used for capacity management and connection state routing, running locally on port `6379`.
+- **Logging Pipeline:** Call timelines, statuses, recording URLs, and detailed JSON payloads are automatically saved into the isolated `call_logs_db` after every call.
+
 ---
 
 ### ✨ Key Features

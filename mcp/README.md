@@ -31,7 +31,8 @@ When deploying to production (e.g., via Docker):
 
 1. **Update Environment Variables**:
    - `POSTGRES_HOST`: Change from `localhost` to `postgres` (or your database service name/endpoint).
-   - `POSTGRES_PORT`: Change from `5433` to `5432` (internal container port).
+   - `POSTGRES_PORT`: Change from `5440` (local `lkdb` mapping) to `5432` (internal container port).
+   - `POSTGRES_DB`: Ensure this points to the new isolated `call_logs_db`.
 
 2. **Secrets Management**:
    Use CI/CD secrets or a secrets manager for `POSTGRES_PASSWORD` instead of hardcoding it in `.env`.
@@ -44,3 +45,4 @@ When deploying to production (e.g., via Docker):
 - `list_tables`: Lists all public tables.
 - `describe_table(table_name)`: Shows columns and types for a table.
 - `execute_query(query)`: Executes a read-only SELECT query.
+- `call_logs(log_data)`: Upserts a complete JSON call log payload into the `call_logs` table based on `call_id`.

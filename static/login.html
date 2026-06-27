@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MantraAssist · Sign In</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+
+            --bg-page:           #1e1f22;
+            --bg-surface:        #2b2d31;
+            --bg-elevated:       #313338;
+            --bg-hover:          #35373c;
+            --bg-input:          #1e1f22;
+
+            --border-default:    #3f4148;
+            --border-strong:     #4e5058;
+            --border-accent:     #5865F2;
+
+            --text-primary:      #f2f3f5;
+            --text-secondary:    #949ba4;
+            --text-tertiary:     #6d6f78;
+
+            --accent:            #5865F2;
+            --accent-hover:      #4752c4;
+            --accent-subtle:     rgba(88, 101, 242, 0.12);
+
+            --danger:            #da373c;
+
+            --shadow-md:         0 4px 12px rgba(0, 0, 0, 0.4);
+
+            --text-xs:   0.75rem;
+            --text-sm:   0.8125rem;
+            --text-base: 0.875rem;
+            --text-lg:   1rem;
+            --text-xl:   1.25rem;
+
+            --weight-regular: 400;
+            --weight-medium:  500;
+            --weight-semibold: 600;
+
+            --tracking-normal: 0em;
+            --tracking-wide:   0.02em;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: var(--font-sans);
+            font-size: var(--text-base);
+            background: var(--bg-page);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+        .login-card {
+            width: 100%;
+            max-width: 400px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: 8px;
+            padding: 36px 32px;
+            box-shadow: var(--shadow-md);
+        }
+
+        .login-logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 4px;
+        }
+
+        .login-logo-icon {
+            width: 32px; height: 32px;
+            background: var(--accent);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .login-logo-icon svg { width: 18px; height: 18px; color: white; }
+
+        .login-title {
+            font-size: var(--text-xl);
+            font-weight: var(--weight-semibold);
+            color: var(--text-primary);
+        }
+
+        .login-subtitle {
+            font-size: var(--text-sm);
+            color: var(--text-secondary);
+            margin-bottom: 28px;
+        }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 16px;
+        }
+
+        .field label {
+            font-size: var(--text-xs);
+            font-weight: var(--weight-semibold);
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: var(--tracking-wide);
+        }
+
+        .field input {
+            background: var(--bg-input);
+            border: 1px solid var(--border-default);
+            border-radius: 6px;
+            padding: 12px 14px;
+            color: var(--text-primary);
+            font-family: var(--font-sans);
+            font-size: var(--text-base);
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .field input:focus {
+            outline: none;
+            border-color: var(--border-accent);
+            box-shadow: 0 0 0 3px var(--accent-subtle);
+        }
+
+        .btn-primary {
+            width: 100%;
+            padding: 12px 20px;
+            border-radius: 6px;
+            border: 1px solid var(--accent);
+            background: var(--accent);
+            color: white;
+            font-family: var(--font-sans);
+            font-size: var(--text-sm);
+            font-weight: var(--weight-medium);
+            cursor: pointer;
+            transition: background 0.15s ease;
+            margin-top: 8px;
+        }
+
+        .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+        .btn-primary:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .login-error {
+            color: var(--danger);
+            font-size: var(--text-sm);
+            margin-top: 12px;
+            text-align: center;
+            min-height: 20px;
+        }
+
+        .footer {
+            margin-top: 28px;
+            text-align: center;
+            font-size: var(--text-xs);
+            color: var(--text-tertiary);
+        }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--accent-subtle);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="login-logo">
+            <div class="login-logo-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+            </div>
+            <div class="login-title">MantraAssist</div>
+        </div>
+        <div class="login-subtitle">Sign in to the voice operations dashboard</div>
+
+        <div class="field">
+            <label>Username</label>
+            <input type="text" id="username" placeholder="Enter your username" autocomplete="username" autofocus>
+        </div>
+
+        <div class="field">
+            <label>Password</label>
+            <input type="password" id="password" placeholder="Enter your password" autocomplete="current-password">
+        </div>
+
+        <button id="login-btn" class="btn-primary">Sign In</button>
+
+        <div id="error-msg" class="login-error"></div>
+
+        <div class="footer">MantraCare Voice AI Platform</div>
+    </div>
+
+    <script>
+        const u = document.getElementById('username');
+        const p = document.getElementById('password');
+        const btn = document.getElementById('login-btn');
+        const err = document.getElementById('error-msg');
+
+        async function handleLogin() {
+            const username = u.value.trim();
+            const password = p.value;
+            if (!username || !password) { err.textContent = 'Please enter both username and password.'; return; }
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading-spinner"></span>Signing in...';
+            err.textContent = '';
+
+            try {
+                const res = await fetch('/api/v1/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password }),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || 'Login failed');
+
+                localStorage.setItem('token', data.token);
+                localStorage.setItem('username', data.username);
+                localStorage.setItem('token_expires', Date.now() + data.expires_in * 1000);
+                window.location.href = '/dashboard';
+            } catch (e) {
+                err.textContent = e.message;
+                btn.disabled = false;
+                btn.textContent = 'Sign In';
+            }
+        }
+
+        btn.addEventListener('click', handleLogin);
+        p.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleLogin(); });
+        u.addEventListener('keydown', (e) => { if (e.key === 'Enter') p.focus(); });
+
+        if (localStorage.getItem('token')) { window.location.href = '/dashboard'; }
+    </script>
+</body>
+</html>
