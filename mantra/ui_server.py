@@ -39,6 +39,8 @@ redis_client: redis.Redis = None
 
 # ── Authentication ───────────────────────────────────────────────────────
 JWT_SECRET = os.getenv("JWT_SECRET")
+if not JWT_SECRET:
+    raise RuntimeError("JWT_SECRET must be set")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_HOURS = 24
 ADMIN_USERNAME_HASH = os.getenv("ADMIN_USERNAME_HASH", "")
