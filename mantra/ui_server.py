@@ -14,7 +14,7 @@ import aiohttp
 import asyncpg
 import redis.asyncio as redis
 from fastapi import FastAPI, Request, HTTPException
-from email_alerts import send_crash_email
+from mantra.email_alerts import send_crash_email
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from livekit import api

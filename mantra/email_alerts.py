@@ -1,11 +1,15 @@
 # email_alerts.py
 import os
+import random
 import smtplib
 import traceback
 import asyncio
+import urllib.request
+import urllib.parse
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
 
 async def send_crash_email(service_name: str, error: Exception, context_data: dict = None):
     """
@@ -97,34 +101,37 @@ async def send_crash_email(service_name: str, error: Exception, context_data: di
     """
 
     def send_sync():
-        import random
-        import urllib.request
-        from email.mime.image import MIMEImage
-        
-        meme_urls = [
-            "https://i.imgflip.com/1jwhww.jpg", # This is fine
-            "https://i.imgflip.com/4t0m5.jpg",  # Pipeline fail
-            "https://i.imgflip.com/261o3j.jpg", # Hide the pain Harold
-            "https://i.imgflip.com/1g8my4.jpg", # Disaster girl
-            "https://i.imgflip.com/39t1vc.jpg", # Panik
-            "https://i.imgflip.com/1ur9b0.jpg", # Distracted boyfriend
-            "https://i.imgflip.com/2wifvo.jpg", # Is this a pigeon
-            "https://i.imgflip.com/345v97.jpg", # Joker hitting car
-            "https://i.imgflip.com/9ehk.jpg",   # Success kid
-            "https://i.imgflip.com/2cp1.jpg",   # Philosoraptor
-            "https://i.imgflip.com/1o00in.jpg", # Roll safe think about it
-            "https://i.imgflip.com/1op9wy.jpg", # Who killed Hannibal
+
+        meme_templates = [
+            "fine", "pigeon", "harold", "disastergirl", "rollsafe", 
+            "sad-biden", "spiderman", "spongebob", "buzz", "doge", 
+            "drake", "trade", "wonka", "fry", "panik-kalm-panik"
         ]
+
+        def escape_memegen(text):
+            if not text: return "_"
+            text = str(text)
+            for o, n in [("-", "--"), ("_", "__"), (" ", "_"), ("?", "~q"), 
+                         ("&", "~a"), ("%", "~p"), ("#", "~h"), ("/", "~s"), 
+                         ("\\", "~b"), ("<", "~l"), (">", "~g"), ('"', "''")]:
+                text = text.replace(o, n)
+            return urllib.parse.quote(text)
+        admin_mail_id = os.getenv("ADMIN_MAIL_ID", "").strip().lower()
 
         try:
             port = int(smtp_port)
             
             def send_to_recipient(smtp_conn, recipient):
+                is_meme_recipient = bool(admin_mail_id and recipient.lower() == admin_mail_id)
+                
                 # We need "related" to embed inline images properly
                 msg = MIMEMultipart("related")
                 msg["From"] = from_email
                 msg["To"] = recipient
-                msg["Subject"] = f"🔥 {service_name.upper()} CRASH (Meme Edition): [{service_name}] - {type(error).__name__}"
+                if is_meme_recipient:
+                    msg["Subject"] = f"🔥 {service_name.upper()} CRASH (Meme Edition): [{service_name}] - {type(error).__name__}"
+                else:
+                    msg["Subject"] = f"🔥 {service_name.upper()} CRASH: [{service_name}] - {type(error).__name__}"
                 
                 msg_alt = MIMEMultipart("alternative")
                 msg.attach(msg_alt)
@@ -133,16 +140,21 @@ async def send_crash_email(service_name: str, error: Exception, context_data: di
                 
                 # Robustly fetch a meme image, retrying if 404
                 img_data = None
-                random.shuffle(meme_urls)
-                for meme_url in meme_urls:
-                    try:
-                        req = urllib.request.Request(meme_url, headers={'User-Agent': 'Mozilla/5.0'})
-                        with urllib.request.urlopen(req, timeout=3) as response:
-                            img_data = response.read()
-                            break # Success!
-                    except Exception as img_err:
-                        print(f"Skipping meme {meme_url}: {img_err}")
-                        continue
+                if is_meme_recipient:
+                    top_text = f"{service_name} crashed"
+                    bottom_text = f"Error: {type(error).__name__}"
+                    
+                    random.shuffle(meme_templates)
+                    for template in meme_templates:
+                        meme_url = f"https://api.memegen.link/images/{template}/{escape_memegen(top_text)}/{escape_memegen(bottom_text)}.jpg"
+                        try:
+                            req = urllib.request.Request(meme_url, headers={'User-Agent': 'Mozilla/5.0'})
+                            with urllib.request.urlopen(req, timeout=5) as response:
+                                img_data = response.read()
+                                break # Success!
+                        except Exception as img_err:
+                            print(f"Skipping meme {meme_url}: {img_err}")
+                            continue
                 
                 if img_data:
                     meme_html = f"""
@@ -157,7 +169,7 @@ async def send_crash_email(service_name: str, error: Exception, context_data: di
                 msg_alt.attach(MIMEText(final_html, "html"))
                 
                 if img_data:
-                    image = MIMEImage(img_data)
+                    image = MIMEImage(img_data, _subtype="jpeg")
                     image.add_header('Content-ID', '<crash_meme>')
                     image.add_header('Content-Disposition', 'inline')
                     msg.attach(image)
