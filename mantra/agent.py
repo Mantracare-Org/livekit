@@ -216,7 +216,7 @@ async def entrypoint(ctx: JobContext):
         logger.info(f"Participant {participant.identity} disconnected. Force-ending call.")
         asyncio.create_task(_force_disconnect_room(ctx))
 
-    initial_instructions = """You are a warm, professional Care Support Assistant on a phone call.
+    initial_instructions = """You are a warm, polite, and empathetic Care Support Assistant on a phone call.
 
 CORE BEHAVIOR:
 - This is a PHONE CALL. Speak naturally.
@@ -228,6 +228,20 @@ CORE BEHAVIOR:
 - If the user pauses, wait patiently for them to finish.
 - ACTIVELY LISTEN: If the user asks a question (e.g., about directions, a bus stand, or any other detail), address it directly and helpfully BEFORE returning to the main topic. Never ignore the user's questions or blindly repeat your script.
 - RETAIN CONTEXT & AVOID REPETITION: Remember the user's previous answers. Do NOT repeatedly ask the same questions. If they say no or want to focus on something else, acknowledge it and move on. DO NOT be pushy.
+
+POLITENESS & EMPATHY:
+- Always be polite, courteous, and respectful.
+- Show genuine empathy and understanding. Use phrases like "I understand", "I'm sorry to hear that", "That must be frustrating", "I'm here to help".
+- Be patient and kind, even if the user seems confused or annoyed.
+- Use a warm, caring, and reassuring tone.
+- Never be rude, dismissive, or impatient.
+
+ENDING THE CALL:
+- When the user says "bye", "goodbye", "thank you and bye", "that's all", "I'm done", "disconnect", "hang up", "end the call", "end this call", or any similar farewell or disconnect request, give a brief, warm goodbye and STOP.
+- If the user explicitly asks you to disconnect or end the call, comply immediately with a brief goodbye.
+- Do NOT ask follow-up questions after the user indicates they want to end the call.
+- Your final response should be something like: "Thank you for calling. Take care and goodbye!" — short and final.
+- Do NOT extend the conversation once the purpose is fulfilled or the user says goodbye.
 
 PRONUNCIATION (CRITICAL):
 - ALWAYS write the brand name as "MantraCare" (as a single word). NEVER write "Mantra Care" with a space.
@@ -397,22 +411,22 @@ Follow these specific instructions:
             turn_detection=MultilingualModel(),
             endpointing={
                 "mode": "dynamic",
-                "min_delay": 0.3,
-                "max_delay": 1.5,
+                "min_delay": 0.2,
+                "max_delay": 0.8,
             },
             interruption={
                 "mode": "vad",
                 "resume_false_interruption": True,
-                "false_interruption_timeout": 0.8,
-                "min_words": 2,
+                "false_interruption_timeout": 0.5,
+                "min_words": 1,
             },
             preemptive_generation={
                 "preemptive_tts": True,
             },
         ),
         vad=silero.VAD.load(
-            min_speech_duration=0.1,
-            min_silence_duration=0.2,
+            min_speech_duration=0.08,
+            min_silence_duration=0.15,
         ),
         # Using Hindi STT as it's better at catching Hinglish/Indian English
         stt=deepgram.STT(model="nova-3", language="hi", smart_format=True, numerals=True),
@@ -480,6 +494,42 @@ Follow these specific instructions:
                         logger.warning(f"Failed to generate inactivity reply (session may be closing): {e}")
                     except Exception as e:
                         logger.error(f"Unexpected error generating inactivity reply: {e}")
+
+    GOODBYE_TRIGGERS = ["bye", "goodbye", "take care", "bye bye", "that will be all", "that's all", "talk to you later", "disconnect", "hang up", "end the call", "end this call"]
+
+    async def goodbye_monitor():
+        logger.info("Goodbye monitor started.")
+        await asyncio.sleep(5.0)
+        while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+            await asyncio.sleep(1.5)
+            try:
+                messages = list(session.history.messages())
+                if not messages:
+                    continue
+                last_agent_text = ""
+                for msg in reversed(messages):
+                    role = msg.role.name if hasattr(msg.role, "name") else str(msg.role)
+                    if role.lower() == "assistant":
+                        last_agent_text = (msg.text if hasattr(msg, "text") else str(msg.content)).lower()
+                        break
+                if not last_agent_text:
+                    continue
+                if any(t in last_agent_text for t in GOODBYE_TRIGGERS):
+                    last_agent_text_sent = call_state.get("last_goodbye_checked", "")
+                    if last_agent_text != last_agent_text_sent:
+                        call_state["last_goodbye_checked"] = last_agent_text
+                        logger.info("Goodbye detected in agent response. Waiting 4s before disconnect.")
+                        await asyncio.sleep(4.0)
+                        if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+                            call_state["timeline"].append({
+                                "event": "Natural Call End - Trigger Words",
+                                "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
+                            })
+                            logger.info("Ending call after natural goodbye.")
+                            asyncio.create_task(_force_disconnect_room(ctx))
+                            break
+            except Exception as e:
+                logger.debug(f"Goodbye monitor check error: {e}")
 
     # Call duration limiter logic
     async def call_limiter():
@@ -565,6 +615,7 @@ Follow these specific instructions:
         await session.start(agent=agent, room=ctx.room)
         limiter_task = asyncio.create_task(call_limiter())
         inactivity_task = asyncio.create_task(inactivity_monitor())
+        goodbye_task = asyncio.create_task(goodbye_monitor())
         
         # Check if agent track was already published before we attached the listener
         for publication in ctx.room.local_participant.track_publications.values():
@@ -627,11 +678,11 @@ Follow these specific instructions:
             logger.error(f"Failed to dispatch crash email: {email_err}")
     finally:
         logger.info("Entering entrypoint finally block (cleaning up and finalizing)...")
-        # 1. Cancel limiter task
-        if 'limiter_task' in locals() and not limiter_task.done():
-            limiter_task.cancel()
-        if 'inactivity_task' in locals() and not inactivity_task.done():
-            inactivity_task.cancel()
+        # 1. Cancel background tasks
+        for task_name in ['limiter_task', 'inactivity_task', 'goodbye_task']:
+            task = locals().get(task_name)
+            if task and not task.done():
+                task.cancel()
             
         # 2. Capture history snapshot immediately before session cleans up
         history_snapshot = list(session.history.messages()) if (session and session.history) else []
