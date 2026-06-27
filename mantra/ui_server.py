@@ -38,7 +38,7 @@ plivo_session: aiohttp.ClientSession = None  # Owned session for plivo_client; c
 redis_client: redis.Redis = None
 
 # ── Authentication ───────────────────────────────────────────────────────
-JWT_SECRET = os.getenv("JWT_SECRET", "mantraassist-dashboard-jwt-secret-2024")
+JWT_SECRET = os.getenv("JWT_SECRET")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_HOURS = 24
 ADMIN_USERNAME_HASH = os.getenv("ADMIN_USERNAME_HASH", "")
@@ -201,10 +201,16 @@ async def login(request: Request):
 def require_auth(request: Request):
     """Dependency to protect routes via JWT Bearer token."""
     auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
+    token = None
+    if auth.startswith("Bearer "):
+        token = auth.split(" ", 1)[1]
+    else:
+        token = request.query_params.get("token")
+        
+    if not token:
         raise HTTPException(status_code=401, detail="Missing or invalid token")
     try:
-        payload = jwt.decode(auth.split(" ", 1)[1], JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         request.state.user = payload
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
@@ -212,13 +218,15 @@ def require_auth(request: Request):
 
 @app.get("/dashboard")
 async def dashboard_page(request: Request):
-    """Serve the dashboard page (auth required; JS handles redirect if no token)."""
+    """Serve the dashboard page."""
+    require_auth(request)
     return FileResponse(os.path.join(STATIC_DIR, "dashboard.html"))
 
 
 @app.get("/console")
 async def console_page(request: Request):
-    """Serve the test console (auth required; JS handles redirect if no token)."""
+    """Serve the test console."""
+    require_auth(request)
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
 @app.get("/health")
