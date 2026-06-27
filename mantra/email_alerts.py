@@ -16,9 +16,10 @@ async def send_crash_email(service_name: str, error: Exception, context_data: di
     smtp_port = os.getenv("SMTP_PORT", "587")
     smtp_user = os.getenv("SMTP_USER")
     smtp_pass = os.getenv("SMTP_PASSWORD")
+    from_email = os.getenv("SMTP_FROM_EMAIL", smtp_user)
     alert_emails_str = os.getenv("ALERT_EMAIL_IDS", "")
     
-    if not all([smtp_host, smtp_user, smtp_pass, alert_emails_str]):
+    if not all([smtp_host, smtp_user, smtp_pass, alert_emails_str, from_email]):
         # Silently skip if email configurations are missing
         return
 
@@ -44,7 +45,7 @@ async def send_crash_email(service_name: str, error: Exception, context_data: di
     <html>
     <head>
         <meta charset="UTF-8">
-        <title>Pipeline Alert: Critical Failure</title>
+        <title>{service_name} Alert: Critical Failure</title>
         <style>
             body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background-color: #f4f6f8; margin: 0; padding: 20px; color: #333; }}
             .container {{ max-width: 750px; background: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border: 1px solid #e1e4e8; margin: 0 auto; }}
@@ -65,7 +66,7 @@ async def send_crash_email(service_name: str, error: Exception, context_data: di
     <body>
         <div class="container">
             <div class="header">
-                <h2>⚠️ Pipeline Alert: Critical Component Crash</h2>
+                <h2>⚠️ {service_name} Alert: Critical Component Crash</h2>
             </div>
             <div class="content">
                 <div class="error-box">
@@ -96,23 +97,84 @@ async def send_crash_email(service_name: str, error: Exception, context_data: di
     """
 
     def send_sync():
-        try:
-            msg = MIMEMultipart("alternative")
-            msg["Subject"] = f"🔥 PIPELINE CRASH: [{service_name}] - {type(error).__name__}"
-            msg["From"] = smtp_user
-            msg["To"] = ", ".join(to_emails)
-            msg.attach(MIMEText(html_template, "html"))
+        import random
+        import urllib.request
+        from email.mime.image import MIMEImage
+        
+        meme_urls = [
+            "https://i.imgflip.com/1jwhww.jpg", # This is fine
+            "https://i.imgflip.com/4t0m5.jpg",  # Pipeline fail
+            "https://i.imgflip.com/261o3j.jpg", # Hide the pain Harold
+            "https://i.imgflip.com/1g8my4.jpg", # Disaster girl
+            "https://i.imgflip.com/39t1vc.jpg", # Panik
+            "https://i.imgflip.com/1ur9b0.jpg", # Distracted boyfriend
+            "https://i.imgflip.com/2wifvo.jpg", # Is this a pigeon
+            "https://i.imgflip.com/345v97.jpg", # Joker hitting car
+            "https://i.imgflip.com/9ehk.jpg",   # Success kid
+            "https://i.imgflip.com/2cp1.jpg",   # Philosoraptor
+            "https://i.imgflip.com/1o00in.jpg", # Roll safe think about it
+            "https://i.imgflip.com/1op9wy.jpg", # Who killed Hannibal
+        ]
 
+        try:
             port = int(smtp_port)
+            
+            def send_to_recipient(smtp_conn, recipient):
+                # We need "related" to embed inline images properly
+                msg = MIMEMultipart("related")
+                msg["From"] = from_email
+                msg["To"] = recipient
+                msg["Subject"] = f"🔥 {service_name.upper()} CRASH (Meme Edition): [{service_name}] - {type(error).__name__}"
+                
+                msg_alt = MIMEMultipart("alternative")
+                msg.attach(msg_alt)
+                
+                final_html = html_template
+                
+                # Robustly fetch a meme image, retrying if 404
+                img_data = None
+                random.shuffle(meme_urls)
+                for meme_url in meme_urls:
+                    try:
+                        req = urllib.request.Request(meme_url, headers={'User-Agent': 'Mozilla/5.0'})
+                        with urllib.request.urlopen(req, timeout=3) as response:
+                            img_data = response.read()
+                            break # Success!
+                    except Exception as img_err:
+                        print(f"Skipping meme {meme_url}: {img_err}")
+                        continue
+                
+                if img_data:
+                    meme_html = f"""
+                    <div style="text-align: center; margin-top: 20px;">
+                        <h3 style="color: #d9383a;">Don't panic! Our {service_name.lower()} is just taking a nap.</h3>
+                        <img src="cid:crash_meme" alt="Crash meme" style="max-width: 100%; border-radius: 8px; border: 2px solid #e1e4e8;">
+                    </div>
+                    """
+                    # Inject the meme html before the footer
+                    final_html = final_html.replace('</div>\n            <div class="footer">', f'{meme_html}\n            </div>\n            <div class="footer">')
+                        
+                msg_alt.attach(MIMEText(final_html, "html"))
+                
+                if img_data:
+                    image = MIMEImage(img_data)
+                    image.add_header('Content-ID', '<crash_meme>')
+                    image.add_header('Content-Disposition', 'inline')
+                    msg.attach(image)
+
+                smtp_conn.sendmail(from_email, [recipient], msg.as_string())
+
             if port == 465:
                 with smtplib.SMTP_SSL(smtp_host, port) as smtp_conn:
                     smtp_conn.login(smtp_user, smtp_pass)
-                    smtp_conn.sendmail(smtp_user, to_emails, msg.as_string())
+                    for recipient in to_emails:
+                        send_to_recipient(smtp_conn, recipient)
             else:
                 with smtplib.SMTP(smtp_host, port) as smtp_conn:
                     smtp_conn.starttls()
                     smtp_conn.login(smtp_user, smtp_pass)
-                    smtp_conn.sendmail(smtp_user, to_emails, msg.as_string())
+                    for recipient in to_emails:
+                        send_to_recipient(smtp_conn, recipient)
         except Exception as smtp_err:
             print(f"Failed to transmit email alert via SMTP: {smtp_err}")
 
