@@ -436,6 +436,7 @@ Follow these specific instructions:
             voice=voice_id,
             speed=voice_speed,
             language=language,
+            emotion=["calmness:high", "positivity:high"],
             api_key=api_key,
         )
         for api_key in cartesia_keys
@@ -446,8 +447,8 @@ Follow these specific instructions:
             turn_detection=MultilingualModel(),
             endpointing={
                 "mode": "dynamic",
-                "min_delay": 0.2,
-                "max_delay": 0.8,
+                "min_delay": 0.1,
+                "max_delay": 0.35,
             },
             interruption={
                 "mode": "vad",
