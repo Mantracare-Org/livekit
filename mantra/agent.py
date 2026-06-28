@@ -98,14 +98,43 @@ load_dotenv(".env.local", override=True)  # Load .env.local (LiveKit, etc.) and 
 
 server = AgentServer()
 
+_bg_tasks = set()
+def create_bg_task(coro):
+    task = asyncio.create_task(coro)
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+    return task
+
 class AssistantFunctions:
-    def __init__(self, job_metadata: str, room_name: str):
+    def __init__(self, job_metadata: str, room_name: str, ctx: JobContext = None):
         self.job_metadata = job_metadata
         self.room_name = room_name
         self.handoff_triggered = False
         self.agent = None
+        self.session = None
+        self.ctx = ctx
 
-    # @llm.function_tool(description="Transfer the call to a human assistant when requested or if the issue is too complex.")
+    @llm.function_tool(description="End the call. Call this tool when the conversation is over — the user said goodbye, is not interested, or there is nothing left to discuss.")
+    async def end_call(self):
+        logger.info("Agent decided to end the call via function tool. Waiting for speech to finish before disconnecting.")
+        async def graceful_disconnect():
+            # Wait for the agent to finish speaking her goodbye, with a safety cap
+            if self.session:
+                try:
+                    await asyncio.wait_for(self.session.wait_for_inactive(), timeout=12.0)
+                    logger.info("Agent finished speaking. Pausing briefly before disconnect.")
+                except asyncio.TimeoutError:
+                    logger.warning("Agent did not finish speaking within 12s. Disconnecting anyway.")
+            else:
+                await asyncio.sleep(4.0)
+            # Small human-like pause after the last word before hanging up
+            await asyncio.sleep(1.0)
+            if self.ctx:
+                await _force_disconnect_room(self.ctx)
+        self._disconnect_task = create_bg_task(graceful_disconnect())
+        return "Call is ending. Say a brief, warm goodbye now."
+
+    # @llm.ai_callable(description="Transfer the call to a human assistant when requested or if the issue is too complex.")
     # async def transfer_to_human(
     #     self,
     #     reason: Annotated[str, "The reason why a human is needed"]
@@ -157,7 +186,7 @@ async def entrypoint(ctx: JobContext):
     logger.info(f"Metadata: {ctx.job.metadata}")
 
     # Initialize function context for handoff
-    fnc_ctx = AssistantFunctions(ctx.job.metadata, ctx.room.name)
+    fnc_ctx = AssistantFunctions(ctx.job.metadata, ctx.room.name, ctx=ctx)
     call_state = {
         "user_joined": False,
         "timeline": [{"event": "Agent Session Started", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"}]
@@ -214,9 +243,9 @@ async def entrypoint(ctx: JobContext):
     def on_participant_disconnected(participant: rtc.RemoteParticipant):
         call_state["timeline"].append({"event": "Remote Participant Disconnected", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
         logger.info(f"Participant {participant.identity} disconnected. Force-ending call.")
-        asyncio.create_task(_force_disconnect_room(ctx))
+        create_bg_task(_force_disconnect_room(ctx))
 
-    initial_instructions = """You are a warm, professional Care Support Assistant on a phone call.
+    initial_instructions = """You are a warm, polite, and empathetic Care Support Assistant on a phone call.
 
 CORE BEHAVIOR:
 - This is a PHONE CALL. Speak naturally.
@@ -228,6 +257,26 @@ CORE BEHAVIOR:
 - If the user pauses, wait patiently for them to finish.
 - ACTIVELY LISTEN: If the user asks a question (e.g., about directions, a bus stand, or any other detail), address it directly and helpfully BEFORE returning to the main topic. Never ignore the user's questions or blindly repeat your script.
 - RETAIN CONTEXT & AVOID REPETITION: Remember the user's previous answers. Do NOT repeatedly ask the same questions. If they say no or want to focus on something else, acknowledge it and move on. DO NOT be pushy.
+
+POLITENESS & EMPATHY:
+- Always be polite, courteous, and respectful.
+- Show genuine empathy and understanding. Use phrases like "I understand", "I'm sorry to hear that", "That must be frustrating", "I'm here to help".
+- Be patient and kind, even if the user seems confused or annoyed.
+- Use a warm, caring, and reassuring tone.
+- Never be rude, dismissive, or impatient.
+
+ENDING THE CALL (CRITICAL — YOU MUST FOLLOW THIS):
+- You have a tool called `end_call`. You MUST call this tool to end every call. There is NO other way to hang up.
+- NEVER say goodbye, farewell, or any closing statement WITHOUT FIRST calling the `end_call` tool. Saying "goodbye" or "take care" without calling the tool means the call stays connected forever. This is a critical failure.
+- Call `end_call` IMMEDIATELY when ANY of these happen:
+  * The user says bye, goodbye, thank you, that's all, I'm done, not interested, hang up, disconnect, end the call, or anything similar.
+  * The user explicitly declines or rejects the offer (e.g. "not interested", "no thanks", "I don't need this").
+  * The conversation has reached a natural conclusion and there is nothing left to discuss.
+  * The user is clearly uninterested or disengaged.
+- The CORRECT sequence is: 1) Call `end_call` tool FIRST, 2) THEN say a brief warm goodbye in your response text.
+- Do NOT ask follow-up questions after the user indicates they want to end the call or is not interested.
+- Keep your final goodbye SHORT: "Thank you for your time, Anurag. Take care!" — that's it.
+- REMEMBER: If you find yourself writing a goodbye message, you MUST also call `end_call`. No exceptions.
 
 PRONUNCIATION (CRITICAL):
 - ALWAYS write the brand name as "MantraCare" (as a single word). NEVER write "Mantra Care" with a space.
@@ -387,6 +436,7 @@ Follow these specific instructions:
             voice=voice_id,
             speed=voice_speed,
             language=language,
+            emotion=["calmness:high", "positivity:high"],
             api_key=api_key,
         )
         for api_key in cartesia_keys
@@ -397,22 +447,22 @@ Follow these specific instructions:
             turn_detection=MultilingualModel(),
             endpointing={
                 "mode": "dynamic",
-                "min_delay": 0.3,
-                "max_delay": 1.5,
+                "min_delay": 0.1,
+                "max_delay": 0.35,
             },
             interruption={
                 "mode": "vad",
                 "resume_false_interruption": True,
-                "false_interruption_timeout": 0.8,
-                "min_words": 2,
+                "false_interruption_timeout": 0.5,
+                "min_words": 1,
             },
             preemptive_generation={
                 "preemptive_tts": True,
             },
         ),
         vad=silero.VAD.load(
-            min_speech_duration=0.1,
-            min_silence_duration=0.2,
+            min_speech_duration=0.08,
+            min_silence_duration=0.15,
         ),
         # Using Hindi STT as it's better at catching Hinglish/Indian English
         stt=deepgram.STT(model="nova-3", language="hi", smart_format=True, numerals=True),
@@ -431,9 +481,10 @@ Follow these specific instructions:
 
     agent = Agent(
         instructions=initial_instructions,
-        tools=[] # [fnc_ctx.transfer_to_human] commented out
+        tools=[fnc_ctx.end_call]
     )
     fnc_ctx.agent = agent
+    fnc_ctx.session = session
 
     @session.on("agent_state_changed")
     def on_agent_state(ev):
@@ -467,7 +518,7 @@ Follow these specific instructions:
                 if time_since_activity > 10.0:
                     # logger.warning(f"{Fore.YELLOW}No response for 10s. Destroying room.{Style.RESET_ALL}")
                     call_state["timeline"].append({"event": "Inactivity Timeout Disconnect", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
-                    asyncio.create_task(_force_disconnect_room(ctx))
+                    create_bg_task(_force_disconnect_room(ctx))
                     break
                 elif time_since_activity > 5.0 and not call_state.get("prompted_inactivity", False):
                     logger.info("No response for 5s. Prompting user...")
@@ -480,6 +531,37 @@ Follow these specific instructions:
                         logger.warning(f"Failed to generate inactivity reply (session may be closing): {e}")
                     except Exception as e:
                         logger.error(f"Unexpected error generating inactivity reply: {e}")
+
+    # Safety net: if the LLM says goodbye but forgets to call end_call, force disconnect
+    FAREWELL_PHRASES = [
+        "goodbye", "good bye", "bye bye", "take care", "have a great day",
+        "have a good day", "have a nice day", "thanks for calling",
+        "thank you for calling", "talk to you later", "see you later",
+    ]
+
+    async def farewell_safety_net():
+        """Detect if the agent said goodbye without calling end_call, and force disconnect."""
+        await asyncio.sleep(10.0)  # Let the conversation warm up first
+        while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+            await asyncio.sleep(3.0)
+            if not (session and hasattr(session, 'history') and session.history):
+                continue
+            try:
+                messages = list(session.history.messages())
+                if not messages:
+                    continue
+                # Check the last assistant message
+                last_msg = messages[-1]
+                role = getattr(last_msg, "role", "")
+                content = str(getattr(last_msg, "content", "")).lower()
+                if role == "assistant" and any(phrase in content for phrase in FAREWELL_PHRASES):
+                    logger.warning(f"Safety net: Agent said goodbye but end_call was never invoked. Force disconnecting.")
+                    call_state["timeline"].append({"event": "Farewell Safety Net Triggered", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
+                    await asyncio.sleep(3.0)  # Give TTS time to finish speaking
+                    await _force_disconnect_room(ctx)
+                    break
+            except Exception as e:
+                logger.debug(f"Farewell safety net error: {e}")
 
     # Call duration limiter logic
     async def call_limiter():
@@ -522,7 +604,7 @@ Follow these specific instructions:
                 else:
                     logger.info("Room already disconnected — force-disconnect skipping.")
 
-            disconnect_task = asyncio.create_task(force_disconnect_timer())
+            disconnect_task = create_bg_task(force_disconnect_timer())
 
             # Stage 1: 2m 30s mark — update agent instructions for a natural farewell
             # We do NOT call generate_reply() here, so the agent won't interrupt the user.
@@ -565,6 +647,7 @@ Follow these specific instructions:
         await session.start(agent=agent, room=ctx.room)
         limiter_task = asyncio.create_task(call_limiter())
         inactivity_task = asyncio.create_task(inactivity_monitor())
+        safety_net_task = asyncio.create_task(farewell_safety_net())
         
         # Check if agent track was already published before we attached the listener
         for publication in ctx.room.local_participant.track_publications.values():
@@ -627,11 +710,11 @@ Follow these specific instructions:
             logger.error(f"Failed to dispatch crash email: {email_err}")
     finally:
         logger.info("Entering entrypoint finally block (cleaning up and finalizing)...")
-        # 1. Cancel limiter task
-        if 'limiter_task' in locals() and not limiter_task.done():
-            limiter_task.cancel()
-        if 'inactivity_task' in locals() and not inactivity_task.done():
-            inactivity_task.cancel()
+        # 1. Cancel background tasks
+        for task_name in ['limiter_task', 'inactivity_task', 'goodbye_task', 'safety_net_task']:
+            task = locals().get(task_name)
+            if task and not task.done():
+                task.cancel()
             
         # 2. Capture history snapshot immediately before session cleans up
         history_snapshot = list(session.history.messages()) if (session and session.history) else []
@@ -897,9 +980,16 @@ def run_agent():
         cli.run_app(server)
     except Exception as e:
         logger.error(f"Failed to run agent server: {e}", exc_info=True)
+        try:
+            import asyncio
+            asyncio.run(send_crash_email(
+                service_name="Livekit Voice Agent Worker (Core/Startup)", 
+                error=e, 
+                context_data={"Status": "Crashloop / Process Death", "PID": os.getpid()}
+            ))
+        except Exception as email_err:
+            logger.error(f"Failed to dispatch core crash email: {email_err}")
         raise
-
-
 
 if __name__ == "__main__":
     run_agent()

@@ -104,7 +104,7 @@ function renderFeed() {
 let lastActiveIds = new Set();
 
 function connectSSE() {
-    const evtSource = new EventSource('/api/v1/dashboard/stream');
+    const evtSource = new EventSource(`/api/v1/dashboard/stream?token=${TOKEN}`);
 
     evtSource.onmessage = (event) => {
         try {
