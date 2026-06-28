@@ -91,9 +91,78 @@ VOICE_MAPPING = {
     "arushi": "95d51f79-c397-46f9-b49a-23763d3eaa2d"
 }
 
+# ── Tone configurations ──────────────────────────────────────────────────────
+TONE_INSTRUCTIONS = {
+    "professional": (
+        "TONE & PERSONA: Professional\n"
+        "- You are a polished, business-appropriate Care Support Assistant.\n"
+        "- Use formal, courteous language. Be respectful and structured.\n"
+        "- Maintain professionalism while being helpful.\n"
+        "- Avoid casual slang or overly familiar language.\n"
+    ),
+    "friendly": (
+        "TONE & PERSONA: Friendly\n"
+        "- You are a warm, approachable, conversational assistant.\n"
+        "- Use a genial, pleasant tone that puts the user at ease.\n"
+        "- Sound like a helpful friend, not a robot.\n"
+        "- Use natural fillers: 'Got it', 'Sure', 'Theek hai', 'Haan'.\n"
+    ),
+    "empathetic": (
+        "TONE & PERSONA: Empathetic\n"
+        "- You are a deeply caring and compassionate assistant.\n"
+        "- Show genuine understanding: 'I understand', 'I'm sorry to hear that', 'That must be difficult'.\n"
+        "- Be patient, validating, and supportive above all else.\n"
+        "- Prioritize emotional connection and reassurance.\n"
+    ),
+    "persuasive": (
+        "TONE & PERSONA: Persuasive\n"
+        "- You are a confident, convincing Care Support Assistant.\n"
+        "- Highlight benefits and positive outcomes clearly.\n"
+        "- Use encouraging language to guide the user toward a decision.\n"
+        "- Be reassuring and compelling without being pushy.\n"
+    ),
+    "educational": (
+        "TONE & PERSONA: Educational\n"
+        "- You are an informative, patient guide.\n"
+        "- Explain things clearly step by step. Break down complex information.\n"
+        "- Use simple, understandable language. Ensure the user follows.\n"
+        "- Answer questions thoroughly with helpful context.\n"
+    ),
+    "motivational": (
+        "TONE & PERSONA: Motivational\n"
+        "- You are an uplifting, inspiring assistant.\n"
+        "- Use affirming language: 'You can do this', 'That's a great step forward'.\n"
+        "- Focus on possibilities and positive outcomes.\n"
+        "- Build the user's confidence and motivation.\n"
+    ),
+}
+
+# ── Style configurations ────────────────────────────────────────────────────────
+STYLE_INSTRUCTIONS = {
+    "concise": (
+        "STYLE: Concise\n"
+        "- Keep responses VERY SHORT — 1 to 2 sentences maximum.\n"
+        "- Get straight to the point. No fluff or extra detail.\n"
+        "- Be efficient with words while staying polite.\n"
+    ),
+    "balanced": (
+        "STYLE: Balanced\n"
+        "- Keep responses moderate — 2 to 3 sentences.\n"
+        "- Provide enough detail to be helpful, but stay conversational.\n"
+        "- Balance brevity with thoroughness as the situation demands.\n"
+    ),
+    "detailed": (
+        "STYLE: Detailed\n"
+        "- Provide thorough, comprehensive responses when needed.\n"
+        "- Explain clearly with relevant details and context.\n"
+        "- Prioritize clarity and completeness.\n"
+        "- Avoid unnecessary repetition, but don't skip important information.\n"
+    ),
+}
+
 # Load environment variables
-load_dotenv()          # Load .env (OpenAI, etc.)
-load_dotenv(".env.local", override=True)  # Load .env.local (LiveKit, etc.) and override if needed
+load_dotenv()
+load_dotenv(".env.local", override=True)
 
 
 server = AgentServer()
@@ -245,25 +314,15 @@ async def entrypoint(ctx: JobContext):
         logger.info(f"Participant {participant.identity} disconnected. Force-ending call.")
         create_bg_task(_force_disconnect_room(ctx))
 
-    initial_instructions = """You are a warm, polite, and empathetic Care Support Assistant on a phone call.
+    initial_instructions = """You are an AI voice assistant on a phone call.
 
 CORE BEHAVIOR:
 - This is a PHONE CALL. Speak naturally.
-- Keep responses SHORT (1-2 sentences).
-- Use natural fillers: "Got it", "Sure", "Theek hai", "Haan".
 - You are BILINGUAL. Start in English. If the user speaks Hindi or asks for it, switch to Hindi immediately.
-- Sound like a helpful human friend, not a robot.
 - Do NOT use markdown, bullet points, or special characters.
 - If the user pauses, wait patiently for them to finish.
-- ACTIVELY LISTEN: If the user asks a question (e.g., about directions, a bus stand, or any other detail), address it directly and helpfully BEFORE returning to the main topic. Never ignore the user's questions or blindly repeat your script.
-- RETAIN CONTEXT & AVOID REPETITION: Remember the user's previous answers. Do NOT repeatedly ask the same questions. If they say no or want to focus on something else, acknowledge it and move on. DO NOT be pushy.
-
-POLITENESS & EMPATHY:
-- Always be polite, courteous, and respectful.
-- Show genuine empathy and understanding. Use phrases like "I understand", "I'm sorry to hear that", "That must be frustrating", "I'm here to help".
-- Be patient and kind, even if the user seems confused or annoyed.
-- Use a warm, caring, and reassuring tone.
-- Never be rude, dismissive, or impatient.
+- ACTIVELY LISTEN: If the user asks a question, address it directly and helpfully BEFORE returning to the main topic. Never ignore their questions.
+- RETAIN CONTEXT & AVOID REPETITION: Remember the user's previous answers. Do NOT repeat the same questions. If they say no or change the subject, acknowledge it and move on. DO NOT be pushy.
 
 ENDING THE CALL (CRITICAL — YOU MUST FOLLOW THIS):
 - You have a tool called `end_call`. You MUST call this tool to end every call. There is NO other way to hang up.
@@ -317,12 +376,25 @@ Follow these specific instructions:
             if "client_name" in payload:
                 client_name = payload["client_name"]
 
-            # 2. Extract ALL other features as context for the LLM
+            # 2. Inject tone from payload
+            raw_tone = payload.get("tone", "").strip().lower()
+            if raw_tone in TONE_INSTRUCTIONS:
+                initial_instructions += "\n" + TONE_INSTRUCTIONS[raw_tone]
+                logger.info(f"Applied tone: {raw_tone}")
+
+            # 3. Inject style from payload
+            raw_style = payload.get("style", "").strip().lower()
+            if raw_style in STYLE_INSTRUCTIONS:
+                initial_instructions += "\n" + STYLE_INSTRUCTIONS[raw_style]
+                logger.info(f"Applied style: {raw_style}")
+
+            # 4. Extract ALL other features as context for the LLM
             context_header = "\n\n--- ADDITIONAL CALL CONTEXT ---\n"
             context_body = ""
             
+            skip_keys = {"prompt", "tone", "style"}
             for key, value in payload.items():
-                if key == "prompt":
+                if key in skip_keys:
                     continue
                 
                 readable_key = key.replace("_", " ").title()
@@ -711,7 +783,7 @@ Follow these specific instructions:
     finally:
         logger.info("Entering entrypoint finally block (cleaning up and finalizing)...")
         # 1. Cancel background tasks
-        for task_name in ['limiter_task', 'inactivity_task', 'goodbye_task', 'safety_net_task']:
+        for task_name in ['limiter_task', 'inactivity_task', 'safety_net_task']:
             task = locals().get(task_name)
             if task and not task.done():
                 task.cancel()
