@@ -948,9 +948,16 @@ def run_agent():
         cli.run_app(server)
     except Exception as e:
         logger.error(f"Failed to run agent server: {e}", exc_info=True)
+        try:
+            import asyncio
+            asyncio.run(send_crash_email(
+                service_name="Livekit Voice Agent Worker (Core/Startup)", 
+                error=e, 
+                context_data={"Status": "Crashloop / Process Death", "PID": os.getpid()}
+            ))
+        except Exception as email_err:
+            logger.error(f"Failed to dispatch core crash email: {email_err}")
         raise
-
-
 
 if __name__ == "__main__":
     run_agent()

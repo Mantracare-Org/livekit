@@ -219,16 +219,14 @@ def require_auth(request: Request):
 
 
 @app.get("/dashboard")
-async def dashboard_page(request: Request):
+async def dashboard_page():
     """Serve the dashboard page."""
-    require_auth(request)
     return FileResponse(os.path.join(STATIC_DIR, "dashboard.html"))
 
 
 @app.get("/console")
-async def console_page(request: Request):
+async def console_page():
     """Serve the test console."""
-    require_auth(request)
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
 @app.get("/health")
@@ -916,7 +914,20 @@ def main():
     import uvicorn
     port = int(os.getenv("PORT", "8081"))
     logger.info(f"UI Server starting on http://0.0.0.0:{port}")
-    uvicorn.run("mantra.ui_server:app", host="0.0.0.0", port=port, access_log=False)
+    try:
+        uvicorn.run("mantra.ui_server:app", host="0.0.0.0", port=port, access_log=False)
+    except Exception as e:
+        logger.error(f"Failed to run UI server: {e}", exc_info=True)
+        try:
+            import asyncio
+            asyncio.run(send_crash_email(
+                service_name="Mantra UI Server (Core/Startup)", 
+                error=e, 
+                context_data={"Status": "Crashloop / Process Death", "PID": os.getpid()}
+            ))
+        except Exception as email_err:
+            logger.error(f"Failed to dispatch core crash email: {email_err}")
+        raise
 
 if __name__ == "__main__":
     main()
