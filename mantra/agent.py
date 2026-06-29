@@ -1,6 +1,7 @@
 import logging
 import json
 import asyncio
+import aiohttp
 import os
 import datetime
 from mantra.email_alerts import send_crash_email
@@ -979,17 +980,23 @@ Follow these specific instructions:
                         }
                     }
 
-                # Save to local Postgres DB
+                # Save to local Postgres DB via UI Server webhook (bypassing cloud SG blocks)
                 try:
-                    c_id = webhook_payload.get("data", {}).get("call_id", ctx.job.id)
-                    await save_call_log_to_db(
-                        call_id=str(c_id),
-                        call_log=json.dumps(webhook_payload.get("data", {}), indent=2),
-                        status=call_status,
-                        recording_url=recording_url
-                    )
+                    ui_url = os.getenv("TELEPHONY_UI_URL")
+                    if ui_url:
+                        db_endpoint = f"{ui_url.rstrip('/')}/api/v1/webhooks/call-logs"
+                        logger.info(f"Sending full call log payload to UI server at {db_endpoint}")
+                        async with aiohttp.ClientSession() as session:
+                            async with session.post(db_endpoint, json=webhook_payload) as resp:
+                                if resp.status == 200:
+                                    logger.info("Successfully sent call log to UI Server for DB insertion.")
+                                else:
+                                    resp_text = await resp.text()
+                                    logger.error(f"UI Server DB Webhook returned {resp.status}: {resp_text}")
+                    else:
+                        logger.warning("TELEPHONY_UI_URL is not set. Cannot save call log to local database.")
                 except Exception as db_err:
-                    logger.error(f"Error calling save_call_log_to_db: {db_err}")
+                    logger.error(f"Error sending call log to UI server: {db_err}")
 
                 logger.info("Delivering post-call webhook to backend...")
                 logger.info(f"Webhook Payload:\n{json.dumps(webhook_payload)}")
