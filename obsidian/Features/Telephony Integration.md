@@ -28,3 +28,5 @@ SIP failures are classified:
 - Other → `"Incomplete"`
 
 Status written to Redis `sip_error_status:{call_id}` (TTL: 300s) for agent to read during post-call.
+
+On SIP failure, the call log is also saved to PostgreSQL **immediately** via `save_call_log_to_db()` so the dashboard reflects it without waiting for the agent's post-call pipeline.

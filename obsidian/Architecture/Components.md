@@ -20,6 +20,15 @@ The core real-time voice AI agent. ~995 lines.
 - `gemini` — Gemini 2.5 Flash
 - `deepseek` — DeepSeek v4 Flash (via OpenAI-compatible API)
 
+**Tone/Style System:**
+- 6 configurable tones (professional, friendly, empathetic, persuasive, educational, motivational)
+- 3 configurable styles (concise, balanced, detailed)
+- Injected from payload metadata into agent instructions at call start
+
+**DB Write Path:**
+- Agent sends call log via HTTP POST to UI Server (`/api/v1/webhooks/call-logs`)
+- UI Server writes to PostgreSQL (bypasses cloud security group blocks)
+
 ---
 
 ## 2. API/UI Server (`mantra/ui_server.py`)

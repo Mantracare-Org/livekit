@@ -1,6 +1,6 @@
 # Voice Agent
 
-**File:** `mantra/agent.py` (995 lines)
+**File:** `mantra/agent.py` (now ~1040 lines)
 
 ## Overview
 
@@ -37,11 +37,36 @@ The core real-time voice AI agent. Connects to LiveKit rooms, handles the full S
 - **Call Limiter:** 2m30s → farewell instructions; 3m → hard kill
 - **Crash Email:** `send_crash_email()` on entrypoint exceptions
 
+## Tone & Style Configurations
+
+Agent persona is modular. The base instructions contain only universal rules. Tone and style are injected from the payload:
+
+### Tones (`TONE_INSTRUCTIONS`)
+| Tone | Behavior |
+|------|----------|
+| `professional` | Polished, formal, business-appropriate |
+| `friendly` (default-ish) | Warm, conversational, natural fillers |
+| `empathetic` | Deeply caring, validating, compassionate |
+| `persuasive` | Confident, encouraging, benefit-focused |
+| `educational` | Informative, patient, step-by-step explainer |
+| `motivational` | Uplifting, affirming, confidence-building |
+
+### Styles (`STYLE_INSTRUCTIONS`)
+| Style | Behavior |
+|-------|----------|
+| `concise` | 1-2 sentences, no fluff |
+| `balanced` | 2-3 sentences, moderate detail |
+| `detailed` | Thorough, comprehensive when needed |
+
+Selected via payload: `{ "tone": "empathetic", "style": "concise" }`. If omitted, base instructions apply with no extra tone/style block.
+
 ## Configuration via Metadata Payload
 
 ```json
 {
   "prompt": "Custom agent instructions...",
+  "tone": "empathetic",
+  "style": "concise",
   "client_name": "Anurag",
   "call_id": "abc-123",
   "lead_id": "lead-456",
@@ -57,6 +82,8 @@ The core real-time voice AI agent. Connects to LiveKit rooms, handles the full S
 }
 ```
 
-## Post-Call Processing
+## Post-Call: DB Write via UI Server
+
+Call logs are no longer written directly from the agent to PostgreSQL. The agent sends the full payload as an HTTP POST to `{TELEPHONY_UI_URL}/api/v1/webhooks/call-logs`, using `aiohttp`. The UI Server handles the database insertion. This bypasses cloud security group blocks that prevent the agent worker from reaching the database.
 
 See [[Post-Call Processing.md]].

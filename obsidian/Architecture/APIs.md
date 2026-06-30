@@ -70,6 +70,17 @@ Delete a trunk.
 
 ---
 
+### POST /api/v1/webhooks/call-logs
+
+Internal endpoint. Receives the complete call log payload from the LiveKit agent (which cannot reach PostgreSQL directly due to security groups) and writes it to the database.
+
+```json
+// Request — full CALL_DATA_UPDATE webhook payload
+{ "event": "CALL_DATA_UPDATE", "data": { "call_id": "...", "call_status": "...", ... } }
+// Response
+{ "status": "success", "message": "Call log saved to database" }
+```
+
 ## Dashboard APIs
 
 All require JWT auth.

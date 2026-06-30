@@ -2,16 +2,13 @@
 
 ## 2026-06-30
 
+- **feat:** Tone/style system — 6 tones (professional/friendly/empathetic/persuasive/educational/motivational) and 3 styles (concise/balanced/detailed) configurable via payload metadata
+- **feat:** DB write path changed — agent now sends call log via HTTP to UI Server (`POST /api/v1/webhooks/call-logs`) instead of direct PostgreSQL write (bypasses cloud security groups)
+- **feat:** SIP failure immediate DB logging — failed calls saved to dashboard immediately on SIP error
+- **fix:** DB query schema updated — `call_duration_seconds` now nested under `call_log -> 'data'` to match new payload structure
+- **fix:** Removed stale `goodbye_task` from agent cleanup loop
+- **doc:** Created Post-merge hook (`scripts/vault-stale-check.sh`) — prints stale vault docs after merge
 - **doc:** Created `obsidian/` — comprehensive Obsidian knowledge base (48 files)
-  - `Architecture/` — 8 files (overview, components, data flow, APIs, DB, infra, decisions, deps)
-  - `Features/` — 10 files (index + 9 feature pages covering all modules)
-  - `Development/` — 7 files (sprint, TODO, backlog, bugs, changelog, releases, roadmap)
-  - `Agents/` — 6 files (master, backend, frontend, devops, docs, QA agent guides)
-  - `Knowledge/` — 7 files (standards, conventions, best practices, commands, debugging, env, glossary)
-  - `Context/` — 5 files (project summary, stack, repo map, external services)
-  - `Templates/` — 3 file templates
-  - `Inbox/` — placeholder
-- **doc:** Updated root `README.md` to reference the Obsidian vault
 
 ## 2026-06-15
 
