@@ -42,12 +42,14 @@ while IFS= read -r file; do
 done <<< "$STAGED"
 
 if [ -n "$STALE_DOCS" ]; then
-  # Check if corresponding vault docs are also staged
   STALE_DOCS_FILTERED=""
   while IFS= read -r doc; do
     doc=$(echo "$doc" | xargs)  # trim
     [ -z "$doc" ] && continue
-    if ! echo "$STAGED" | grep -q "$doc"; then
+    
+    # Check if the doc has uncommitted changes (working tree differs from HEAD)
+    # or if it's staged with changes. If unchanged, it's already up to date.
+    if ! git diff --quiet HEAD -- "$doc" 2>/dev/null; then
       STALE_DOCS_FILTERED="$STALE_DOCS_FILTERED  - $doc\n"
     fi
   done <<< "$(echo -e "$STALE_DOCS")"
@@ -55,10 +57,10 @@ if [ -n "$STALE_DOCS" ]; then
   if [ -n "$STALE_DOCS_FILTERED" ]; then
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo " ❌ COMMIT BLOCKED: Obsidian vault docs are stale"
+    echo " ❌ COMMIT BLOCKED: Obsidian vault docs need updating"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    echo " These vault files need updating for the staged changes:"
+    echo " These vault files have uncommitted changes but aren't staged:"
     echo ""
     echo -e "$STALE_DOCS_FILTERED"
     echo ""
