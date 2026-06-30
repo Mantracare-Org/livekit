@@ -212,10 +212,10 @@ async def entrypoint(ctx: JobContext):
         # If it's an inbound call, it won't be in the hash yet.
         is_tracked = await r.hexists("calls:active", call_id)
         if not is_tracked:
-            CARTESIA_MAX_CONCURRENCY = int(os.getenv("CARTESIA_MAX_CONCURRENCY", "5"))
+            MAX_CONCURRENCY = int(os.getenv("MAX_CONCURRENCY", os.getenv("CARTESIA_MAX_CONCURRENCY", "5")))
             active_count = await r.hlen("calls:active")
-            if active_count >= CARTESIA_MAX_CONCURRENCY:
-                logger.warning(f"Capacity full ({active_count}/{CARTESIA_MAX_CONCURRENCY}). Rejecting inbound call {call_id}.")
+            if active_count >= MAX_CONCURRENCY:
+                logger.warning(f"Capacity full ({active_count}/{MAX_CONCURRENCY}). Rejecting inbound call {call_id}.")
                 await r.aclose()
                 await ctx.room.disconnect()
                 return
@@ -414,7 +414,7 @@ Follow these specific instructions:
         language = str(language).lower()
 
     logger.info(f"TTS Language resolved to: '{language}' (None means auto-detect)")
-    logger.info(f"TTS Backend: LiveKit Inference (cartesia/sonic-3)")
+    logger.info("TTS Backend: LiveKit Inference (cartesia/sonic-3)")
     logger.info(f"TTS Voice: {voice_id} | Speed: {voice_speed}")
 
     tts_engine = inference.TTS(

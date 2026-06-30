@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mantra.dispatcher")
 
 # Limits
-CARTESIA_MAX_CONCURRENCY = int(os.getenv("CARTESIA_MAX_CONCURRENCY"))
+MAX_CONCURRENCY = int(os.getenv("MAX_CONCURRENCY", os.getenv("CARTESIA_MAX_CONCURRENCY", "5")))
 LIVEKIT_MAX_ROOMS = int(os.getenv("LIVEKIT_MAX_ROOMS"))
 AGENT_MAX_WORKERS = int(os.getenv("AGENT_MAX_WORKERS"))
 
@@ -106,7 +106,7 @@ async def main():
         logger.error("LiveKit credentials not found. Exiting.")
         return
 
-    logger.info(f"Dispatcher started. Limits: Cartesia={CARTESIA_MAX_CONCURRENCY}, Agent={AGENT_MAX_WORKERS}, LiveKit={LIVEKIT_MAX_ROOMS}")
+    logger.info(f"Dispatcher started. Limits: MaxConcurrency={MAX_CONCURRENCY}, Agent={AGENT_MAX_WORKERS}, LiveKit={LIVEKIT_MAX_ROOMS}")
 
     last_zombie_check = time.time()
 
@@ -122,7 +122,7 @@ async def main():
                 # 2. Check Capacity
                 active_count = await redis_client.hlen("calls:active")
                 available_capacity = min(
-                    CARTESIA_MAX_CONCURRENCY - active_count,
+                    MAX_CONCURRENCY - active_count,
                     AGENT_MAX_WORKERS - active_count,
                     LIVEKIT_MAX_ROOMS - active_count
                 )
