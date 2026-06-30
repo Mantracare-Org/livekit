@@ -418,6 +418,14 @@ Follow these specific instructions:
             initial_instructions += "1. NEVER repeat the same question twice. If the user dodges the question or asks a counter-question, answer them and DO NOT repeat your previous question.\n"
             initial_instructions += "2. DO NOT push for an appointment if the user hasn't explicitly agreed or if they are asking about other things. Let the conversation flow naturally.\n"
             initial_instructions += "3. Answer user's questions DIRECTLY without appending a sales pitch or appointment request at the end of every turn.\n"
+            
+            # Voicemail handling block
+            initial_instructions += "\n\nVOICEMAIL HANDLING (CRITICAL):\n"
+            initial_instructions += "- If you detect that you have reached a voicemail box or an answering machine, wait patiently for the \"beep\".\n"
+            initial_instructions += "- After the beep, leave the specific \"Voicemail Message\" provided in your context. If no specific message is provided, leave a brief, polite voicemail stating your purpose.\n"
+            initial_instructions += "- IMMEDIATELY after leaving the voicemail message, you MUST call the `end_call` tool to disconnect. Do not wait for a response.\n"
+
+
             logger.info(f"Loaded full context for {client_name}")
         except Exception as e:
             logger.error(f"Failed to parse metadata: {e}")

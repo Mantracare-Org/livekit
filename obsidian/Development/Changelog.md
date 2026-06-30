@@ -2,7 +2,8 @@
 
 ## 2026-06-30
 
-- **feat:** Tone/style system — 6 tones (professional/friendly/empathetic/persuasive/educational/motivational) and 3 styles (concise/balanced/detailed) configurable via payload metadata
+- **feat:** Voicemail handling — agent detects answering machine, waits for beep, leaves message, then auto-disconnects via `end_call`
+- **feat:** Tone/style system — 6 tones and 3 styles configurable via payload metadata
 - **feat:** DB write path changed — agent now sends call log via HTTP to UI Server (`POST /api/v1/webhooks/call-logs`) instead of direct PostgreSQL write (bypasses cloud security groups)
 - **feat:** SIP failure immediate DB logging — failed calls saved to dashboard immediately on SIP error
 - **fix:** DB query schema updated — `call_duration_seconds` now nested under `call_log -> 'data'` to match new payload structure

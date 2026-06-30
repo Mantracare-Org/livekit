@@ -16,3 +16,11 @@ After completing work, **update**:
 The vault (`obsidian/`) is the source of truth. `.planning/codebase/` is legacy — use the vault instead.
 
 After `git pull` or `git merge` updates master, a post-merge hook checks for stale vault docs and prints a reminder. If you see it, update the listed vault files before starting new work.
+
+## Setup (run once after clone)
+
+```bash
+# Install git hooks + vault merge guard
+git config merge.ours.driver true
+scripts/install-hooks.sh
+```

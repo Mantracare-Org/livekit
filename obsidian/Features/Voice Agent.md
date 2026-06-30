@@ -35,6 +35,7 @@ The core real-time voice AI agent. Connects to LiveKit rooms, handles the full S
 - **Inactivity Monitor:** 10s no-response timeout → force disconnect
 - **Farewell Safety Net:** Detects goodbye without `end_call` → force disconnect after 10s warmup, 3s poll
 - **Call Limiter:** 2m30s → farewell instructions; 3m → hard kill
+- **Voicemail Handling:** Agent detects voicemail → waits for beep → leaves message → calls `end_call` immediately
 - **Crash Email:** `send_crash_email()` on entrypoint exceptions
 
 ## Tone & Style Configurations

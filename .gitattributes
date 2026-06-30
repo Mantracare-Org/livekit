@@ -1,0 +1,3 @@
+# User-specific Obsidian config — always keep local version on merge
+.obsidian/graph.json merge=ours
+.obsidian/workspace.json merge=ours
