@@ -67,13 +67,13 @@ from livekit.agents import (
     AgentSession,
     JobContext,
     cli,
+    inference,
     llm,
 )
 from livekit.agents import TurnHandlingOptions
 
-from livekit.agents.tts import FallbackAdapter
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
-from livekit.plugins import openai, google, cartesia, silero, deepgram
+from livekit.plugins import openai, google, silero, deepgram
 
 # Import our production helpers
 from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend, normalize_to_iso8601, save_call_log_to_db
@@ -212,10 +212,10 @@ async def entrypoint(ctx: JobContext):
         # If it's an inbound call, it won't be in the hash yet.
         is_tracked = await r.hexists("calls:active", call_id)
         if not is_tracked:
-            CARTESIA_MAX_CONCURRENCY = int(os.getenv("CARTESIA_MAX_CONCURRENCY", "5"))
+            MAX_CONCURRENCY = int(os.getenv("MAX_CONCURRENCY", os.getenv("CARTESIA_MAX_CONCURRENCY", "5")))
             active_count = await r.hlen("calls:active")
-            if active_count >= CARTESIA_MAX_CONCURRENCY:
-                logger.warning(f"Capacity full ({active_count}/{CARTESIA_MAX_CONCURRENCY}). Rejecting inbound call {call_id}.")
+            if active_count >= MAX_CONCURRENCY:
+                logger.warning(f"Capacity full ({active_count}/{MAX_CONCURRENCY}). Rejecting inbound call {call_id}.")
                 await r.aclose()
                 await ctx.room.disconnect()
                 return
@@ -405,42 +405,27 @@ Follow these specific instructions:
     else:
         logger.info("Using OpenAI LLM")
         llm_engine = openai.LLM(model="gpt-4o-mini")
-    # Collect Cartesia API keys dynamically from environment variables
-    cartesia_keys = []
-    for key_env in ["CARTESIA_API_KEY", "CARTESIA_API_KEY_2", "CARTESIA_API_KEY_3"]:
-        key_val = os.getenv(key_env)
-        if key_val:
-            if "," in key_val:
-                cartesia_keys.extend([k.strip() for k in key_val.split(",") if k.strip()])
-            else:
-                cartesia_keys.append(key_val.strip())
-    
-    # If no keys are specified in variables, let it default to standard CARTESIA_API_KEY logic
-    if not cartesia_keys:
-        cartesia_keys = [None]
-
+    # TTS via LiveKit Inference — no separate Cartesia API key needed.
+    # LiveKit Inference authenticates using LIVEKIT_API_KEY + LIVEKIT_API_SECRET.
+    # Voice UUIDs are unchanged — all standard Cartesia voices are supported.
     language = "en"
         
     if language:
         language = str(language).lower()
 
-    # Diagnostic: log the resolved TTS language so we can verify in production
     logger.info(f"TTS Language resolved to: '{language}' (None means auto-detect)")
-    logger.info(f"TTS Keys count: {len(cartesia_keys)}")
-    logger.info(f"TTS Model: sonic-3 | Voice: {voice_id} | Speed: {voice_speed}")
+    logger.info("TTS Backend: LiveKit Inference (cartesia/sonic-3)")
+    logger.info(f"TTS Voice: {voice_id} | Speed: {voice_speed}")
 
-    # Setup Fallback TTS using the pool of keys to cycle on rate limits (429) / connection failures
-    tts_pool = [
-        cartesia.TTS(
-            model="sonic-3",
-            voice=voice_id,
-            speed=voice_speed,
-            language=language,
-            emotion=["calmness:high", "positivity:high"],
-            api_key=api_key,
-        )
-        for api_key in cartesia_keys
-    ]
+    tts_engine = inference.TTS(
+        model="cartesia/sonic-3",
+        voice=voice_id,
+        language=language,
+        extra_kwargs={
+            "speed": voice_speed,
+            "emotion": ["calmness:high", "positivity:high"],
+        }
+    )
 
     session = AgentSession(
         turn_handling=TurnHandlingOptions(
@@ -467,16 +452,8 @@ Follow these specific instructions:
         # Using Hindi STT as it's better at catching Hinglish/Indian English
         stt=deepgram.STT(model="nova-3", language="hi", smart_format=True, numerals=True),
         llm=llm_engine,
-        # # Using Hindi-Multilingual TTS to support both languages natively
-        # tts=cartesia.TTS(
-        #     model="sonic-3",
-        #     voice=voice_id,
-        #     speed=voice_speed,
-        #     language="hi"
-        # ),
 
-        # Using FallbackAdapter to support multiple API keys
-        tts=FallbackAdapter(tts_pool),
+        tts=tts_engine,
     )
 
     agent = Agent(
@@ -926,7 +903,7 @@ Follow these specific instructions:
                 logger.error(f"Webhook delivery failed: {e}", exc_info=True)
                 delivered = False
 
-            # 9. Free Cartesia Capacity slot in Redis
+            # 9. Free active call slot in Redis
             try:
                 call_id = call_payload.get("call_id")
                 if call_id:
