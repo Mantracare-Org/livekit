@@ -1209,7 +1209,6 @@ dependencies = [
     { name = "livekit-api" },
     { name = "livekit-plugins-ai-coustics" },
     { name = "livekit-plugins-assemblyai" },
-    { name = "livekit-plugins-cartesia" },
     { name = "livekit-plugins-deepgram" },
     { name = "livekit-plugins-google" },
     { name = "livekit-plugins-noise-cancellation" },
@@ -1234,7 +1233,6 @@ requires-dist = [
     { name = "livekit-api", specifier = ">=1.1.0" },
     { name = "livekit-plugins-ai-coustics" },
     { name = "livekit-plugins-assemblyai" },
-    { name = "livekit-plugins-cartesia" },
     { name = "livekit-plugins-deepgram" },
     { name = "livekit-plugins-google" },
     { name = "livekit-plugins-noise-cancellation", specifier = "~=0.2" },
@@ -1376,18 +1374,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8f/d4/c79252372ac0d7c158164aa87d12bcfab6b567f310c6e788ea635c45cf5e/livekit_plugins_assemblyai-1.5.4.tar.gz", hash = "sha256:48024e8de256f64f5ee7dd441fea271744cbeffcf9948cc9c01e08f0d33ab67a", size = 8949, upload-time = "2026-04-16T04:50:46.523Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2b/7b/ea3d648b7d9c69290db1c2bd92a3fd57bc62ed9c799a65f5c5d7abebbdfb/livekit_plugins_assemblyai-1.5.4-py3-none-any.whl", hash = "sha256:2b4da5d5cddee6c87ecebdbf46f405f29246a4e14ca4bab9d6824f86a47335e5", size = 9436, upload-time = "2026-04-16T04:50:45.144Z" },
-]
-
-[[package]]
-name = "livekit-plugins-cartesia"
-version = "1.5.4"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "livekit-agents" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ce/de/726e223c70bf50d447b99ae0b6b9f73129a526d815d17b23f70115e9db90/livekit_plugins_cartesia-1.5.4.tar.gz", hash = "sha256:a381933e7d9010bb244c6924779a0d30a02600e499808c0690a2adeb68ed0c25", size = 12784, upload-time = "2026-04-16T04:51:14.046Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d1/7d/0109a01c9a42adaed2640dbcc85e843883cd3e1912679c3d15c8457a3cf6/livekit_plugins_cartesia-1.5.4-py3-none-any.whl", hash = "sha256:55318eb15b2e834bacc613734e5f4b36bae5ce44084dabf3608ba53ecc7e98ae", size = 15704, upload-time = "2026-04-16T04:51:12.672Z" },
 ]
 
 [[package]]
