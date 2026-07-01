@@ -192,7 +192,10 @@ class AssistantFunctions:
             # Wait for the agent to finish speaking her goodbye, with a safety cap
             if self.session:
                 try:
-                    await asyncio.wait_for(self.session.wait_for_inactive(), timeout=12.0)
+                    if hasattr(self.session, 'wait_for_inactive'):
+                        await asyncio.wait_for(self.session.wait_for_inactive(), timeout=12.0)
+                    else:
+                        await asyncio.sleep(4.0)
                     logger.info("Agent finished speaking. Pausing briefly before disconnect.")
                 except asyncio.TimeoutError:
                     logger.warning("Agent did not finish speaking within 12s. Disconnecting anyway.")
@@ -560,6 +563,10 @@ Follow these specific instructions:
         
         while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
             await asyncio.sleep(1.0)
+
+            if call_state.get("amd_running", False):
+                continue
+
             now = asyncio.get_event_loop().time()
             agent_state = call_state.get("agent_state", "initializing")
             last_activity = call_state.get("last_activity", now)
@@ -680,7 +687,10 @@ Follow these specific instructions:
                 
                 try:
                     logger.info("Waiting for session to become inactive (25s timeout).")
-                    await asyncio.wait_for(session.wait_for_inactive(), timeout=25.0)
+                    if hasattr(session, 'wait_for_inactive'):
+                        await asyncio.wait_for(session.wait_for_inactive(), timeout=25.0)
+                    else:
+                        await asyncio.sleep(12.0)
                     logger.info("Session became inactive naturally.")
                 except asyncio.TimeoutError:
                     logger.warning("Session did not go inactive within 25s — force-disconnect at 3m will handle it.")
@@ -739,9 +749,10 @@ Follow these specific instructions:
 
         if participant_identity and not ctx.room.name.startswith("test_"):
             logger.info(f"Starting AMD detection for participant: {participant_identity}")
+            call_state["amd_running"] = True
             try:
                 session.room_io.set_participant(participant_identity)
-                async with AMD(session, participant_identity=participant_identity, wait_until_finished=True) as detector:
+                async with AMD(session, participant_identity=participant_identity) as detector:
                     result = await detector.execute()
                     logger.info(f"AMD result: {result.category}")
 
@@ -750,14 +761,16 @@ Follow these specific instructions:
                     elif result.category == "machine-vm":
                         call_state["amd_result"] = "voicemail"
                         logger.info("Voicemail detected — leaving brief message")
+                        await asyncio.sleep(1.5)
                         speech_handle = session.generate_reply(
                             instructions=(
-                                f"You've reached voicemail. Leave a BRIEF message saying: "
-                                "Introduce yourself first"
-                                f"Hi, this is a call for {client_name}. "
-                                "Mention the reason for the call"
-                                f"Please call us back when you're free. "
-                                "Then hang up immediately after the message."
+                                "[VOICEMAIL] You have reached voicemail. "
+                                "Say the following exact message — nothing else before or after:\n\n"
+                                "Introduce yourself first in one sentence"
+                                f"\"Hi, this is a call for {client_name}. "
+                                "Please call us back when you're free.\"\n\n"
+                                "That is the complete message. Do not add a greeting, goodbye, "
+                                "or anything else. Do not use any tools."
                             ),
                         )
                         await speech_handle.wait_for_playout()
@@ -772,6 +785,10 @@ Follow these specific instructions:
                         logger.info("IVR detected — proceeding as normal conversation")
             except Exception as e:
                 logger.error(f"AMD detection failed: {e}", exc_info=True)
+            finally:
+                call_state["amd_running"] = False
+                call_state["last_activity"] = asyncio.get_event_loop().time()
+                call_state["prompted_inactivity"] = False
         else:
             logger.info("No remote participant found or test room — skipping AMD")
 
