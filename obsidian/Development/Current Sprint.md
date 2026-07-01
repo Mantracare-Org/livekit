@@ -12,6 +12,7 @@
 ## Recently Completed
 
 - [x] LiveKit AMD voicemail detection (replaces LLM-prompt approach) — 2026-07-01
+- [x] AMD bugfixes — voicemail message verbatim, inactivity monitor race, `wait_for_inactive` crash — 2026-07-01
 - [x] Cartesia TTS migration to LiveKit Inference — 2026-06
 - [x] Dynamic tone/style configurations for agent prompts — 2026-06
 - [x] `end_call` tool with graceful disconnect — 2026-05

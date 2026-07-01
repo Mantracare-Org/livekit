@@ -3,6 +3,9 @@
 ## 2026-07-01
 
 - **feat:** LiveKit AMD (Answering Machine Detection) — replaces LLM-prompt-based voicemail with proper audio+LLM classification via `livekit.agents.AMD`. Bumped `livekit-agents` to `>=1.5.9`. Agent branches on `human`, `machine-vm`, `machine-unavailable`, `machine-ivr`, `uncertain`. Voicemail calls send status `Busy` to backend webhook.
+- **fix:** Voicemail message now speaks verbatim text instead of LLM-generated goodbye — removed "Then hang up" from instructions (was triggering `end_call` tool)
+- **fix:** Inactivity monitor no longer fires during AMD detection — added `amd_running` flag to suppress 5s silence prompt while AMD classifies the call; resets timer after AMD completes
+- **fix:** `wait_for_inactive` AttributeError in `end_call` + `call_limiter` — added `hasattr` guard; falls back to `asyncio.sleep` when method is missing in current SDK
 - **doc:** Updated vault docs for AMD voicemail detection
 
 ## 2026-06-30

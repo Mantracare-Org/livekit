@@ -35,7 +35,8 @@ The core real-time voice AI agent. Connects to LiveKit rooms, handles the full S
 - **Inactivity Monitor:** 10s no-response timeout → force disconnect
 - **Farewell Safety Net:** Detects goodbye without `end_call` → force disconnect after 10s warmup, 3s poll
 - **Call Limiter:** 2m30s → farewell instructions; 3m → hard kill
-- **Voicemail Handling (AMD):** LiveKit Answering Machine Detection (`livekit.agents.AMD`) classifies calls as `human`, `machine-vm`, `machine-unavailable`, `machine-ivr`, or `uncertain`. Runs on first user utterance after participant joins. Human/uncertain → normal conversation. Voicemail → brief message + disconnect. Unavailable → immediate disconnect. Status sent as `Busy` to backend.
+- **Voicemail Handling (AMD):** LiveKit Answering Machine Detection (`livekit.agents.AMD`) classifies calls as `human`, `machine-vm`, `machine-unavailable`, `machine-ivr`, or `uncertain`. Runs on first user utterance after participant joins. Human/uncertain → normal conversation. Voicemail → brief verbatim message + disconnect (`status: Busy`). Unavailable → immediate disconnect. Inactivity monitor is suppressed during AMD detection (uses `amd_running` flag).
+- **Known issues (AMD):** `wait_for_inactive` removed in current SDK — `hasattr` guard falls back to `asyncio.sleep`
 - **Crash Email:** `send_crash_email()` on entrypoint exceptions
 
 ## Tone & Style Configurations
