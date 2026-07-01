@@ -814,7 +814,7 @@ async def dashboard_stream(request: Request):
             yield "data: {\"error\": \"Redis not connected\"}\n\n"
             return
 
-        max_concurrency = int(os.getenv("CARTESIA_MAX_CONCURRENCY", "5"))
+        MAX_CONCURRENCY = int(os.getenv("MAX_CONCURRENCY", os.getenv("CARTESIA_MAX_CONCURRENCY", "5")))
 
         while True:
             try:
@@ -834,7 +834,7 @@ async def dashboard_stream(request: Request):
                 data = json.dumps({
                     "pending_calls": pending_count,
                     "active_calls": active_count,
-                    "max_concurrency": max_concurrency,
+                    "max_concurrency": MAX_CONCURRENCY,
                     "active_call_details": active_details,
                     "timestamp": time.time(),
                 })

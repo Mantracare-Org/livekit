@@ -11,7 +11,6 @@ dependencies = [
     "livekit-plugins-google",
     "livekit-plugins-deepgram",
     "livekit-plugins-assemblyai",
-    "livekit-plugins-cartesia",
     "livekit-plugins-ai-coustics",
     "livekit-plugins-noise-cancellation~=0.2",
     "fastapi>=0.115.0",
