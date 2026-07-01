@@ -66,6 +66,7 @@ from livekit.agents import (
     Agent,
     AgentServer,
     AgentSession,
+    AMD,
     JobContext,
     cli,
     inference,
@@ -418,13 +419,6 @@ Follow these specific instructions:
             initial_instructions += "1. NEVER repeat the same question twice. If the user dodges the question or asks a counter-question, answer them and DO NOT repeat your previous question.\n"
             initial_instructions += "2. DO NOT push for an appointment if the user hasn't explicitly agreed or if they are asking about other things. Let the conversation flow naturally.\n"
             initial_instructions += "3. Answer user's questions DIRECTLY without appending a sales pitch or appointment request at the end of every turn.\n"
-            
-            # Voicemail handling block
-            initial_instructions += "\n\nVOICEMAIL HANDLING (CRITICAL):\n"
-            initial_instructions += "- If you detect that you have reached a voicemail box or an answering machine, wait patiently for the \"beep\".\n"
-            initial_instructions += "- After the beep, leave the specific \"Voicemail Message\" provided in your context. If no specific message is provided, leave a brief, polite voicemail stating your purpose.\n"
-            initial_instructions += "- IMMEDIATELY after leaving the voicemail message, you MUST call the `end_call` tool to disconnect. Do not wait for a response.\n"
-
 
             logger.info(f"Loaded full context for {client_name}")
         except Exception as e:
@@ -736,12 +730,58 @@ Follow these specific instructions:
             call_state["timeline"].append({"event": "Remote Participant Joined", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
             await asyncio.sleep(0.5)
         
-        logger.info(f"Generating greeting for {client_name}...")
-        try:
-            session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
-            logger.info("Greeting generation requested.")
-        except RuntimeError as e:
-            logger.warning(f"Could not generate greeting (session may be closed): {e}")
+        # ── Answering Machine Detection (AMD) ────────────────────────────────
+        amd_handled = False
+        participant_identity = None
+        for p in ctx.room.remote_participants.values():
+            participant_identity = p.identity
+            break
+
+        if participant_identity and not ctx.room.name.startswith("test_"):
+            logger.info(f"Starting AMD detection for participant: {participant_identity}")
+            try:
+                session.room_io.set_participant(participant_identity)
+                async with AMD(session, participant_identity=participant_identity, wait_until_finished=True) as detector:
+                    result = await detector.execute()
+                    logger.info(f"AMD result: {result.category}")
+
+                    if result.category in ("human", "uncertain"):
+                        logger.info("Human detected — proceeding with normal conversation")
+                    elif result.category == "machine-vm":
+                        call_state["amd_result"] = "voicemail"
+                        logger.info("Voicemail detected — leaving brief message")
+                        speech_handle = session.generate_reply(
+                            instructions=(
+                                f"You've reached voicemail. Leave a BRIEF message saying: "
+                                "Introduce yourself first"
+                                f"Hi, this is a call for {client_name}. "
+                                "Mention the reason for the call"
+                                f"Please call us back when you're free. "
+                                "Then hang up immediately after the message."
+                            ),
+                        )
+                        await speech_handle.wait_for_playout()
+                        amd_handled = True
+                        await _force_disconnect_room(ctx)
+                    elif result.category == "machine-unavailable":
+                        call_state["amd_result"] = "unavailable"
+                        logger.info("Mailbox unavailable — ending call")
+                        amd_handled = True
+                        await _force_disconnect_room(ctx)
+                    elif result.category == "machine-ivr":
+                        logger.info("IVR detected — proceeding as normal conversation")
+            except Exception as e:
+                logger.error(f"AMD detection failed: {e}", exc_info=True)
+        else:
+            logger.info("No remote participant found or test room — skipping AMD")
+
+        if not amd_handled:
+            logger.info(f"Generating greeting for {client_name}...")
+            try:
+                session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
+                logger.info("Greeting generation requested.")
+            except RuntimeError as e:
+                logger.warning(f"Could not generate greeting (session may be closed): {e}")
         
         # Block until the room connection drops or the session closes
         while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
@@ -819,7 +859,9 @@ Follow these specific instructions:
                 except Exception as redis_err:
                     logger.error(f"Failed to fetch precise SIP status from Redis: {redis_err}")
                 
-                if redis_status:
+                if call_state.get("amd_result") in ("voicemail", "unavailable"):
+                    call_status = "Busy"
+                elif redis_status:
                     # If UI server caught a SIP error (Busy/No Answer), trust it completely
                     call_status = redis_status
                 elif not call_state["user_joined"]:

@@ -1,7 +1,7 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)  
-> **Last Updated:** 2026-06-30  
+> **Last Updated:** 2026-07-01  
 > **Status:** Active maintenance + incremental features
 
 ## In Progress
@@ -11,6 +11,7 @@
 
 ## Recently Completed
 
+- [x] LiveKit AMD voicemail detection (replaces LLM-prompt approach) — 2026-07-01
 - [x] Cartesia TTS migration to LiveKit Inference — 2026-06
 - [x] Dynamic tone/style configurations for agent prompts — 2026-06
 - [x] `end_call` tool with graceful disconnect — 2026-05

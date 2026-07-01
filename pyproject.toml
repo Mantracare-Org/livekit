@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "livekit-api>=1.1.0",
-    "livekit-agents[silero,turn-detector]~=1.4",
+    "livekit-agents[silero,turn-detector]>=1.5.9",
     "livekit-plugins-openai",
     "livekit-plugins-google",
     "livekit-plugins-deepgram",

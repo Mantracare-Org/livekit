@@ -1,8 +1,11 @@
 # Changelog
 
-## 2026-06-30
+## 2026-07-01
 
-- **feat:** Voicemail handling — agent detects answering machine, waits for beep, leaves message, then auto-disconnects via `end_call`
+- **feat:** LiveKit AMD (Answering Machine Detection) — replaces LLM-prompt-based voicemail with proper audio+LLM classification via `livekit.agents.AMD`. Bumped `livekit-agents` to `>=1.5.9`. Agent branches on `human`, `machine-vm`, `machine-unavailable`, `machine-ivr`, `uncertain`. Voicemail calls send status `Busy` to backend webhook.
+- **doc:** Updated vault docs for AMD voicemail detection
+
+## 2026-06-30
 - **feat:** Tone/style system — 6 tones and 3 styles configurable via payload metadata
 - **feat:** DB write path changed — agent now sends call log via HTTP to UI Server (`POST /api/v1/webhooks/call-logs`) instead of direct PostgreSQL write (bypasses cloud security groups)
 - **feat:** SIP failure immediate DB logging — failed calls saved to dashboard immediately on SIP error
