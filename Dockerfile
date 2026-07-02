@@ -51,6 +51,10 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
+# Install pgvector client support (if running pgvector-enabled queries)
+# Note: The PostgreSQL SERVER must have pgvector extension installed separately
+# RUN apt-get update && apt-get install -y postgresql-client && rm -rf /var/lib/apt/lists/*
+
 # Copy the application and virtualenv from the build stage
 COPY --from=build --chown=appuser:appuser /app /app
 WORKDIR /app

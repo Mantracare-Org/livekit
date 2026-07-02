@@ -389,6 +389,107 @@
             margin-top: 4px;
         }
 
+        /* Knowledge Base Styles */
+        .kb-tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 16px;
+            border-bottom: 1px solid var(--border-default);
+            padding-bottom: 4px;
+        }
+
+        .kb-tab {
+            padding: 8px 16px;
+            border: none;
+            background: transparent;
+            color: var(--text-secondary);
+            font-family: var(--font-sans);
+            font-size: var(--text-sm);
+            font-weight: var(--weight-medium);
+            cursor: pointer;
+            border-radius: 6px;
+            transition: all 0.15s ease;
+        }
+
+        .kb-tab:hover { background: var(--bg-hover); color: var(--text-primary); }
+        .kb-tab.active { background: var(--accent-subtle); color: var(--accent); }
+
+        .kb-pane { display: none; }
+        .kb-pane.active { display: block; }
+
+        .form-group { margin-bottom: 14px; }
+
+        .form-group label {
+            display: block;
+            font-size: var(--text-xs);
+            font-weight: var(--weight-medium);
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+
+        .required { color: var(--warning); }
+
+        .form-group input,
+        .form-group textarea {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--border-default);
+            border-radius: 6px;
+            background: var(--bg-input);
+            color: var(--text-primary);
+            font-family: var(--font-sans);
+            font-size: var(--text-sm);
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .form-group input:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px var(--accent-subtle);
+        }
+
+        .form-group textarea { resize: vertical; }
+
+        .btn {
+            padding: 10px 20px;
+            border-radius: 6px;
+            border: none;
+            font-family: var(--font-sans);
+            font-size: var(--text-sm);
+            font-weight: var(--weight-medium);
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover { background: var(--accent-hover); }
+        .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        .kb-result {
+            margin-top: 16px;
+            padding: 12px 16px;
+            border-radius: 6px;
+            font-size: var(--text-sm);
+            font-family: var(--font-mono);
+        }
+
+        .kb-result.success {
+            background: var(--success-subtle);
+            color: var(--success);
+            border: 1px solid var(--success);
+        }
+
+        .kb-result.error {
+            background: var(--danger-subtle);
+            color: var(--danger);
+            border: 1px solid var(--danger);
+        }
+
         #feed-list {
             max-height: 400px;
             overflow-y: auto;
@@ -567,6 +668,61 @@
                 </div>
                 <div class="card-body" style="padding:12px 16px;" id="feed-list">
                     <div class="empty-state">Waiting for activity...</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3>Knowledge Base</h3>
+                </div>
+                <div class="card-body">
+                    <div class="kb-tabs">
+                        <button class="kb-tab active" data-tab="upload">Upload File</button>
+                        <button class="kb-tab" data-tab="text">Paste Text</button>
+                        <button class="kb-tab" data-tab="url">From URL</button>
+                    </div>
+                    
+                    <div class="kb-pane active" id="kb-upload">
+                        <div class="form-group">
+                            <label for="kb-id-upload">KB ID <span class="required">*</span></label>
+                            <input type="text" id="kb-id-upload" placeholder="e.g., hospital-001" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="kb-file">File (.pdf, .txt, .md) <span class="required">*</span></label>
+                            <input type="file" id="kb-file" accept=".pdf,.txt,.md" required>
+                        </div>
+                        <button class="btn btn-primary" id="btn-kb-upload">Upload & Index</button>
+                    </div>
+                    
+                    <div class="kb-pane" id="kb-text">
+                        <div class="form-group">
+                            <label for="kb-id-text">KB ID <span class="required">*</span></label>
+                            <input type="text" id="kb-id-text" placeholder="e.g., hospital-001" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="kb-title">Title (optional)</label>
+                            <input type="text" id="kb-title" placeholder="e.g., Clinic Hours Policy">
+                        </div>
+                        <div class="form-group">
+                            <label for="kb-content">Content <span class="required">*</span></label>
+                            <textarea id="kb-content" rows="6" placeholder="Paste your text here..." required></textarea>
+                        </div>
+                        <button class="btn btn-primary" id="btn-kb-text">Index Text</button>
+                    </div>
+                    
+                    <div class="kb-pane" id="kb-url">
+                        <div class="form-group">
+                            <label for="kb-id-url">KB ID <span class="required">*</span></label>
+                            <input type="text" id="kb-id-url" placeholder="e.g., hospital-001" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="kb-url">URL <span class="required">*</span></label>
+                            <input type="url" id="kb-url" placeholder="https://example.com/page" required>
+                        </div>
+                        <button class="btn btn-primary" id="btn-kb-url">Fetch & Index</button>
+                    </div>
+                    
+                    <div id="kb-result" class="kb-result" style="display:none;"></div>
                 </div>
             </div>
         </div>

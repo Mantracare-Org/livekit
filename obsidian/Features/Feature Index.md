@@ -11,3 +11,4 @@
 | [[Post-Call Processing.md\|Post-Call Processing]] | `mantra/agent.py` + `utils.py` | Recording, analysis, webhook, DB storage |
 | [[Crash Alerts.md\|Crash Alerts]] | `mantra/email_alerts.py` | SMTP crash notifications with meme support |
 | [[Test Console.md\|Test Console]] | `static/index.html` + `app.js` | Manual agent testing via WebRTC |
+| [[Knowledge Base.md\|Knowledge Base]] | `mantra/knowledge_base.py` | Vectorless KB with LLM keyword extraction + Postgres FTS |

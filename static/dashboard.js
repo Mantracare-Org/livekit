@@ -191,6 +191,134 @@ async function loadCallHistory() {
     }).join('');
 }
 
+// ── Knowledge Base ─────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    // KB tab switching
+    document.querySelectorAll('.kb-tab').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.kb-tab').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.kb-pane').forEach(p => p.classList.remove('active'));
+            
+            btn.classList.add('active');
+            document.getElementById(`kb-${btn.dataset.tab}`).classList.add('active');
+            
+            hideKbResult();
+        });
+    });
+
+    // Upload file
+    document.getElementById('btn-kb-upload').addEventListener('click', async () => {
+        const kbId = document.getElementById('kb-id-upload').value.trim();
+        const file = document.getElementById('kb-file').files[0];
+        
+        if (!kbId || !file) return showKbResult('KB ID and file are required', 'error');
+        
+        showKbResult('Uploading and indexing...', 'info');
+        setBtnLoading('btn-kb-upload', true);
+        
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            const res = await fetch(`/api/v1/knowledge/upload?kb_id=${encodeURIComponent(kbId)}`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${TOKEN}` },
+                body: formData
+            });
+            
+            const data = await res.json();
+            if (res.ok) {
+                showKbResult(`Success! ${data.chunks_created} chunks created (${data.strategy_used})`, 'success');
+            } else {
+                showKbResult(data.error || 'Upload failed', 'error');
+            }
+        } catch (e) {
+            showKbResult(e.message, 'error');
+        } finally {
+            setBtnLoading('btn-kb-upload', false);
+        }
+    });
+
+    // Index text
+    document.getElementById('btn-kb-text').addEventListener('click', async () => {
+        const kbId = document.getElementById('kb-id-text').value.trim();
+        const content = document.getElementById('kb-content').value.trim();
+        const title = document.getElementById('kb-title').value.trim();
+        
+        if (!kbId || !content) return showKbResult('KB ID and content are required', 'error');
+        
+        showKbResult('Indexing...', 'info');
+        setBtnLoading('btn-kb-text', true);
+        
+        try {
+            const res = await fetch('/api/v1/knowledge/text', {
+                method: 'POST',
+                headers: { ...apiHeaders() },
+                body: JSON.stringify({ kb_id: kbId, content, title: title || undefined })
+            });
+            
+            const data = await res.json();
+            if (res.ok) {
+                showKbResult(`Success! ${data.chunks_created} chunks created (${data.strategy_used})`, 'success');
+            } else {
+                showKbResult(data.error || 'Indexing failed', 'error');
+            }
+        } catch (e) {
+            showKbResult(e.message, 'error');
+        } finally {
+            setBtnLoading('btn-kb-text', false);
+        }
+    });
+
+    // Fetch URL
+    document.getElementById('btn-kb-url').addEventListener('click', async () => {
+        const kbId = document.getElementById('kb-id-url').value.trim();
+        const url = document.getElementById('kb-url').value.trim();
+        
+        if (!kbId || !url) return showKbResult('KB ID and URL are required', 'error');
+        
+        showKbResult('Fetching and indexing...', 'info');
+        setBtnLoading('btn-kb-url', true);
+        
+        try {
+            const res = await fetch('/api/v1/knowledge/url', {
+                method: 'POST',
+                headers: { ...apiHeaders() },
+                body: JSON.stringify({ kb_id: kbId, url })
+            });
+            
+            const data = await res.json();
+            if (res.ok) {
+                showKbResult(`Success! ${data.chunks_created} chunks created (${data.strategy_used})`, 'success');
+            } else {
+                showKbResult(data.error || 'URL indexing failed', 'error');
+            }
+        } catch (e) {
+            showKbResult(e.message, 'error');
+        } finally {
+            setBtnLoading('btn-kb-url', false);
+        }
+    });
+
+    function showKbResult(message, type) {
+        const el = document.getElementById('kb-result');
+        el.textContent = message;
+        el.className = `kb-result ${type}`;
+        el.style.display = 'block';
+    }
+
+    function hideKbResult() {
+        document.getElementById('kb-result').style.display = 'none';
+    }
+
+    function setBtnLoading(btnId, loading) {
+        const btn = document.getElementById(btnId);
+        btn.disabled = loading;
+        btn.textContent = loading ? 'Processing...' : btn.dataset.label || btn.textContent;
+        if (!loading) btn.dataset.label = btn.textContent;
+    }
+});
+
 // ── Init ─────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     const username = localStorage.getItem('username');

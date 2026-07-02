@@ -78,6 +78,9 @@ from livekit.plugins import openai, google, silero, deepgram
 # Import our production helpers
 from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend, normalize_to_iso8601, save_call_log_to_db
 
+# Import knowledge base
+from mantra.knowledge_base import PostgresKnowledgeBase
+
 
 
 VOICE_MAPPING = {
@@ -106,19 +109,29 @@ def create_bg_task(coro):
     return task
 
 class AssistantFunctions:
-    def __init__(self, job_metadata: str, room_name: str, ctx: JobContext = None):
+    def __init__(self, job_metadata: str, room_name: str, ctx: JobContext = None, kb_id: str = None):
         self.job_metadata = job_metadata
         self.room_name = room_name
         self.handoff_triggered = False
         self.agent = None
         self.session = None
         self.ctx = ctx
+        self.kb_id = kb_id
+        self._kb: PostgresKnowledgeBase | None = None
+
+    async def _get_kb(self) -> PostgresKnowledgeBase:
+        if self._kb is None:
+            dsn = (
+                f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
+                f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
+            )
+            self._kb = PostgresKnowledgeBase(dsn)
+        return self._kb
 
     @llm.function_tool(description="End the call. Call this tool when the conversation is over — the user said goodbye, is not interested, or there is nothing left to discuss.")
     async def end_call(self):
         logger.info("Agent decided to end the call via function tool. Waiting for speech to finish before disconnecting.")
         async def graceful_disconnect():
-            # Wait for the agent to finish speaking her goodbye, with a safety cap
             if self.session:
                 try:
                     await asyncio.wait_for(self.session.wait_for_inactive(), timeout=12.0)
@@ -127,12 +140,42 @@ class AssistantFunctions:
                     logger.warning("Agent did not finish speaking within 12s. Disconnecting anyway.")
             else:
                 await asyncio.sleep(4.0)
-            # Small human-like pause after the last word before hanging up
             await asyncio.sleep(1.0)
             if self.ctx:
                 await _force_disconnect_room(self.ctx)
         self._disconnect_task = create_bg_task(graceful_disconnect())
         return "Call is ending. Say a brief, warm goodbye now."
+
+    @llm.function_tool(
+        description="Search the knowledge base for information relevant to the user's question. "
+                    "Call this when the user asks something you don't know or that requires specific "
+                    "knowledge about services, policies, hours, or offerings."
+    )
+    async def query_knowledge_base(
+        self,
+        search_text: Annotated[str, "The search query — what the user asked about"],
+        top_k: Annotated[int, "Number of results to return (default 3)"] = 3
+    ) -> str:
+        if not self.kb_id:
+            return "No knowledge base configured for this call."
+        
+        kb = await self._get_kb()
+        try:
+            from mantra.knowledge_base import generate_embedding
+            query_embedding = await generate_embedding(search_text)
+            results = await kb.search(self.kb_id, query_embedding, top_k=top_k)
+            
+            if not results:
+                return "No relevant information found in the knowledge base."
+            
+            # Format results for the LLM
+            formatted = []
+            for i, page in enumerate(results, 1):
+                formatted.append(f"[{i}] {page.title}: {page.content[:500]}")
+            return "\n\n".join(formatted)
+        except Exception as e:
+            logger.error(f"KB query failed: {e}")
+            return "Error searching knowledge base. Please try again."
 
     # @llm.ai_callable(description="Transfer the call to a human assistant when requested or if the issue is too complex.")
     # async def transfer_to_human(
@@ -186,7 +229,15 @@ async def entrypoint(ctx: JobContext):
     logger.info(f"Metadata: {ctx.job.metadata}")
 
     # Initialize function context for handoff
-    fnc_ctx = AssistantFunctions(ctx.job.metadata, ctx.room.name, ctx=ctx)
+    kb_id = None
+    if ctx.job.metadata:
+        try:
+            meta_payload = json.loads(ctx.job.metadata)
+            kb_id = meta_payload.get("kb_id")
+        except:
+            pass
+    
+    fnc_ctx = AssistantFunctions(ctx.job.metadata, ctx.room.name, ctx=ctx, kb_id=kb_id)
     call_state = {
         "user_joined": False,
         "timeline": [{"event": "Agent Session Started", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"}]
@@ -458,7 +509,7 @@ Follow these specific instructions:
 
     agent = Agent(
         instructions=initial_instructions,
-        tools=[fnc_ctx.end_call]
+        tools=[fnc_ctx.end_call, fnc_ctx.query_knowledge_base]
     )
     fnc_ctx.agent = agent
     fnc_ctx.session = session

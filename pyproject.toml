@@ -24,6 +24,9 @@ dependencies = [
     "pydub>=0.25.1",
     "redis>=8.0.0",
     "pyjwt>=2.8.0",
+    "openai>=1.30.0",
+    "pypdf>=3.17.0",
+    "trafilatura>=1.8.0",
 ]
 
 [tool.setuptools.packages.find]
