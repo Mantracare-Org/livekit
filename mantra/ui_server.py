@@ -15,6 +15,7 @@ import asyncpg
 import redis.asyncio as redis
 from fastapi import FastAPI, Request, HTTPException
 from mantra.email_alerts import send_crash_email
+from mantra.utils import save_call_log_to_db
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from livekit import api
@@ -283,6 +284,41 @@ async def dispatch_test(request: Request):
     })
 
 
+@app.post("/api/v1/webhooks/call-logs")
+async def handle_call_log_webhook(request: Request):
+    """
+    Webhook handler to receive the complete call log payload from the LiveKit Agent
+    and save it to the PostgreSQL database locally (bypassing cloud agent security group blocks).
+    """
+    payload = await request.json()
+
+    if not payload:
+        return JSONResponse({"error": "No payload provided"}, status_code=400)
+    
+    # We expect the full webhook payload.
+    # We will extract call_id, status, and recording_url from the top-level or data object
+    # but we will store the ENTIRE payload as the call_log JSON.
+    data = payload.get("data", {})
+    call_id = data.get("call_id") or payload.get("call_id") or "unknown_call_id"
+    status = payload.get("status") or "Unknown"
+    recording_url = data.get("recording_url") or payload.get("recording_url")
+    
+    logger.info(f"Received call log payload for call_id: {call_id}. Saving to database...")
+    
+    try:
+        await save_call_log_to_db(
+            call_id=str(call_id),
+            call_log=json.dumps(payload, indent=2),  # Save the complete payload
+            status=status,
+            recording_url=recording_url
+        )
+        logger.info(f"Successfully saved call log for {call_id} to database.")
+        return JSONResponse({"status": "success", "message": "Call log saved to database"})
+    except Exception as e:
+        logger.error(f"Failed to save call log to database: {e}\n{traceback.format_exc()}")
+        return JSONResponse({"error": f"Database insertion failed: {str(e)}"}, status_code=500)
+
+
 @app.post("/api/v1/webhooks/telephony")
 async def handle_outbound_call_webhook(request: Request):
     """
@@ -386,6 +422,25 @@ async def handle_outbound_call_webhook(request: Request):
                 logger.info(f"Deleted room {room_name} due to SIP failure")
             except Exception as cleanup_err:
                 logger.error(f"Failed to cleanup room after SIP failure: {cleanup_err}")
+
+            # Directly save the failed call log to the database so it appears in the dashboard immediately
+            try:
+                payload_copy = payload.copy()
+                payload_copy["status"] = status_guess
+                payload_copy["event"] = "CALL_DATA_UPDATE"
+                payload_copy["data"] = payload.copy()
+                payload_copy["data"]["call_status"] = status_guess
+                payload_copy["data"]["call_duration_seconds"] = 0
+                
+                await save_call_log_to_db(
+                    call_id=str(call_id),
+                    call_log=json.dumps(payload_copy, indent=2),
+                    status=status_guess,
+                    recording_url=""
+                )
+                logger.info(f"Directly saved failed call log for {call_id} to DB")
+            except Exception as db_e:
+                logger.error(f"Failed to directly save SIP error call log: {db_e}")
 
     # Fire and forget the SIP task
     import asyncio
@@ -811,9 +866,9 @@ async def dashboard_metrics(request: Request):
                     COUNT(*) FILTER (WHERE status = 'Incomplete')::int AS incomplete_calls,
                     ROUND(
                         AVG(
-                            CAST(NULLIF(call_log::json ->> 'call_duration_seconds', '') AS integer)
+                            CAST(NULLIF(call_log::json -> 'data' ->> 'call_duration_seconds', '') AS integer)
                         ) FILTER (
-                            WHERE call_log::json ->> 'call_duration_seconds' ~ '^\d+$'
+                            WHERE call_log::json -> 'data' ->> 'call_duration_seconds' ~ '^[0-9]+$'
                         )
                     )::int AS avg_duration_seconds
                 FROM call_logs
@@ -867,7 +922,8 @@ async def dashboard_calls(request: Request, limit: int = 20, offset: int = 0):
 
         calls = []
         for row in rows:
-            cl = row["call_log"] if isinstance(row["call_log"], dict) else {}
+            cl_raw = row["call_log"] if isinstance(row["call_log"], dict) else {}
+            cl = cl_raw.get("data", cl_raw)
             calls.append({
                 "call_id": row["call_id"],
                 "status": row["status"],
