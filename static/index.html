@@ -289,7 +289,7 @@
 
         .input-grid {
             display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
+            grid-template-columns: 1fr 1fr;
             gap: 12px;
         }
 
@@ -375,6 +375,7 @@
                 <div class="console-nav">
                     <a href="/dashboard">Dashboard</a>
                     <a href="/console" class="active">Test Console</a>
+                    <a href="/kb-chat">KB Chat</a>
                 </div>
             </div>
             <div class="status-badge">
@@ -416,6 +417,12 @@
                     <div class="field">
                         <label>Lead ID</label>
                         <input type="text" id="input-lead-id" placeholder="e.g. 46093">
+                    </div>
+                    <div class="field">
+                        <label>Knowledge Base ID (Optional)</label>
+                        <select id="input-kb-id">
+                            <option value="">None (No KB context)</option>
+                        </select>
                     </div>
                 </div>
                 <div class="field mt-4">

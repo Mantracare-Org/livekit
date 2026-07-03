@@ -40,18 +40,20 @@ async def run_migration():
         await conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
         logger.info("pgvector extension created successfully")
         
+        await conn.execute("DROP TABLE IF EXISTS kb_pages;")
+        
         logger.info("Creating kb_pages table...")
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS kb_pages (
-                id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                kb_id       TEXT NOT NULL,
-                title       TEXT NOT NULL,
-                content     TEXT NOT NULL,
-                source_type TEXT NOT NULL,
-                source_ref  TEXT,
-                embedding   vector(1536),
-                page_meta   JSONB DEFAULT '{}',
-                created_at  TIMESTAMPTZ DEFAULT NOW()
+                id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                kb_id           TEXT NOT NULL,
+                title           TEXT NOT NULL,
+                content         TEXT NOT NULL,
+                source_type     TEXT NOT NULL,
+                embedding       vector(1536),
+                page_meta       JSONB DEFAULT '{}',
+                content_in_text TEXT NOT NULL,
+                created_at      TIMESTAMPTZ DEFAULT NOW()
             );
         """)
         logger.info("kb_pages table created successfully")

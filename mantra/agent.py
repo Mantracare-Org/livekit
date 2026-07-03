@@ -146,73 +146,7 @@ class AssistantFunctions:
         self._disconnect_task = create_bg_task(graceful_disconnect())
         return "Call is ending. Say a brief, warm goodbye now."
 
-    @llm.function_tool(
-        description="Search the knowledge base for information relevant to the user's question. "
-                    "Call this when the user asks something you don't know or that requires specific "
-                    "knowledge about services, policies, hours, or offerings."
-    )
-    async def query_knowledge_base(
-        self,
-        search_text: Annotated[str, "The search query — what the user asked about"],
-        top_k: Annotated[int, "Number of results to return (default 3)"] = 3
-    ) -> str:
-        if not self.kb_id:
-            return "No knowledge base configured for this call."
-        
-        kb = await self._get_kb()
-        try:
-            from mantra.knowledge_base import generate_embedding
-            query_embedding = await generate_embedding(search_text)
-            results = await kb.search(self.kb_id, query_embedding, top_k=top_k)
-            
-            if not results:
-                return "No relevant information found in the knowledge base."
-            
-            # Format results for the LLM
-            formatted = []
-            for i, page in enumerate(results, 1):
-                formatted.append(f"[{i}] {page.title}: {page.content[:500]}")
-            return "\n\n".join(formatted)
-        except Exception as e:
-            logger.error(f"KB query failed: {e}")
-            return "Error searching knowledge base. Please try again."
 
-    # @llm.ai_callable(description="Transfer the call to a human assistant when requested or if the issue is too complex.")
-    # async def transfer_to_human(
-    #     self,
-    #     reason: Annotated[str, "The reason why a human is needed"]
-    # ):
-    #     logger.info(f"Handoff requested. Reason: {reason}")
-    #     self.handoff_triggered = True
-    #     
-    #     # Parse metadata to get call/lead IDs
-    #     try:
-    #         payload = json.loads(self.job_metadata) if self.job_metadata else {}
-    #     except Exception:
-    #         payload = {}
-    # 
-    #     # Notify backend
-    #     webhook_payload = {
-    #         "event": "HANDOFF_REQUESTED",
-    #         "data": {
-    #             "room_name": self.room_name,
-    #             "reason": reason,
-    #             "call_id": payload.get("call_id") or payload.get("voice_id"),
-    #             "lead_id": payload.get("lead_id"),
-    #             "client_name": payload.get("client_name", "User"),
-    #         }
-    #     }
-    #     await send_to_backend(webhook_payload)
-    #     
-    #     if self.agent:
-    #         logger.info("Handoff triggered — switching to passive monitoring instructions")
-    #         await self.agent.update_instructions(
-    #             "A human has joined the call. You are now in PASSIVE MONITORING MODE. "
-    #             "DO NOT speak. DO NOT respond to the user. DO NOT generate any audio. "
-    #             "Just observe and maintain the transcript for the final summary."
-    #         )
-    # 
-    #     return "I am connecting you to a human assistant now. Please stay on the line. I will remain on the call to record and summarize our conversation."
 
 @server.rtc_session(agent_name="mantra-agent")
 async def entrypoint(ctx: JobContext):
@@ -396,6 +330,22 @@ Follow these specific instructions:
             initial_instructions += "1. NEVER repeat the same question twice. If the user dodges the question or asks a counter-question, answer them and DO NOT repeat your previous question.\n"
             initial_instructions += "2. DO NOT push for an appointment if the user hasn't explicitly agreed or if they are asking about other things. Let the conversation flow naturally.\n"
             initial_instructions += "3. Answer user's questions DIRECTLY without appending a sales pitch or appointment request at the end of every turn.\n"
+            
+            if kb_id:
+                try:
+                    kb = await fnc_ctx._get_kb()
+                    pool = await kb._get_pool()
+                    async with pool.acquire() as conn:
+                        rows = await conn.fetch("SELECT title, content_in_text FROM kb_pages WHERE kb_id = $1 ORDER BY created_at ASC", kb_id)
+                        if rows:
+                            initial_instructions += "\n\n*** KNOWLEDGE BASE INFORMATION ***\n"
+                            initial_instructions += "The following is the official knowledge base. Use this information as your absolute source of truth to answer any questions. Do NOT guess or hallucinate details outside of this.\n\n"
+                            for r in rows:
+                                initial_instructions += f"--- {r['title']} ---\n{r['content_in_text']}\n\n"
+                            logger.info(f"Injected {len(rows)} KB pages directly into the main job instructions.")
+                except Exception as e:
+                    logger.error(f"Failed to load KB content upfront: {e}")
+                
             logger.info(f"Loaded full context for {client_name}")
         except Exception as e:
             logger.error(f"Failed to parse metadata: {e}")
@@ -509,7 +459,7 @@ Follow these specific instructions:
 
     agent = Agent(
         instructions=initial_instructions,
-        tools=[fnc_ctx.end_call, fnc_ctx.query_knowledge_base]
+        tools=[fnc_ctx.end_call]
     )
     fnc_ctx.agent = agent
     fnc_ctx.session = session

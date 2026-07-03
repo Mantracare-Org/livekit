@@ -300,6 +300,125 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Test Chat
+    let chatHistory = [];
+    const chatInput = document.getElementById('chat-input');
+    const btnKbChat = document.getElementById('btn-kb-chat');
+    const chatArea = document.getElementById('chat-area');
+    const kbIdChatSelect = document.getElementById('kb-id-chat');
+
+    async function loadKbIdsForDashboard() {
+        if (!kbIdChatSelect) return;
+        try {
+            const res = await fetch('/api/v1/knowledge/list', { headers: apiHeaders() });
+            const data = await res.json();
+            kbIdChatSelect.innerHTML = '';
+            if (data.status === 'success' && data.kbs.length > 0) {
+                data.kbs.forEach(kb => {
+                    const opt = document.createElement('option');
+                    opt.value = kb;
+                    opt.textContent = kb;
+                    kbIdChatSelect.appendChild(opt);
+                });
+            } else {
+                kbIdChatSelect.innerHTML = '<option value="">No KBs found</option>';
+            }
+        } catch (e) {
+            kbIdChatSelect.innerHTML = '<option value="">Error loading</option>';
+        }
+    }
+    loadKbIdsForDashboard();
+
+    function appendChatMessage(text, isUser, context = null) {
+        const msgDiv = document.createElement('div');
+        msgDiv.style.maxWidth = '85%';
+        msgDiv.style.padding = '10px 14px';
+        msgDiv.style.borderRadius = '8px';
+        msgDiv.style.fontSize = 'var(--text-sm)';
+        msgDiv.style.lineHeight = '1.4';
+        
+        let contentHtml = '';
+        
+        if (isUser) {
+            msgDiv.style.background = 'var(--accent-primary)';
+            msgDiv.style.color = 'white';
+            msgDiv.style.alignSelf = 'flex-end';
+            msgDiv.style.borderBottomRightRadius = '2px';
+            // Basic escape for user input
+            const safeText = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            contentHtml = `<div>${safeText}</div>`;
+        } else {
+            msgDiv.style.background = 'var(--bg-surface)';
+            msgDiv.style.border = '1px solid var(--border-default)';
+            msgDiv.style.alignSelf = 'flex-start';
+            msgDiv.style.borderBottomLeftRadius = '2px';
+            // Render markdown for AI response
+            contentHtml = `<div class="markdown-body" style="font-size: 0.9rem; line-height: 1.5;">${marked.parse(text)}</div>`;
+        }
+        
+        if (context && context.length > 0) {
+            let contextHtml = '<div class="context-box" style="font-size: 0.8rem; background: rgba(218, 165, 32, 0.1); border-left: 3px solid #DAA520; padding: 8px; margin-bottom: 8px; border-radius: 4px;"><strong>Retrieved Context:</strong><br>';
+            context.forEach((c, idx) => {
+                const preview = c.preview ? c.preview.substring(0, 150) : "";
+                contextHtml += `<div style="margin-top: 4px;">[${idx + 1}] <b style="color: #DAA520;">${c.title}</b>: <span style="color: var(--text-tertiary);">${preview}...</span></div>`;
+            });
+            contextHtml += '</div>';
+            contentHtml = contextHtml + contentHtml;
+        }
+        
+        msgDiv.innerHTML = contentHtml;
+        chatArea.appendChild(msgDiv);
+        chatArea.scrollTop = chatArea.scrollHeight;
+    }
+
+    async function handleChat() {
+        const message = chatInput.value.trim();
+        const kbId = document.getElementById('kb-id-chat').value.trim();
+        
+        if (!message || !kbId) return;
+        
+        appendChatMessage(message, true);
+        chatInput.value = '';
+        chatInput.disabled = true;
+        btnKbChat.disabled = true;
+        btnKbChat.textContent = '...';
+        hideKbResult();
+        
+        try {
+            const response = await fetch('/api/v1/kb/chat', {
+                method: 'POST',
+                headers: { ...apiHeaders() },
+                body: JSON.stringify({
+                    kb_id: kbId,
+                    message: message,
+                    history: chatHistory
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                appendChatMessage(data.reply, false, data.context);
+                chatHistory.push({ role: "user", content: message });
+                chatHistory.push({ role: "assistant", content: data.reply });
+            } else {
+                appendChatMessage("Error: " + (data.error || "Unknown error"), false);
+            }
+        } catch (err) {
+            appendChatMessage("Failed to connect to server.", false);
+        } finally {
+            chatInput.disabled = false;
+            btnKbChat.disabled = false;
+            btnKbChat.textContent = 'Send';
+            chatInput.focus();
+        }
+    }
+
+    btnKbChat.addEventListener('click', handleChat);
+    chatInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') handleChat();
+    });
+
     function showKbResult(message, type) {
         const el = document.getElementById('kb-result');
         el.textContent = message;

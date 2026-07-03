@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Knowledge Base Chat Tester</title>
+    <style>
+        :root {
+            --bg-page:           #1e1f22;
+            --bg-surface:        #2b2d31;
+            --bg-elevated:       #313338;
+            --bg-hover:          #35373c;
+            --bg-input:          #1e1f22;
+            
+            --border-default:    #3f4148;
+            --border-accent:     #5865F2;
+            
+            --text-primary:      #f2f3f5;
+            --text-secondary:    #949ba4;
+            
+            --accent:            #5865F2;
+            --accent-hover:      #4752c4;
+            --warning-subtle:    rgba(250, 166, 26, 0.1);
+            --warning-border:    #faa61a;
+            --warning-text:      #fcd34d;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-page);
+            color: var(--text-primary);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        .container {
+            width: 100%;
+            max-width: 800px;
+            background: var(--bg-surface);
+            border-radius: 12px;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.24);
+            display: flex;
+            flex-direction: column;
+            height: 90vh;
+            overflow: hidden;
+            border: 1px solid var(--border-default);
+        }
+        .header {
+            padding: 20px;
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-default);
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+        .header label {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-right: 8px;
+        }
+        .kb-input {
+            padding: 8px 12px;
+            border-radius: 4px;
+            border: 1px solid var(--border-default);
+            background: var(--bg-input);
+            color: var(--text-primary);
+            outline: none;
+            font-size: 0.9rem;
+        }
+        .kb-input:focus {
+            border-color: var(--accent);
+        }
+        .chat-area {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            background: var(--bg-surface);
+        }
+        .message {
+            max-width: 85%;
+            padding: 12px 16px;
+            border-radius: 8px;
+            line-height: 1.5;
+            font-size: 0.95rem;
+        }
+        .user-message {
+            background: var(--accent);
+            color: white;
+            align-self: flex-end;
+            border-bottom-right-radius: 2px;
+        }
+        .ai-message {
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            border: 1px solid var(--border-default);
+            align-self: flex-start;
+            border-bottom-left-radius: 2px;
+        }
+        .context-box {
+            background: var(--warning-subtle);
+            border: 1px solid var(--border-default);
+            border-left: 3px solid var(--warning-border);
+            border-radius: 4px;
+            padding: 10px;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+        .context-title {
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: var(--warning-border);
+        }
+        .input-area {
+            padding: 20px;
+            background: var(--bg-surface);
+            border-top: 1px solid var(--border-default);
+            display: flex;
+            gap: 12px;
+        }
+        #message-input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 1px solid var(--border-default);
+            border-radius: 8px;
+            outline: none;
+            font-size: 1rem;
+            background: var(--bg-input);
+            color: var(--text-primary);
+        }
+        #message-input:focus {
+            border-color: var(--accent);
+        }
+        #message-input::placeholder {
+            color: var(--text-secondary);
+        }
+        button {
+            padding: 12px 24px;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:hover {
+            background: var(--accent-hover);
+        }
+        button:disabled {
+            background: var(--border-default);
+            color: var(--text-secondary);
+            cursor: not-allowed;
+        }
+        .loading {
+            align-self: flex-start;
+            color: var(--text-secondary);
+            font-style: italic;
+            font-size: 0.9rem;
+            display: none;
+            margin-left: 20px;
+            margin-bottom: 10px;
+        }
+    <style>
+        /* ... existing styles ... */
+        .markdown-body {
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+        .markdown-body p { margin-top: 0; margin-bottom: 8px; }
+        .markdown-body ul, .markdown-body ol { margin-top: 0; margin-bottom: 8px; padding-left: 20px; }
+        .markdown-body strong { color: #ffffff; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h1>KB Chat Tester</h1>
+        <div>
+            <label for="kb-id">KB ID: </label>
+            <select id="kb-id" class="kb-input">
+                <option value="">Loading...</option>
+            </select>
+        </div>
+    </div>
+    
+    <div class="chat-area" id="chat-area">
+        <div class="message ai-message">
+            Hello! Type a question to search your Knowledge Base. I will fetch the context and try to answer it.
+        </div>
+    </div>
+    
+    <div class="loading" id="loading">Thinking and fetching from KB...</div>
+    
+    <div class="input-area">
+        <input type="text" id="message-input" placeholder="Type your question..." autocomplete="off">
+        <button id="send-btn">Send</button>
+    </div>
+</div>
+
+<script>
+    const chatArea = document.getElementById('chat-area');
+    const messageInput = document.getElementById('message-input');
+    const sendBtn = document.getElementById('send-btn');
+    const kbIdSelect = document.getElementById('kb-id');
+    const loading = document.getElementById('loading');
+    
+    let history = [];
+    
+    // Load KB IDs
+    async function loadKbIds() {
+        try {
+            const res = await fetch('/api/v1/knowledge/list');
+            const data = await res.json();
+            kbIdSelect.innerHTML = '';
+            if (data.status === 'success' && data.kbs.length > 0) {
+                data.kbs.forEach(kb => {
+                    const opt = document.createElement('option');
+                    opt.value = kb;
+                    opt.textContent = kb;
+                    kbIdSelect.appendChild(opt);
+                });
+            } else {
+                kbIdSelect.innerHTML = '<option value="">No KBs found</option>';
+            }
+        } catch (e) {
+            kbIdSelect.innerHTML = '<option value="">Error loading</option>';
+        }
+    }
+    
+    loadKbIds();
+
+    function appendMessage(text, isUser, context = null) {
+        const msgDiv = document.createElement('div');
+        msgDiv.className = `message ${isUser ? 'user-message' : 'ai-message'}`;
+        
+        let contentHtml = '';
+        if (isUser) {
+            // Basic escape for user input
+            const safeText = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            contentHtml = `<div>${safeText}</div>`;
+        } else {
+            // Render markdown for AI response
+            contentHtml = `<div class="markdown-body">${marked.parse(text)}</div>`;
+        }
+        
+        if (context && context.length > 0) {
+            let contextHtml = '<div class="context-box"><strong>Retrieved Context:</strong><br>';
+            context.forEach((c, idx) => {
+                const preview = c.preview ? c.preview.substring(0, 150) : "";
+                contextHtml += `<div>[${idx + 1}] <b>${c.title}</b>: ${preview}...</div>`;
+            });
+            contextHtml += '</div>';
+            contentHtml = contextHtml + contentHtml;
+        }
+        
+        msgDiv.innerHTML = contentHtml;
+        chatArea.appendChild(msgDiv);
+        chatArea.scrollTop = chatArea.scrollHeight;
+    }
+
+    async function sendMessage() {
+        const message = messageInput.value.trim();
+        const kbId = kbIdSelect.value;
+        
+        if (!message || !kbId) {
+            alert("Please select a KB ID and type a message.");
+            return;
+        }
+        
+        appendMessage(message, true);
+        messageInput.value = '';
+        messageInput.disabled = true;
+        sendBtn.disabled = true;
+        loading.style.display = 'block';
+        chatArea.scrollTop = chatArea.scrollHeight;
+        
+        try {
+            const response = await fetch('/api/v1/kb/chat', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    kb_id: kbId,
+                    message: message,
+                    history: history
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                appendMessage(data.reply, false, data.context);
+                history.push({ role: "user", content: message });
+                history.push({ role: "assistant", content: data.reply });
+            } else {
+                appendMessage("Error: " + (data.error || "Unknown error"), false);
+            }
+        } catch (err) {
+            appendMessage("Failed to connect to server.", false);
+        } finally {
+            messageInput.disabled = false;
+            sendBtn.disabled = false;
+            loading.style.display = 'none';
+            messageInput.focus();
+        }
+    }
+    
+    sendBtn.addEventListener('click', sendMessage);
+    messageInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') sendMessage();
+    });
+</script>
+
+</body>
+</html>

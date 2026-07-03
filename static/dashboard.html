@@ -558,7 +558,47 @@
             .navbar { padding: 0 16px; }
             .main-grid { padding: 12px; }
         }
+    <style>
+        /* CSS Variables & Global Styles */
+        :root {
+            /* Discord-like dark mode */
+            --bg-base: #1E1F22;
+            --bg-page: #313338;
+            --bg-surface: #2B2D31;
+            --bg-hover: #3F4147;
+            --bg-input: #1E1F22;
+            
+            --text-primary: #DBDEE1;
+            --text-secondary: #B5BAC1;
+            --text-tertiary: #949BA4;
+            --text-inverse: #FFFFFF;
+            
+            --border-default: #1E1F22;
+            --border-hover: #3F4147;
+            
+            --accent-primary: #5865F2;
+            --accent-hover: #4752C4;
+            --accent-active: #3C45A5;
+            
+            --status-success: #23A559;
+            --status-warning: #FEE75C;
+            --status-error: #DA373C;
+            --status-info: #5865F2;
+            
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
+        }
+        
+        .markdown-body {
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+        .markdown-body p { margin-top: 0; margin-bottom: 8px; }
+        .markdown-body ul, .markdown-body ol { margin-top: 0; margin-bottom: 8px; padding-left: 20px; }
+        .markdown-body strong { color: var(--text-inverse); }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
     <nav class="navbar">
@@ -680,6 +720,7 @@
                         <button class="kb-tab active" data-tab="upload">Upload File</button>
                         <button class="kb-tab" data-tab="text">Paste Text</button>
                         <button class="kb-tab" data-tab="url">From URL</button>
+                        <button class="kb-tab" data-tab="chat">Test Chat</button>
                     </div>
                     
                     <div class="kb-pane active" id="kb-upload">
@@ -720,6 +761,22 @@
                             <input type="url" id="kb-url" placeholder="https://example.com/page" required>
                         </div>
                         <button class="btn btn-primary" id="btn-kb-url">Fetch & Index</button>
+                    </div>
+
+                    <div class="kb-pane" id="kb-chat">
+                        <div class="form-group">
+                            <label for="kb-id-chat">KB ID <span class="required">*</span></label>
+                            <select id="kb-id-chat" required>
+                                <option value="">Loading...</option>
+                            </select>
+                        </div>
+                        <div class="chat-area" id="chat-area" style="height: 250px; overflow-y: auto; background: var(--bg-page); border: 1px solid var(--border-default); border-radius: 6px; padding: 12px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px;">
+                            <div style="color: var(--text-secondary); font-size: var(--text-xs); align-self: center; font-style: italic;">Hello! Type a question to search this KB.</div>
+                        </div>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="text" id="chat-input" placeholder="Ask a question..." style="flex: 1; padding: 8px; border-radius: 6px; border: 1px solid var(--border-default); background: var(--bg-input); color: var(--text-primary); font-size: var(--text-sm);" autocomplete="off">
+                            <button class="btn btn-primary" id="btn-kb-chat">Send</button>
+                        </div>
                     </div>
                     
                     <div id="kb-result" class="kb-result" style="display:none;"></div>

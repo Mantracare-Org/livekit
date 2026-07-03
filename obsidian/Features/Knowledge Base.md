@@ -1,22 +1,25 @@
 # Knowledge Base
 
 **Planned Module:** `mantra/knowledge_base.py`
-**Status:** Design Phase
+**Status:** Implemented
 **Storage:** PostgreSQL + pgvector (OpenAI text-embedding-3-small)
 
 ---
 
 ## Overview
 
-A vector knowledge base system for the LKT voice agent. Accepts content from **files, pasted text blocks, and URLs**, chunks it adaptively, embeds each chunk via OpenAI, stores in PostgreSQL with pgvector, and exposes retrieval through a function tool the agent calls mid-conversation.
+A knowledge base system for the LKT voice agent. Accepts content from **files, pasted text blocks, and URLs**, chunks it adaptively, and stores it in PostgreSQL. 
 
-**Multi-KB architecture:** Every page is tagged with a `kb_id`. The call payload specifies which KB to use — the agent only queries that KB. One table, column-level isolation, many agencies.
+**Zero-Latency Prompt Injection:** Instead of relying on traditional tool-calling/RAG mid-conversation (which adds latency), the agent fetches the entire content of the specified knowledge base **upfront** during initialization. The text is injected directly into the agent's main system prompt (`initial_instructions`), granting the agent immediate, zero-latency recall over the information.
+
+**Multi-KB architecture:** Every page is tagged with a `kb_id`. The call payload specifies which KB to use — the agent only fetches content for that specific `kb_id`. One table, column-level isolation, many clients.
 
 ## Key Files
 
-- `mantra/knowledge_base.py` — Core module: KnowledgeBase class, adaptive chunker, embedding pipeline, vector search
-- `mantra/agent.py` — `AssistantFunctions` gets a new `query_knowledge_base` tool + `kb_id` from payload
-- `mantra/ui_server.py` — Three ingestion endpoints + two delete endpoints
+- `mantra/knowledge_base.py` — Core module: KnowledgeBase class, adaptive chunker, Postgres connections.
+- `mantra/agent.py` — `entrypoint` intercepts `kb_id` from the payload, fetches all related records from the database, and injects them into the system prompt.
+- `mantra/ui_server.py` — Ingestion endpoints, delete endpoints, and the `/api/v1/knowledge/list` endpoint for the UI.
+- `static/kb_chat.html` & `dashboard.js` — Frontend UI to test and select `kb_id`s dynamically.
 
 ## Architecture
 
@@ -32,22 +35,17 @@ Upload / Paste / URL
   └──────────────┬──────────────────────────┘
                  │ chunks
                  ▼
-  ┌─ Embedding Pipeline ────────────────────┐
-  │  Each chunk → OpenAI text-embedding-3   │
-  │  → vector(1536) per chunk              │
-  └──────────────┬──────────────────────────┘
-                 │
-                 ▼
-  ┌─ PostgreSQL + pgvector ─────────────────┐
+  ┌─ PostgreSQL ────────────────────────────┐
   │  kb_pages table with kb_id column       │
-  │  IVFFlat/HNSW index on embedding       │
+  │  (Embeddings generated and stored for   │
+  │  future scalability)                    │
   └──────────────┬──────────────────────────┘
                  │
-                 ▼  (live call)
-  ┌─ Agent Function Tool ───────────────────┐
-  │  1. Embed search_text                   │
-  │  2. Cosine distance WHERE kb_id = X     │
-  │  3. Return pages above threshold        │
+                 ▼  (call starts)
+  ┌─ Upfront Prompt Injection ──────────────┐
+  │  1. SELECT * WHERE kb_id = X            │
+  │  2. Append all text to Agent Prompt     │
+  │  3. Agent answers instantly             │
   └─────────────────────────────────────────┘
 ```
 
@@ -58,6 +56,7 @@ Upload / Paste / URL
 | `POST /api/v1/knowledge/upload`          | File (`.pdf`, `.txt`, `.md`) + kb_id | Required |
 | `POST /api/v1/knowledge/text`            | JSON `{kb_id, title, content}`       | Required |
 | `POST /api/v1/knowledge/url`             | JSON `{kb_id, url}`                  | Required |
+| `GET /api/v1/knowledge/list`             | None                                 | N/A      |
 | `DELETE /api/v1/knowledge/{page_id}`     | Path param                           | N/A      |
 | `DELETE /api/v1/knowledge/by-kb/{kb_id}` | Path param                           | N/A      |
 
@@ -73,72 +72,36 @@ CREATE TABLE kb_pages (
     content     TEXT NOT NULL,
     source_type TEXT NOT NULL,            -- 'file', 'text', 'url'
     source_ref  TEXT,                     -- original filename or URL
-    embedding   vector(1536),
+    embedding   vector(1536),             -- Stored for future hybrid search scaling
     page_meta   JSONB DEFAULT '{}',       -- chunking strategy, heading path, token count, etc.
+    content_in_text TEXT NOT NULL,        -- text content for LLM consumption
     created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX idx_kb_pages_kb_id ON kb_pages (kb_id);
-CREATE INDEX idx_kb_pages_embedding ON kb_pages
-    USING hnsw (embedding vector_cosine_ops);
 ```
 
 ## Payload Routing
 
-The call payload now carries `kb_id`. Agent receives it at dispatch:
+The call payload carries `kb_id`. Agent receives it at dispatch:
 
 ```python
 # In agent.py entrypoint
 payload = json.loads(ctx.job.metadata)
-kb_id = payload.get("kb_id", "default")
+kb_id = payload.get("kb_id")
 
-# Injected into AssistantFunctions
-fnc_ctx = AssistantFunctions(kb_id=kb_id, ...)
+# Fetch all KB data upfront
+rows = await conn.fetch("SELECT title, content_in_text FROM kb_pages WHERE kb_id = $1", kb_id)
+for r in rows:
+    initial_instructions += f"--- {r['title']} ---\n{r['content_in_text']}\n\n"
 ```
 
-The agent never sees other KBs — every query has `WHERE kb_id = self.kb_id`.
-
-## Agent Tool
-
-```python
-@llm.function_tool(
-    description="Search the knowledge base for information relevant to the user's question. "
-                "Call this when the user asks something you don't know."
-)
-async def query_knowledge_base(
-    search_text: Annotated[str, "The search query"],
-    top_k: Annotated[int, "Number of results (default 3)"] = 3
-) -> str:
-    """Embed search_text → cosine distance query filtered by self.kb_id → return top_k"""
-```
+The agent never sees other KBs — every query has `WHERE kb_id = kb_id`.
 
 ## Key Decisions
 
-- **Vector search** with pgvector — existing Postgres, no new infrastructure.
-- **OpenAI text-embedding-3-small** — 1536 dim, cheap, reliable.
-- **Ingest-time embedding** — uploads accept latency; calls cannot.
-- **kb_id column filter** — single table, column-level isolation, simple queries.
-- **Adaptive chunking** — three-strategy fallback: heading → paragraph → sliding-window.
-- **Synchronous ingestion** — simpler than a job queue.
-
-## Open Questions
-
-- [ ] Payload field name for KB? (placeholder: `kb_id`)
-- [ ] ivfflat vs hnsw index?
-- [ ] Similarity threshold? (default: 0.7)
-- [ ] Max chunk size in tokens?
-- [ ] Bilingual handling for embeddings?
-
-## Dependencies to Add
-
-- `pgvector` extension on Postgres
-- `openai` Python SDK (for embedding API calls)
-- `pypdf` (file parsing)
-- `trafilatura` (URL text extraction)
-
-## Environment Variables
-
-- `EMBEDDING_MODEL` — OpenAI embedding model (default: `text-embedding-3-small`)
-- `EMBEDDING_API_KEY` — API key for embedding (defaults to OPENAI_API_KEY)
-- `KB_SIMILARITY_THRESHOLD` — Minimum cosine similarity for results (default: 0.7)
-- `KB_MAX_CHUNK_TOKENS` — Max tokens per chunk before sub-chunking (default: 2000)
+- **Upfront Context Injection** — Moved away from mid-call RAG/tool-calling to guarantee zero latency. Voice agents cannot afford tool-call execution delays.
+- **pgvector retained for scalability** — Embeddings are still generated (OpenAI text-embedding-3-small) and stored in case KBs grow too large for a single prompt context, allowing for easy rollback to hybrid RAG if needed.
+- **kb_id column filter** — Single table, column-level isolation, simple queries.
+- **Dynamic Frontend Integration** — The test console UI actively polls `/api/v1/knowledge/list` to populate a dropdown menu for testing different clients.
+- **Markdown Rendering** — Agent responses are rendered using `marked.js` in the test UI to handle properly formatted lists and bolding directly from the LLM.

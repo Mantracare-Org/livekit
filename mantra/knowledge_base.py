@@ -28,8 +28,8 @@ class KnowledgePage:
     title: str
     content: str
     source_type: str
-    source_ref: Optional[str]
     page_meta: dict
+    content_in_text: str
     embedding: Optional[list] = None
     created_at: Optional[str] = None
 
@@ -83,7 +83,7 @@ class PostgresKnowledgeBase(KnowledgeBase):
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow("""
-                INSERT INTO kb_pages (id, kb_id, title, content, source_type, source_ref, embedding, page_meta)
+                INSERT INTO kb_pages (id, kb_id, title, content, source_type, embedding, page_meta, content_in_text)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 RETURNING id
             """, 
@@ -92,9 +92,9 @@ class PostgresKnowledgeBase(KnowledgeBase):
                 page.title,
                 page.content,
                 page.source_type,
-                page.source_ref,
-                page.embedding,
-                json.dumps(page.page_meta)
+                str(page.embedding) if page.embedding else None,
+                json.dumps(page.page_meta),
+                page.content_in_text
             )
             return str(row['id'])
     
@@ -102,15 +102,15 @@ class PostgresKnowledgeBase(KnowledgeBase):
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch("""
-                SELECT id, kb_id, title, content, source_type, source_ref, page_meta, created_at,
-                       1 - (embedding <=> $2) as similarity
+                SELECT id, kb_id, title, content, source_type, page_meta, content_in_text, created_at,
+                       1 - (embedding <=> $2::vector) as similarity
                 FROM kb_pages
                 WHERE kb_id = $1
                   AND embedding IS NOT NULL
-                  AND 1 - (embedding <=> $2) >= $3
-                ORDER BY embedding <=> $2
+                  AND 1 - (embedding <=> $2::vector) >= $3
+                ORDER BY embedding <=> $2::vector
                 LIMIT $4
-            """, kb_id, query_embedding, threshold, top_k)
+            """, kb_id, str(query_embedding) if query_embedding else None, threshold, top_k)
             
             return [
                 KnowledgePage(
@@ -119,8 +119,8 @@ class PostgresKnowledgeBase(KnowledgeBase):
                     title=r['title'],
                     content=r['content'],
                     source_type=r['source_type'],
-                    source_ref=r['source_ref'],
                     page_meta=r['page_meta'],
+                    content_in_text=r['content_in_text'],
                     created_at=r['created_at'].isoformat() if r['created_at'] else None
                 )
                 for r in rows
@@ -340,13 +340,13 @@ async def ingest_file(kb: KnowledgeBase, kb_id: str, file_bytes: bytes, filename
     else:
         raise ValueError(f"Unsupported file type: {filename}")
     
-    return await ingest_text(kb, kb_id, text, source_type='file', source_ref=filename)
+    return await ingest_text(kb, kb_id, text, source_type='file', content=filename)
 
 
-async def ingest_text(kb: KnowledgeBase, kb_id: str, content: str, title: Optional[str] = None, source_type: str = 'text', source_ref: Optional[str] = None) -> dict:
+async def ingest_text(kb: KnowledgeBase, kb_id: str, content_in_text: str, title: Optional[str] = None, source_type: str = 'text', content: str = "") -> dict:
     """Ingest raw text into the knowledge base."""
     # Chunk adaptively
-    chunks = adaptive_chunk(content)
+    chunks = adaptive_chunk(content_in_text)
     
     # Generate embeddings
     chunk_texts = [c['content'] for c in chunks]
@@ -359,10 +359,10 @@ async def ingest_text(kb: KnowledgeBase, kb_id: str, content: str, title: Option
             id=str(uuid.uuid4()),
             kb_id=kb_id,
             title=title or chunk['heading'],
-            content=chunk['content'],
+            content=content,
             source_type=source_type,
-            source_ref=source_ref,
             page_meta={'strategy': chunk['strategy'], 'chunk_index': i, 'total_chunks': len(chunks)},
+            content_in_text=chunk['content'],
             embedding=embedding
         )
         page_id = await kb.add_page(page)
@@ -379,4 +379,4 @@ async def ingest_text(kb: KnowledgeBase, kb_id: str, content: str, title: Option
 async def ingest_url(kb: KnowledgeBase, kb_id: str, url: str) -> dict:
     """Ingest a URL into the knowledge base."""
     text = await extract_url_text(url)
-    return await ingest_text(kb, kb_id, text, source_type='url', source_ref=url)
+    return await ingest_text(kb, kb_id, text, source_type='url', content=url)

@@ -229,10 +229,89 @@ async def console_page():
     """Serve the test console."""
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
+@app.get("/kb-chat")
+async def kb_chat_page():
+    """Serve the Knowledge Base text chat tester."""
+    return FileResponse(os.path.join(STATIC_DIR, "kb_chat.html"))
+
 @app.get("/health")
 async def health():
     """Simple health check."""
     return {"status": "ok", "service": "ui_server"}
+
+@app.post("/api/v1/kb/chat")
+async def api_kb_chat(request: Request):
+    """Text-based chat endpoint for testing the KB."""
+    try:
+        from mantra.knowledge_base import PostgresKnowledgeBase, generate_embedding
+        import openai
+    except ImportError as e:
+        return JSONResponse({"error": f"Failed to import dependencies: {e}"}, status_code=500)
+
+    body = await request.json()
+    kb_id = body.get("kb_id")
+    user_input = body.get("message")
+    history = body.get("history", [])
+    
+    if not kb_id or not user_input:
+        return JSONResponse({"error": "kb_id and message are required"}, status_code=400)
+        
+    dsn = (
+        f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
+        f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
+    )
+    
+    try:
+        kb = PostgresKnowledgeBase(dsn)
+        query_embedding = await generate_embedding(user_input)
+        results = await kb.search(kb_id, query_embedding, top_k=3, threshold=0.3)
+        
+        context_str = ""
+        formatted_context = []
+        if results:
+            formatted = []
+            for i, page in enumerate(results, 1):
+                preview = page.content_in_text[:500] if hasattr(page, 'content_in_text') else page.content[:500]
+                formatted.append(f"[{i}] {page.title}: {preview}")
+                formatted_context.append({"title": page.title, "preview": preview})
+            context_str = "\\n\\n".join(formatted)
+            
+        messages = [
+            {
+                "role": "system", 
+                "content": (
+                    "You are a helpful, intelligent assistant answering questions based on the retrieved Knowledge Base context. "
+                    "Analyze the provided context thoroughly and use it to synthesize a comprehensive and helpful answer to the user's query. "
+                    "You can make logical inferences based on the context. "
+                    "If the user asks for a recommendation or list, provide whatever relevant options exist in the context. "
+                    "If the context completely lacks any relevant information to answer the query, kindly state that you don't have enough information."
+                    "Keep the answers short and concise not exceeding 5-6 sentences."
+                )
+            }
+        ]
+        
+        for msg in history:
+            messages.append({"role": msg.get("role"), "content": msg.get("content")})
+            
+        prompt = f"User Question: {user_input}\\n\\nKnowledge Base Context:\\n{context_str}"
+        messages.append({"role": "user", "content": prompt})
+        
+        client = openai.AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages
+        )
+        
+        ai_message = response.choices[0].message.content
+        
+        return JSONResponse({
+            "status": "success",
+            "reply": ai_message,
+            "context": formatted_context
+        })
+    except Exception as e:
+        logger.error(f"KB Chat error: {e}\\n{traceback.format_exc()}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/dispatch-test")
 async def dispatch_test(request: Request):
@@ -719,34 +798,6 @@ async def get_config():
         "url": os.getenv("LIVEKIT_URL")
     })
 
-# TODO: This should be removed in production
-@app.get("/api/v1/queue/status/stream")
-async def stream_queue_status():
-    """Server-Sent Events endpoint for live Redis queue updates."""
-    async def event_generator():
-        if not redis_client:
-            yield "data: {\"error\": \"Redis not connected\"}\n\n"
-            return
-            
-        while True:
-            try:
-                pending_count = await redis_client.zcard("queue:pending")
-                active_count = await redis_client.hlen("calls:active")
-                
-                data = json.dumps({
-                    "pending_calls": pending_count,
-                    "active_calls": active_count,
-                    "timestamp": time.time()
-                })
-                yield f"data: {data}\n\n"
-            except Exception as e:
-                logger.error(f"SSE stream error: {e}")
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
-            
-            await asyncio.sleep(1) # Send update every second
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
-
 # ── Dashboard API (authenticated) ────────────────────────────────────────
 
 @app.get("/api/v1/dashboard/stream")
@@ -999,6 +1050,27 @@ async def kb_url(request: Request):
         return {"status": "success", **result}
     except Exception as e:
         logger.error(f"KB URL ingest failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/v1/knowledge/list")
+async def kb_list(request: Request):
+    """List distinct KB IDs available in the database."""
+    try:
+        from mantra.knowledge_base import PostgresKnowledgeBase
+        dsn = (
+            f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
+            f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
+        )
+        kb = PostgresKnowledgeBase(dsn)
+        pool = await kb._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("SELECT DISTINCT kb_id FROM kb_pages ORDER BY kb_id")
+            kbs = [r['kb_id'] for r in rows]
+        await kb.close()
+        return {"status": "success", "kbs": kbs}
+    except Exception as e:
+        logger.error(f"KB list error: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
