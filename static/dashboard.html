@@ -58,6 +58,19 @@
             --tracking-mono:  -0.01em;
         }
 
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        .loading-spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
@@ -757,10 +770,10 @@
                             <input type="text" id="kb-id-url" placeholder="e.g., hospital-001" required>
                         </div>
                         <div class="form-group">
-                            <label for="kb-url">URL <span class="required">*</span></label>
-                            <input type="url" id="kb-url" placeholder="https://example.com/page" required>
+                            <label for="kb-url-input">URL <span class="required">*</span></label>
+                            <input type="url" id="kb-url-input" placeholder="https://example.com/page" required>
                         </div>
-                        <button class="btn btn-primary" id="btn-kb-url">Fetch & Index</button>
+                        <button class="btn btn-primary" id="btn-kb-url">Extract Page to KB</button>
                     </div>
 
                     <div class="kb-pane" id="kb-chat">
@@ -785,6 +798,6 @@
         </div>
     </div>
 
-    <script src="/static/dashboard.js?v=2"></script>
+    <script src="/static/dashboard.js?v=5"></script>
 </body>
 </html>

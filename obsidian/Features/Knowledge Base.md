@@ -105,3 +105,12 @@ The agent never sees other KBs — every query has `WHERE kb_id = kb_id`.
 - **kb_id column filter** — Single table, column-level isolation, simple queries.
 - **Dynamic Frontend Integration** — The test console UI actively polls `/api/v1/knowledge/list` to populate a dropdown menu for testing different clients.
 - **Markdown Rendering** — Agent responses are rendered using `marked.js` in the test UI to handle properly formatted lists and bolding directly from the LLM.
+
+## Guardrails & Factual Overrides
+
+To prevent hallucinations while still answering factual questions effectively, the prompt includes a **5-Rule Absolute Override Framework**:
+1. **Mandatory Factual Answers**: Forces the agent to answer factual questions *before* guiding the user back to the call flow, effectively bypassing constraints like "Never give advice" or "Return to the call objective" for purely factual queries.
+2. **Primary Source Constraint**: Forces the agent to use only KB content for specific facts (services, treatments, pricing, policies) without inventing information.
+3. **Factual Explanation vs. Personalized Advice**: Authorizes the agent to explain conditions or symptoms purely based on KB text, but explicitly bans applying this knowledge to diagnose the user's specific situation.
+4. **General Knowledge Fallback**: Allows the agent to answer completely unrelated general questions neutrally if not in the KB.
+5. **No Source-Citing Language**: Prevents the agent from breaking character by saying "According to my knowledge base...".

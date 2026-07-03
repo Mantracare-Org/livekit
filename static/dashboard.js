@@ -207,7 +207,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Upload file
-    document.getElementById('btn-kb-upload').addEventListener('click', async () => {
+    const btnKbUpload = document.getElementById('btn-kb-upload');
+    const handleKbUpload = async () => {
         const kbId = document.getElementById('kb-id-upload').value.trim();
         const file = document.getElementById('kb-file').files[0];
         
@@ -237,10 +238,13 @@ document.addEventListener('DOMContentLoaded', () => {
         } finally {
             setBtnLoading('btn-kb-upload', false);
         }
-    });
+    };
+    btnKbUpload.addEventListener('click', handleKbUpload);
+    document.getElementById('kb-id-upload').addEventListener('keypress', (e) => { if (e.key === 'Enter') handleKbUpload(); });
 
     // Index text
-    document.getElementById('btn-kb-text').addEventListener('click', async () => {
+    const btnKbText = document.getElementById('btn-kb-text');
+    const handleKbText = async () => {
         const kbId = document.getElementById('kb-id-text').value.trim();
         const content = document.getElementById('kb-content').value.trim();
         const title = document.getElementById('kb-title').value.trim();
@@ -268,12 +272,16 @@ document.addEventListener('DOMContentLoaded', () => {
         } finally {
             setBtnLoading('btn-kb-text', false);
         }
-    });
+    };
+    btnKbText.addEventListener('click', handleKbText);
+    document.getElementById('kb-id-text').addEventListener('keypress', (e) => { if (e.key === 'Enter') handleKbText(); });
+    document.getElementById('kb-title').addEventListener('keypress', (e) => { if (e.key === 'Enter') handleKbText(); });
 
     // Fetch URL
-    document.getElementById('btn-kb-url').addEventListener('click', async () => {
+    const btnKbUrl = document.getElementById('btn-kb-url');
+    const handleKbUrl = async () => {
         const kbId = document.getElementById('kb-id-url').value.trim();
-        const url = document.getElementById('kb-url').value.trim();
+        const url = document.getElementById('kb-url-input').value.trim();
         
         if (!kbId || !url) return showKbResult('KB ID and URL are required', 'error');
         
@@ -298,7 +306,10 @@ document.addEventListener('DOMContentLoaded', () => {
         } finally {
             setBtnLoading('btn-kb-url', false);
         }
-    });
+    };
+    btnKbUrl.addEventListener('click', handleKbUrl);
+    document.getElementById('kb-id-url').addEventListener('keypress', (e) => { if (e.key === 'Enter') handleKbUrl(); });
+    document.getElementById('kb-url-input').addEventListener('keypress', (e) => { if (e.key === 'Enter') handleKbUrl(); });
 
     // Test Chat
     let chatHistory = [];
@@ -433,8 +444,12 @@ document.addEventListener('DOMContentLoaded', () => {
     function setBtnLoading(btnId, loading) {
         const btn = document.getElementById(btnId);
         btn.disabled = loading;
-        btn.textContent = loading ? 'Processing...' : btn.dataset.label || btn.textContent;
-        if (!loading) btn.dataset.label = btn.textContent;
+        if (loading) {
+            btn.dataset.label = btn.dataset.label || btn.textContent;
+            btn.innerHTML = '<span class="loading-spinner"></span>Processing...';
+        } else {
+            btn.textContent = btn.dataset.label;
+        }
     }
 });
 

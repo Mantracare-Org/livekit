@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-07-03
+
+- **feat:** Knowledge Base: Implemented absolute override 5-rule framework to force agent to answer factual questions directly (overriding strict prompt constraints like "never give advice")
+- **refactor:** Knowledge Base: Made all prompt rules completely generic and industry-agnostic, removing hardcoded references to specific verticals like OCD/ERP
+
 ## 2026-06-30
 
 - **doc:** Created `obsidian/` — comprehensive Obsidian knowledge base (48 files)

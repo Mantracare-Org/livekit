@@ -16,6 +16,7 @@ import asyncpg
 import httpx
 from pypdf import PdfReader
 import trafilatura
+import asyncio
 
 logger = logging.getLogger("mantra.knowledge_base")
 
@@ -321,10 +322,23 @@ async def extract_pdf_text(file_bytes: bytes) -> str:
 
 async def extract_url_text(url: str) -> str:
     """Extract readable text from URL."""
-    downloaded = trafilatura.fetch_url(url)
+    # Run synchronous network request in a thread pool so it doesn't block the FastAPI event loop
+    downloaded = await asyncio.to_thread(trafilatura.fetch_url, url)
     if not downloaded:
         raise ValueError(f"Failed to fetch URL: {url}")
-    extracted = trafilatura.extract(downloaded, include_comments=False, include_tables=True)
+        
+    extracted = trafilatura.extract(downloaded, include_comments=False, include_tables=True, favor_recall=True)
+    
+    # Trafilatura aggressively strips grids and cards common on landing pages.
+    # Fallback to regex text extraction if trafilatura stripped a lot of text.
+    import re
+    raw_text = re.sub(r'<(script|style|head|svg|nav|footer)[^>]*>.*?</\1>', ' ', downloaded, flags=re.DOTALL | re.IGNORECASE)
+    raw_text = re.sub(r'<[^>]+>', ' ', raw_text)
+    raw_text = re.sub(r'\s+', ' ', raw_text).strip()
+    
+    if not extracted or len(raw_text) > len(extracted or "") * 2:
+        extracted = raw_text
+        
     if not extracted:
         raise ValueError(f"No readable content found at URL: {url}")
     return extracted

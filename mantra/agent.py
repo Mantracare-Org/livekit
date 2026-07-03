@@ -146,7 +146,44 @@ class AssistantFunctions:
         self._disconnect_task = create_bg_task(graceful_disconnect())
         return "Call is ending. Say a brief, warm goodbye now."
 
+    # Removed query_knowledge_base tool as per user request to inject KB directly into the main job
 
+    # @llm.ai_callable(description="Transfer the call to a human assistant when requested or if the issue is too complex.")
+    # async def transfer_to_human(
+    #     self,
+    #     reason: Annotated[str, "The reason why a human is needed"]
+    # ):
+    #     logger.info(f"Handoff requested. Reason: {reason}")
+    #     self.handoff_triggered = True
+    #     
+    #     # Parse metadata to get call/lead IDs
+    #     try:
+    #         payload = json.loads(self.job_metadata) if self.job_metadata else {}
+    #     except Exception:
+    #         payload = {}
+    # 
+    #     # Notify backend
+    #     webhook_payload = {
+    #         "event": "HANDOFF_REQUESTED",
+    #         "data": {
+    #             "room_name": self.room_name,
+    #             "reason": reason,
+    #             "call_id": payload.get("call_id") or payload.get("voice_id"),
+    #             "lead_id": payload.get("lead_id"),
+    #             "client_name": payload.get("client_name", "User"),
+    #         }
+    #     }
+    #     await send_to_backend(webhook_payload)
+    #     
+    #     if self.agent:
+    #         logger.info("Handoff triggered — switching to passive monitoring instructions")
+    #         await self.agent.update_instructions(
+    #             "A human has joined the call. You are now in PASSIVE MONITORING MODE. "
+    #             "DO NOT speak. DO NOT respond to the user. DO NOT generate any audio. "
+    #             "Just observe and maintain the transcript for the final summary."
+    #         )
+    # 
+    #     return "I am connecting you to a human assistant now. Please stay on the line. I will remain on the call to record and summarize our conversation."
 
 @server.rtc_session(agent_name="mantra-agent")
 async def entrypoint(ctx: JobContext):
@@ -338,10 +375,17 @@ Follow these specific instructions:
                     async with pool.acquire() as conn:
                         rows = await conn.fetch("SELECT title, content_in_text FROM kb_pages WHERE kb_id = $1 ORDER BY created_at ASC", kb_id)
                         if rows:
-                            initial_instructions += "\n\n*** KNOWLEDGE BASE INFORMATION ***\n"
-                            initial_instructions += "The following is the official knowledge base. Use this information as your absolute source of truth to answer any questions. Do NOT guess or hallucinate details outside of this.\n\n"
+                            initial_instructions += "\n\n*** KNOWLEDGE BASE & FACTUAL Q&A (ABSOLUTE OVERRIDE) ***\n"
+                            initial_instructions += "You have been provided with official Knowledge Base context below. THESE RULES ABSOLUTELY OVERRIDE ANY PRIOR NEGATIVE CONSTRAINTS (e.g., 'Never give medical advice', 'Return to the call objective', 'My role is to help you with the next step') IF THE USER ASKS A FACTUAL QUESTION:\n"
+                            initial_instructions += "1. MANDATORY FACTUAL ANSWERS: If the user asks ANY factual question about a specific condition, service, or concept, you MUST answer it using the Knowledge Base BEFORE attempting to guide them back to the onboarding flow. Do NOT deflect factual questions.\n"
+                            initial_instructions += "2. PRIMARY SOURCE: For any question about conditions, treatments, services, pricing, or policies, you MUST rely on the Knowledge Base content provided. Never invent facts.\n"
+                            initial_instructions += "3. FACTUAL EXPLANATION VS. PERSONALIZED ADVICE: You ARE fully authorized and REQUIRED to explain, describe, or educate the user about conditions or symptoms exactly as they appear in the Knowledge Base. This is NOT considered 'counselling' or 'medical advice'. However, you must NEVER apply this information to diagnose the user's specific personal situation.\n"
+                            initial_instructions += "4. GENERAL KNOWLEDGE FALLBACK: If the user asks a general question unrelated to this specific business and the Knowledge Base does not cover it, you may answer using your own general knowledge, clearly staying neutral and factual.\n"
+                            initial_instructions += "5. NO SOURCE-CITING LANGUAGE: Never say 'according to my knowledge base,' 'I don't have that in my documents,' or similar. Answer naturally.\n\n"
+                            initial_instructions += "--- BEGIN KNOWLEDGE BASE CONTENT ---\n"
                             for r in rows:
-                                initial_instructions += f"--- {r['title']} ---\n{r['content_in_text']}\n\n"
+                                initial_instructions += f"[{r['title']}]\n{r['content_in_text']}\n\n"
+                            initial_instructions += "--- END KNOWLEDGE BASE CONTENT ---\n\n"
                             logger.info(f"Injected {len(rows)} KB pages directly into the main job instructions.")
                 except Exception as e:
                     logger.error(f"Failed to load KB content upfront: {e}")
