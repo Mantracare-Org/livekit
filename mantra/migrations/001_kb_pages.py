@@ -3,6 +3,7 @@
 Migration script to set up pgvector and kb_pages table.
 Run once before deploying the knowledge base feature.
 """
+
 import os
 import asyncio
 import asyncpg
@@ -14,34 +15,35 @@ load_dotenv(".env.local")  # Load local env for DB connection
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 async def run_migration():
     """Run the migration to create pgvector extension and kb_pages table."""
-    
+
     db_user = os.getenv("POSTGRES_USER")
     db_password = os.getenv("POSTGRES_PASSWORD")
     db_name = os.getenv("POSTGRES_DB")
     db_host = os.getenv("POSTGRES_HOST")
     db_port = os.getenv("POSTGRES_PORT")
-    
+
     if not all([db_user, db_password, db_name, db_host, db_port]):
         raise ValueError("Missing required PostgreSQL environment variables")
-    
+
     conn = await asyncpg.connect(
         user=db_user,
         password=db_password,
         database=db_name,
         host=db_host,
         port=int(db_port),
-        timeout=10.0
+        timeout=10.0,
     )
-    
+
     try:
         logger.info("Creating pgvector extension...")
         await conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
         logger.info("pgvector extension created successfully")
-        
+
         await conn.execute("DROP TABLE IF EXISTS kb_pages;")
-        
+
         logger.info("Creating kb_pages table...")
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS kb_pages (
@@ -57,22 +59,26 @@ async def run_migration():
             );
         """)
         logger.info("kb_pages table created successfully")
-        
+
         logger.info("Creating indexes...")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_kb_pages_kb_id ON kb_pages (kb_id);")
-        
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_kb_pages_kb_id ON kb_pages (kb_id);"
+        )
+
         # HNSW index for vector similarity search
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_kb_pages_embedding 
             ON kb_pages USING hnsw (embedding vector_cosine_ops);
         """)
         logger.info("Indexes created successfully")
-        
+
         # Verify
-        ext = await conn.fetchrow("SELECT * FROM pg_extension WHERE extname = 'vector';")
+        ext = await conn.fetchrow(
+            "SELECT * FROM pg_extension WHERE extname = 'vector';"
+        )
         if ext:
             logger.info(f"pgvector extension verified: {ext['extversion']}")
-        
+
         table = await conn.fetchrow("""
             SELECT column_name, data_type 
             FROM information_schema.columns 
@@ -88,11 +94,12 @@ async def run_migration():
                 ORDER BY ordinal_position;
             """):
                 logger.info(f"  {col['column_name']}: {col['data_type']}")
-        
+
         logger.info("Migration completed successfully!")
-        
+
     finally:
         await conn.close()
+
 
 if __name__ == "__main__":
     asyncio.run(run_migration())

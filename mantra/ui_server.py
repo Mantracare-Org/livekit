@@ -32,9 +32,13 @@ logger.addHandler(_handler)
 logger.propagate = False
 
 # Persistent LiveKit API clients
-lk_client: api.LiveKitAPI = None           # Direct — used for Twilio, Zadarma, and general operations
-plivo_client: api.LiveKitAPI = None        # Proxied — used for Plivo (India routing)
-plivo_session: aiohttp.ClientSession = None  # Owned session for plivo_client; closed manually on shutdown
+lk_client: api.LiveKitAPI = (
+    None  # Direct — used for Twilio, Zadarma, and general operations
+)
+plivo_client: api.LiveKitAPI = None  # Proxied — used for Plivo (India routing)
+plivo_session: aiohttp.ClientSession = (
+    None  # Owned session for plivo_client; closed manually on shutdown
+)
 redis_client: redis.Redis = None
 
 # ── Authentication ───────────────────────────────────────────────────────
@@ -56,6 +60,7 @@ async def get_db_connection():
         host=os.getenv("POSTGRES_HOST"),
         port=os.getenv("POSTGRES_PORT"),
     )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -80,7 +85,9 @@ async def lifespan(app: FastAPI):
         if plivo_proxy:
             logger.info(f"Creating Plivo LiveKit client with proxy: {plivo_proxy}")
         else:
-            logger.info("Creating Plivo LiveKit client without proxy (PLIVO_PROXY not set)")
+            logger.info(
+                "Creating Plivo LiveKit client without proxy (PLIVO_PROXY not set)"
+            )
         plivo_session = aiohttp.ClientSession(proxy=plivo_proxy)
         plivo_client = api.LiveKitAPI(
             url=api_url, api_key=api_key, api_secret=api_secret, session=plivo_session
@@ -103,41 +110,57 @@ async def lifespan(app: FastAPI):
     if plivo_session:
         await plivo_session.close()
 
+
 app = FastAPI(lifespan=lifespan)
 
 # ── Request logging middleware ────────────────────────────────────────
 # Suppress uvicorn's default access log (we handle it ourselves with timing + filtering)
 
 SCANNER_PATHS = (
-    "/.well-known/", "/favicon", "/wp-",
-    "/blog/", "/web/", "/wordpress/", "/website/",
-    "/wp/", "/news/", "/2018/", "/2019/", "/shop/",
-    "/wp1/", "/test/", "/media/", "/wp2/", "/site/",
-    "/cms/", "/sito/",
+    "/.well-known/",
+    "/favicon",
+    "/wp-",
+    "/blog/",
+    "/web/",
+    "/wordpress/",
+    "/website/",
+    "/wp/",
+    "/news/",
+    "/2018/",
+    "/2019/",
+    "/shop/",
+    "/wp1/",
+    "/test/",
+    "/media/",
+    "/wp2/",
+    "/site/",
+    "/cms/",
+    "/sito/",
 )
+
 
 @app.exception_handler(Exception)
 async def global_crash_exception_handler(request: Request, exc: Exception):
     logger.error(f"Error in UI server: {exc}", exc_info=True)
-    
+
     context_data = {
         "Request URL": str(request.url),
-        "HTTP Method" : request.method,
+        "HTTP Method": request.method,
         "User-Agent": request.headers.get("User-Agent"),
         "Client IP": request.client.host if request.client else None,
-        
     }
 
     await send_crash_email(
-        service_name="Mantra UI Server",
-        error=exc,
-        context_data=context_data
+        service_name="Mantra UI Server", error=exc, context_data=context_data
     )
 
     return JSONResponse(
         status_code=500,
-        content={"error": "Internal server error, An Automated alert has been dispatched. The technical team is working on resolving this issue."}
+        content={
+            "error": "Internal server error, An Automated alert has been dispatched. The technical team is working on resolving this issue."
+        },
     )
+
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -150,15 +173,22 @@ async def log_requests(request: Request, call_next):
 
         # Suppress scanner junk at INFO level
         if path.startswith(SCANNER_PATHS):
-            logger.debug(f"Scanner: {client_host} {request.method} {path} {response.status_code}")
+            logger.debug(
+                f"Scanner: {client_host} {request.method} {path} {response.status_code}"
+            )
         else:
-            logger.info(f"{client_host} {request.method} {path} {response.status_code} in {duration*1000:.0f}ms")
+            logger.info(
+                f"{client_host} {request.method} {path} {response.status_code} in {duration * 1000:.0f}ms"
+            )
 
         return response
     except Exception as e:
         duration = time.time() - start
-        logger.error(f"{client_host} {request.method} {path} ERROR in {duration*1000:.0f}ms: {e}")
+        logger.error(
+            f"{client_host} {request.method} {path} ERROR in {duration * 1000:.0f}ms: {e}"
+        )
         raise  # let FastAPI handle the error response
+
 
 # Get the directory of the current file
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -167,12 +197,15 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 # Mount static files (with HTML files as default)
 app.mount("/static", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 
+
 @app.get("/")
 async def index():
     """Serve the login page."""
     return FileResponse(os.path.join(STATIC_DIR, "login.html"))
 
+
 # ── Authentication ───────────────────────────────────────────────────────
+
 
 @app.post("/api/v1/auth/login")
 async def login(request: Request):
@@ -208,7 +241,7 @@ def require_auth(request: Request):
         token = auth.split(" ", 1)[1]
     else:
         token = request.query_params.get("token")
-        
+
     if not token:
         raise HTTPException(status_code=401, detail="Missing or invalid token")
     try:
@@ -229,15 +262,18 @@ async def console_page():
     """Serve the test console."""
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
+
 @app.get("/kb-chat")
 async def kb_chat_page():
     """Serve the Knowledge Base text chat tester."""
     return FileResponse(os.path.join(STATIC_DIR, "kb_chat.html"))
 
+
 @app.get("/health")
 async def health():
     """Simple health check."""
     return {"status": "ok", "service": "ui_server"}
+
 
 @app.post("/api/v1/kb/chat")
 async def api_kb_chat(request: Request):
@@ -246,39 +282,47 @@ async def api_kb_chat(request: Request):
         from mantra.knowledge_base import PostgresKnowledgeBase, generate_embedding
         import openai
     except ImportError as e:
-        return JSONResponse({"error": f"Failed to import dependencies: {e}"}, status_code=500)
+        return JSONResponse(
+            {"error": f"Failed to import dependencies: {e}"}, status_code=500
+        )
 
     body = await request.json()
     kb_id = body.get("kb_id")
     user_input = body.get("message")
     history = body.get("history", [])
-    
+
     if not kb_id or not user_input:
-        return JSONResponse({"error": "kb_id and message are required"}, status_code=400)
-        
+        return JSONResponse(
+            {"error": "kb_id and message are required"}, status_code=400
+        )
+
     dsn = (
         f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
         f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
     )
-    
+
     try:
         kb = PostgresKnowledgeBase(dsn)
         query_embedding = await generate_embedding(user_input)
         results = await kb.search(kb_id, query_embedding, top_k=3, threshold=0.3)
-        
+
         context_str = ""
         formatted_context = []
         if results:
             formatted = []
             for i, page in enumerate(results, 1):
-                preview = page.content_in_text[:500] if hasattr(page, 'content_in_text') else page.content[:500]
+                preview = (
+                    page.content_in_text[:500]
+                    if hasattr(page, "content_in_text")
+                    else page.content[:500]
+                )
                 formatted.append(f"[{i}] {page.title}: {preview}")
                 formatted_context.append({"title": page.title, "preview": preview})
             context_str = "\\n\\n".join(formatted)
-            
+
         messages = [
             {
-                "role": "system", 
+                "role": "system",
                 "content": (
                     "You have been provided with official Knowledge Base context below. THESE RULES ABSOLUTELY OVERRIDE ANY PRIOR NEGATIVE CONSTRAINTS (e.g., 'Never give medical advice', 'Return to the call objective', 'My role is to help you with the next step') IF THE USER ASKS A FACTUAL QUESTION:\n"
                     "1. MANDATORY FACTUAL ANSWERS: If the user asks ANY factual question about a specific condition, service, or concept, you MUST answer it using the Knowledge Base BEFORE attempting to guide them back to the onboarding flow. Do NOT deflect factual questions.\n"
@@ -287,32 +331,32 @@ async def api_kb_chat(request: Request):
                     "4. GENERAL KNOWLEDGE FALLBACK: If the user asks a general question unrelated to this specific business and the Knowledge Base does not cover it, you may answer using your own general knowledge, clearly staying neutral and factual.\n"
                     "5. NO SOURCE-CITING LANGUAGE: Never say 'according to my knowledge base,' 'I don't have that in my documents,' or similar. Answer naturally.\n"
                     "Keep the answers short and concise not exceeding 5-6 sentences."
-                )
+                ),
             }
         ]
-        
+
         for msg in history:
             messages.append({"role": msg.get("role"), "content": msg.get("content")})
-            
-        prompt = f"User Question: {user_input}\\n\\nKnowledge Base Context:\\n{context_str}"
+
+        prompt = (
+            f"User Question: {user_input}\\n\\nKnowledge Base Context:\\n{context_str}"
+        )
         messages.append({"role": "user", "content": prompt})
-        
+
         client = openai.AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         response = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=messages
+            model="gpt-4o-mini", messages=messages
         )
-        
+
         ai_message = response.choices[0].message.content
-        
-        return JSONResponse({
-            "status": "success",
-            "reply": ai_message,
-            "context": formatted_context
-        })
+
+        return JSONResponse(
+            {"status": "success", "reply": ai_message, "context": formatted_context}
+        )
     except Exception as e:
         logger.error(f"KB Chat error: {e}\\n{traceback.format_exc()}")
         return JSONResponse({"error": str(e)}, status_code=500)
+
 
 @app.post("/dispatch-test")
 async def dispatch_test(request: Request):
@@ -323,44 +367,52 @@ async def dispatch_test(request: Request):
 
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
-    
-    logger.info(f"Manual dispatch request with payload: {json.dumps(payload, separators=(',',':'))}")
-    
+
+    logger.info(
+        f"Manual dispatch request with payload: {json.dumps(payload, separators=(',', ':'))}"
+    )
+
     # Generate a unique room name for this test session using the call_id if provided
     call_id = payload.get("call_id") or int(time.time())
     room_name = f"test_{call_id}"
-    
+
     try:
         # Create dispatch with payload as metadata
         dispatch = await lk_client.agent_dispatch.create_dispatch(
             api.CreateAgentDispatchRequest(
-                room=room_name,
-                agent_name="mantra-agent",
-                metadata=json.dumps(payload)
+                room=room_name, agent_name="mantra-agent", metadata=json.dumps(payload)
             )
         )
-        logger.info(f"Successfully dispatched agent to room {room_name}, dispatch_id: {dispatch.id}")
+        logger.info(
+            f"Successfully dispatched agent to room {room_name}, dispatch_id: {dispatch.id}"
+        )
     except Exception as e:
         logger.error(f"Dispatch failed: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
     # Generate token for the user to join the same room
-    token = api.AccessToken(os.getenv("LIVEKIT_API_KEY"), os.getenv("LIVEKIT_API_SECRET")) \
-        .with_identity("Tester") \
-        .with_name("Manual Tester") \
-        .with_grants(api.VideoGrants(
-            room_join=True,
-            room=room_name,
-            can_publish=True,
-            can_subscribe=True,
-        ))
+    token = (
+        api.AccessToken(os.getenv("LIVEKIT_API_KEY"), os.getenv("LIVEKIT_API_SECRET"))
+        .with_identity("Tester")
+        .with_name("Manual Tester")
+        .with_grants(
+            api.VideoGrants(
+                room_join=True,
+                room=room_name,
+                can_publish=True,
+                can_subscribe=True,
+            )
+        )
+    )
 
-    return JSONResponse({
-        "status": "success",
-        "room": room_name,
-        "token": token.to_jwt(),
-        "url": os.getenv("LIVEKIT_URL"),
-    })
+    return JSONResponse(
+        {
+            "status": "success",
+            "room": room_name,
+            "token": token.to_jwt(),
+            "url": os.getenv("LIVEKIT_URL"),
+        }
+    )
 
 
 @app.post("/api/v1/webhooks/telephony")
@@ -373,30 +425,43 @@ async def handle_outbound_call_webhook(request: Request):
 
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
-    
+
     event_name = payload.get("event_name", "telephony_dispatch")
-    logger.info(f"Webhook received call request for event {event_name}: {json.dumps(payload, separators=(',',':'))}")
-    
+    logger.info(
+        f"Webhook received call request for event {event_name}: {json.dumps(payload, separators=(',', ':'))}"
+    )
+
     # Use call_id or voice_id from payload if available, otherwise use timestamp
-    call_id = payload.get("call_id") or payload.get("voice_id") or payload.get("event_id") or int(time.time())
+    call_id = (
+        payload.get("call_id")
+        or payload.get("voice_id")
+        or payload.get("event_id")
+        or int(time.time())
+    )
     room_name = f"call_{call_id}"
-    
+
     # Construct phone number in E.164 format
     country_code = payload.get("client_country_code", "").strip("+")
     client_phone = payload.get("client_phone", "").strip()
-    
+
     if client_phone.startswith("+"):
         phone_number = client_phone
     elif country_code and client_phone:
         phone_number = f"+{country_code}{client_phone}"
     else:
-        phone_number = client_phone # Fallback
-    
+        phone_number = client_phone  # Fallback
+
     if not phone_number:
-        return JSONResponse({"error": "No client_phone provided in payload"}, status_code=400)
+        return JSONResponse(
+            {"error": "No client_phone provided in payload"}, status_code=400
+        )
 
     # Resolve trunk ID and detect provider for logging
-    trunk_id = payload.get("trunk_id") or payload.get("call_from_id") or os.getenv("SIP_TRUNK_ID")
+    trunk_id = (
+        payload.get("trunk_id")
+        or payload.get("call_from_id")
+        or os.getenv("SIP_TRUNK_ID")
+    )
     if not trunk_id:
         return JSONResponse({"error": "No SIP trunk ID configured"}, status_code=500)
 
@@ -409,15 +474,15 @@ async def handle_outbound_call_webhook(request: Request):
         logger.info(f"Step 1: Creating agent dispatch for room {room_name}")
         dispatch = await lk_client.agent_dispatch.create_dispatch(
             api.CreateAgentDispatchRequest(
-                room=room_name,
-                agent_name="mantra-agent",
-                metadata=json.dumps(payload)
+                room=room_name, agent_name="mantra-agent", metadata=json.dumps(payload)
             )
         )
         logger.info(f"Dispatch created: {dispatch.id}")
     except Exception as e:
         logger.error(f"Agent dispatch failed: {e}\n{traceback.format_exc()}")
-        return JSONResponse({"error": f"Agent dispatch failed: {str(e)}"}, status_code=500)
+        return JSONResponse(
+            {"error": f"Agent dispatch failed: {str(e)}"}, status_code=500
+        )
 
     # Trigger SIP outbound call in background to prevent webhook timeouts
     async def trigger_sip():
@@ -425,10 +490,19 @@ async def handle_outbound_call_webhook(request: Request):
             sip_number = payload.get("call_from")
             if sip_number and not sip_number.startswith("+"):
                 sip_number = f"+{sip_number}"
-                
-            sip_client = plivo_client if provider == "plivo" and plivo_client else lk_client
-            proxy_msg = "proxied Plivo client" if sip_client == plivo_client else "direct LiveKit client"
-            logger.info(f"Step 2: Initiating SIP call to {phone_number} via trunk {trunk_id} using {proxy_msg}" + (f" (Caller ID: {sip_number})" if sip_number else ""))
+
+            sip_client = (
+                plivo_client if provider == "plivo" and plivo_client else lk_client
+            )
+            proxy_msg = (
+                "proxied Plivo client"
+                if sip_client == plivo_client
+                else "direct LiveKit client"
+            )
+            logger.info(
+                f"Step 2: Initiating SIP call to {phone_number} via trunk {trunk_id} using {proxy_msg}"
+                + (f" (Caller ID: {sip_number})" if sip_number else "")
+            )
 
             sip_part = await sip_client.sip.create_sip_participant(
                 api.CreateSIPParticipantRequest(
@@ -439,24 +513,31 @@ async def handle_outbound_call_webhook(request: Request):
                     participant_identity=f"sip_{call_id}",
                     participant_name="SIP Caller",
                     play_ringtone=False,
-                    wait_until_answered=True
+                    wait_until_answered=True,
                 )
             )
             logger.info(f"SIP Participant created: {sip_part.participant_identity}")
         except Exception as e:
-            logger.error(f"SIP Call trigger failed for {room_name}: {e}\n{traceback.format_exc()}")
-            
+            logger.error(
+                f"SIP Call trigger failed for {room_name}: {e}\n{traceback.format_exc()}"
+            )
+
             # Store exact SIP failure reason in Redis for the agent to read
             if redis_client:
                 err_str = str(e).lower()
                 if any(token in err_str for token in ("408", "timeout", "no answer")):
                     status_guess = "No Answer"
-                elif any(token in err_str for token in ("486", "busy", "603", "decline", "rejected")):
+                elif any(
+                    token in err_str
+                    for token in ("486", "busy", "603", "decline", "rejected")
+                ):
                     status_guess = "Busy"
                 else:
                     status_guess = "Incomplete"
                 try:
-                    await redis_client.set(f"sip_error_status:{call_id}", status_guess, ex=300)
+                    await redis_client.set(
+                        f"sip_error_status:{call_id}", status_guess, ex=300
+                    )
                 except Exception as re:
                     logger.error(f"Failed to save SIP error to Redis: {re}")
 
@@ -469,37 +550,59 @@ async def handle_outbound_call_webhook(request: Request):
 
     # Fire and forget the SIP task
     import asyncio
+
     asyncio.create_task(trigger_sip())
 
     # Generate token for anyone needing to join/monitor the call
-    token = api.AccessToken(os.getenv("LIVEKIT_API_KEY"), os.getenv("LIVEKIT_API_SECRET")) \
-        .with_identity(f"monitor_{call_id}") \
-        .with_name("Call Monitor") \
-        .with_grants(api.VideoGrants(
-            room_join=True,
-            room=room_name,
-            can_publish=False,
-            can_subscribe=True,
-        ))
+    token = (
+        api.AccessToken(os.getenv("LIVEKIT_API_KEY"), os.getenv("LIVEKIT_API_SECRET"))
+        .with_identity(f"monitor_{call_id}")
+        .with_name("Call Monitor")
+        .with_grants(
+            api.VideoGrants(
+                room_join=True,
+                room=room_name,
+                can_publish=False,
+                can_subscribe=True,
+            )
+        )
+    )
 
-    return JSONResponse({
-        "status": "success",
-        "message": f"Agent dispatched for {event_name}",
-        "client_name": payload.get("client_name", "Unknown"),
-        "purpose": payload.get("prompt", "Voice interaction")[:100] + ("..." if len(payload.get("prompt", "")) > 100 else ""),
-        "room": room_name,
-        "token": token.to_jwt(),
-        "url": os.getenv("LIVEKIT_URL"),
-    })
+    return JSONResponse(
+        {
+            "status": "success",
+            "message": f"Agent dispatched for {event_name}",
+            "client_name": payload.get("client_name", "Unknown"),
+            "purpose": payload.get("prompt", "Voice interaction")[:100]
+            + ("..." if len(payload.get("prompt", "")) > 100 else ""),
+            "room": room_name,
+            "token": token.to_jwt(),
+            "url": os.getenv("LIVEKIT_URL"),
+        }
+    )
 
 
 async def _create_sip_outbound_trunk(
-    name: str, address: str, numbers: list, auth_username: str, auth_password: str,
-    client: api.LiveKitAPI = None, destination_country: str = None,
+    name: str,
+    address: str,
+    numbers: list,
+    auth_username: str,
+    auth_password: str,
+    client: api.LiveKitAPI = None,
+    destination_country: str = None,
 ):
     if not all([name, address, numbers, auth_username, auth_password]):
-        missing = [f for f, v in [("name", name), ("address", address), ("numbers", numbers),
-                                   ("auth_username", auth_username), ("auth_password", auth_password)] if not v]
+        missing = [
+            f
+            for f, v in [
+                ("name", name),
+                ("address", address),
+                ("numbers", numbers),
+                ("auth_username", auth_username),
+                ("auth_password", auth_password),
+            ]
+            if not v
+        ]
         raise ValueError(f"Missing required fields: {', '.join(missing)}")
 
     if isinstance(numbers, str):
@@ -512,13 +615,18 @@ async def _create_sip_outbound_trunk(
         logger.info(f"Creating SIP outbound trunk: {name} at {address}")
         trunk_request = api.CreateSIPOutboundTrunkRequest(
             trunk=api.SIPOutboundTrunkInfo(
-                name=name, address=address, numbers=numbers,
-                auth_username=auth_username, auth_password=auth_password,
-                destination_country=destination_country
+                name=name,
+                address=address,
+                numbers=numbers,
+                auth_username=auth_username,
+                auth_password=auth_password,
+                destination_country=destination_country,
             )
         )
         trunk = await svc.create_outbound_trunk(trunk_request)
-        logger.info(f"Successfully created SIP outbound trunk: {trunk.sip_trunk_id} ({name})")
+        logger.info(
+            f"Successfully created SIP outbound trunk: {trunk.sip_trunk_id} ({name})"
+        )
         return trunk
     except Exception as e:
         logger.error(f"LiveKit API error creating SIP trunk: {e}")
@@ -526,6 +634,7 @@ async def _create_sip_outbound_trunk(
 
 
 DEFAULT_PROVIDER = "zadarma"
+
 
 async def _get_provider_from_trunk(trunk_id: str) -> str:
     """Fetch the specific trunk by ID and infer the provider from its address."""
@@ -552,31 +661,39 @@ async def _get_provider_from_trunk(trunk_id: str) -> str:
 @app.post("/api/v1/sip/trunks/outbound/zadarma")
 async def create_zadarma_sip_trunk(request: Request):
     """
-    Create a new Zadarma SIP trunk. 
+    Create a new Zadarma SIP trunk.
     The root '/outbound' endpoint is maintained for backward compatibility.
     """
     payload = await request.json()
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
-    
-    logger.info(f"[POST /api/v1/sip/trunks/outbound] Payload received: {json.dumps(payload, separators=(',',':'))}")
-    
+
+    logger.info(
+        f"[POST /api/v1/sip/trunks/outbound] Payload received: {json.dumps(payload, separators=(',', ':'))}"
+    )
+
     try:
         trunk = await _create_sip_outbound_trunk(
             name=payload.get("name"),
             address=payload.get("address"),
             numbers=payload.get("numbers"),
-            auth_username=payload.get("authUsername") or payload.get("auth_username") or payload.get("auth_user"),
-            auth_password=payload.get("authPassword") or payload.get("auth_password") or payload.get("auth_pass")
+            auth_username=payload.get("authUsername")
+            or payload.get("auth_username")
+            or payload.get("auth_user"),
+            auth_password=payload.get("authPassword")
+            or payload.get("auth_password")
+            or payload.get("auth_pass"),
         )
-        
-        return JSONResponse({
-            "status": "success",
-            "sip_trunk_id": trunk.sip_trunk_id,
-            "name": trunk.name,
-            "provider": "zadarma",
-            "address": trunk.address
-        })
+
+        return JSONResponse(
+            {
+                "status": "success",
+                "sip_trunk_id": trunk.sip_trunk_id,
+                "name": trunk.name,
+                "provider": "zadarma",
+                "address": trunk.address,
+            }
+        )
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -590,32 +707,44 @@ async def create_twilio_sip_trunk(request: Request):
     payload = await request.json()
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
-    
-    logger.info(f"[POST /api/v1/sip/trunks/outbound/twilio] Payload received: {json.dumps(payload, separators=(',',':'))}")
-    
+
+    logger.info(
+        f"[POST /api/v1/sip/trunks/outbound/twilio] Payload received: {json.dumps(payload, separators=(',', ':'))}"
+    )
+
     # Twilio-friendly field mapping (accepting both CLI-style and original keys)
     name = payload.get("name")
     address = payload.get("address") or "live-kit-mc.pstn.twilio.com"
     numbers = payload.get("numbers")
-    auth_username = payload.get("authUsername") or payload.get("auth_username") or payload.get("auth_user")
-    auth_password = payload.get("authPassword") or payload.get("auth_password") or payload.get("auth_pass")
-    
+    auth_username = (
+        payload.get("authUsername")
+        or payload.get("auth_username")
+        or payload.get("auth_user")
+    )
+    auth_password = (
+        payload.get("authPassword")
+        or payload.get("auth_password")
+        or payload.get("auth_pass")
+    )
+
     try:
         trunk = await _create_sip_outbound_trunk(
             name=name,
             address=address,
             numbers=numbers,
             auth_username=auth_username,
-            auth_password=auth_password
+            auth_password=auth_password,
         )
-        
-        return JSONResponse({
-            "status": "success",
-            "sip_trunk_id": trunk.sip_trunk_id,
-            "name": trunk.name,
-            "provider": "twilio",
-            "address": trunk.address
-        })
+
+        return JSONResponse(
+            {
+                "status": "success",
+                "sip_trunk_id": trunk.sip_trunk_id,
+                "name": trunk.name,
+                "provider": "twilio",
+                "address": trunk.address,
+            }
+        )
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -624,7 +753,7 @@ async def create_twilio_sip_trunk(request: Request):
 async def create_and_call_plivo(request: Request):
     """
     Unified Plivo endpoint to provision a SIP trunk (optional) and place an outbound call.
-    Supports on-the-fly provisioning if 'trunk' details are provided, 
+    Supports on-the-fly provisioning if 'trunk' details are provided,
     otherwise uses 'trunk_id' from the payload or environment.
     """
     payload = await request.json()
@@ -644,29 +773,47 @@ async def create_and_call_plivo(request: Request):
                 name=trunk_data.get("name"),
                 address=trunk_data.get("address"),
                 numbers=trunk_data.get("numbers"),
-                auth_username=trunk_data.get("authUsername") or trunk_data.get("auth_username") or trunk_data.get("auth_user"),
-                auth_password=trunk_data.get("authPassword") or trunk_data.get("auth_password") or trunk_data.get("auth_pass"),
+                auth_username=trunk_data.get("authUsername")
+                or trunk_data.get("auth_username")
+                or trunk_data.get("auth_user"),
+                auth_password=trunk_data.get("authPassword")
+                or trunk_data.get("auth_password")
+                or trunk_data.get("auth_pass"),
                 client=plivo_client,
-                destination_country="in"
+                destination_country="in",
             )
             trunk_id = trunk.sip_trunk_id
-        elif "numbers" in payload and ("authUsername" in payload or "auth_username" in payload or "auth_user" in payload):
+        elif "numbers" in payload and (
+            "authUsername" in payload
+            or "auth_username" in payload
+            or "auth_user" in payload
+        ):
             logger.info("Flat trunk payload detected. Provisioning Plivo trunk...")
             trunk = await _create_sip_outbound_trunk(
                 name=payload.get("name"),
                 address=payload.get("address"),
                 numbers=payload.get("numbers"),
-                auth_username=payload.get("authUsername") or payload.get("auth_username") or payload.get("auth_user"),
-                auth_password=payload.get("authPassword") or payload.get("auth_password") or payload.get("auth_pass"),
+                auth_username=payload.get("authUsername")
+                or payload.get("auth_username")
+                or payload.get("auth_user"),
+                auth_password=payload.get("authPassword")
+                or payload.get("auth_password")
+                or payload.get("auth_pass"),
                 client=plivo_client,
-                destination_country="in"
+                destination_country="in",
             )
             trunk_id = trunk.sip_trunk_id
         else:
-            trunk_id = payload.get("trunk_id") or payload.get("call_from_id") or os.getenv("SIP_TRUNK_ID")
+            trunk_id = (
+                payload.get("trunk_id")
+                or payload.get("call_from_id")
+                or os.getenv("SIP_TRUNK_ID")
+            )
 
         if not trunk_id:
-            return JSONResponse({"error": "No trunk_id provided or configured"}, status_code=400)
+            return JSONResponse(
+                {"error": "No trunk_id provided or configured"}, status_code=400
+            )
 
         # 2. Extract Target Phone Number (optional if only provisioning/testing trunk)
         client_phone = payload.get("client_phone")
@@ -674,12 +821,16 @@ async def create_and_call_plivo(request: Request):
             client_phone = str(client_phone).strip()
 
         if not client_phone:
-            logger.info(f"No client_phone provided. Trunk {trunk_id} provisioned successfully.")
-            return JSONResponse({
-                "status": "success",
-                "sip_trunk_id": trunk_id,
-                "message": "Trunk provisioned successfully (no call initiated)"
-            })
+            logger.info(
+                f"No client_phone provided. Trunk {trunk_id} provisioned successfully."
+            )
+            return JSONResponse(
+                {
+                    "status": "success",
+                    "sip_trunk_id": trunk_id,
+                    "message": "Trunk provisioned successfully (no call initiated)",
+                }
+            )
 
         country_code = str(payload.get("client_country_code") or "").strip("+")
         if client_phone.startswith("+"):
@@ -696,9 +847,7 @@ async def create_and_call_plivo(request: Request):
         logger.info(f"Dispatching agent to room {room_name}")
         await lk_client.agent_dispatch.create_dispatch(
             api.CreateAgentDispatchRequest(
-                room=room_name,
-                agent_name="mantra-agent",
-                metadata=json.dumps(payload)
+                room=room_name, agent_name="mantra-agent", metadata=json.dumps(payload)
             )
         )
 
@@ -706,8 +855,10 @@ async def create_and_call_plivo(request: Request):
         sip_number = payload.get("call_from")  # Caller ID
         if sip_number and not sip_number.startswith("+"):
             sip_number = f"+{sip_number}"
-            
-        logger.info(f"Placing SIP call to {phone_number} via trunk {trunk_id} (Caller ID: {sip_number})")
+
+        logger.info(
+            f"Placing SIP call to {phone_number} via trunk {trunk_id} (Caller ID: {sip_number})"
+        )
 
         sip_part = await plivo_client.sip.create_sip_participant(
             api.CreateSIPParticipantRequest(
@@ -718,17 +869,19 @@ async def create_and_call_plivo(request: Request):
                 participant_identity=f"sip_{call_id}",
                 participant_name="Mantra Voice",
                 play_ringtone=False,
-                wait_until_answered=True
+                wait_until_answered=True,
             )
         )
 
-        return JSONResponse({
-            "status": "success",
-            "sip_trunk_id": trunk_id,
-            "room": room_name,
-            "participant": sip_part.participant_identity,
-            "call_id": call_id
-        })
+        return JSONResponse(
+            {
+                "status": "success",
+                "sip_trunk_id": trunk_id,
+                "room": room_name,
+                "participant": sip_part.participant_identity,
+                "call_id": call_id,
+            }
+        )
 
     except Exception as e:
         logger.error(f"Plivo unified call failed: {e}\n{traceback.format_exc()}")
@@ -747,21 +900,21 @@ async def list_sip_outbound_trunks():
         )
         trunk_list = []
         for item in response.items:
-            trunk_list.append({
-                "sip_trunk_id": item.sip_trunk_id,
-                "name": item.name,
-                "address": item.address,
-                "transport": item.transport,
-                "numbers": list(item.numbers),
-                "auth_username": item.auth_username,
-                "encryption": item.media_encryption,
-            })
-        
-        return JSONResponse({
-            "status": "success",
-            "count": len(trunk_list),
-            "trunks": trunk_list
-        })
+            trunk_list.append(
+                {
+                    "sip_trunk_id": item.sip_trunk_id,
+                    "name": item.name,
+                    "address": item.address,
+                    "transport": item.transport,
+                    "numbers": list(item.numbers),
+                    "auth_username": item.auth_username,
+                    "encryption": item.media_encryption,
+                }
+            )
+
+        return JSONResponse(
+            {"status": "success", "count": len(trunk_list), "trunks": trunk_list}
+        )
     except Exception as e:
         logger.error(f"Failed to list SIP outbound trunks: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -775,18 +928,20 @@ async def delete_sip_outbound_trunk(trunk_id: str):
     """
     if not trunk_id:
         return JSONResponse({"error": "Trunk ID is required"}, status_code=400)
-    
+
     try:
         await lk_client.sip.delete_trunk(
             api.DeleteSIPTrunkRequest(sip_trunk_id=trunk_id)
         )
         logger.info(f"Successfully deleted SIP outbound trunk: {trunk_id}")
-        
-        return JSONResponse({
-            "status": "success",
-            "message": f"SIP trunk {trunk_id} deleted successfully",
-            "sip_trunk_id": trunk_id
-        })
+
+        return JSONResponse(
+            {
+                "status": "success",
+                "message": f"SIP trunk {trunk_id} deleted successfully",
+                "sip_trunk_id": trunk_id,
+            }
+        )
     except Exception as e:
         logger.error(f"Failed to delete SIP outbound trunk {trunk_id}: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -795,11 +950,11 @@ async def delete_sip_outbound_trunk(trunk_id: str):
 @app.get("/config")
 async def get_config():
     """Return the LiveKit URL for the frontend."""
-    return JSONResponse({
-        "url": os.getenv("LIVEKIT_URL")
-    })
+    return JSONResponse({"url": os.getenv("LIVEKIT_URL")})
+
 
 # ── Dashboard API (authenticated) ────────────────────────────────────────
+
 
 @app.get("/api/v1/dashboard/stream")
 async def dashboard_stream(request: Request):
@@ -808,10 +963,12 @@ async def dashboard_stream(request: Request):
 
     async def event_generator():
         if not redis_client:
-            yield "data: {\"error\": \"Redis not connected\"}\n\n"
+            yield 'data: {"error": "Redis not connected"}\n\n'
             return
 
-        MAX_CONCURRENCY = int(os.getenv("MAX_CONCURRENCY", os.getenv("CARTESIA_MAX_CONCURRENCY", "5")))
+        MAX_CONCURRENCY = int(
+            os.getenv("MAX_CONCURRENCY", os.getenv("CARTESIA_MAX_CONCURRENCY", "5"))
+        )
 
         while True:
             try:
@@ -822,19 +979,23 @@ async def dashboard_stream(request: Request):
                 active_details = []
                 for call_id, room_name in active_calls_map.items():
                     status = await redis_client.get(f"calls:status:{call_id}")
-                    active_details.append({
-                        "call_id": call_id,
-                        "room_name": room_name,
-                        "status": status or "unknown",
-                    })
+                    active_details.append(
+                        {
+                            "call_id": call_id,
+                            "room_name": room_name,
+                            "status": status or "unknown",
+                        }
+                    )
 
-                data = json.dumps({
-                    "pending_calls": pending_count,
-                    "active_calls": active_count,
-                    "max_concurrency": MAX_CONCURRENCY,
-                    "active_call_details": active_details,
-                    "timestamp": time.time(),
-                })
+                data = json.dumps(
+                    {
+                        "pending_calls": pending_count,
+                        "active_calls": active_count,
+                        "max_concurrency": MAX_CONCURRENCY,
+                        "active_call_details": active_details,
+                        "timestamp": time.time(),
+                    }
+                )
                 yield f"data: {data}\n\n"
             except Exception as e:
                 logger.error(f"Dashboard SSE error: {e}")
@@ -874,15 +1035,25 @@ async def dashboard_metrics(request: Request):
         finally:
             await conn.close()
 
-        metrics = dict(row) if row else {
-            "total_calls": 0, "completed_calls": 0, "busy_calls": 0,
-            "no_answer_calls": 0, "error_calls": 0, "incomplete_calls": 0,
-            "avg_duration_seconds": 0,
-        }
+        metrics = (
+            dict(row)
+            if row
+            else {
+                "total_calls": 0,
+                "completed_calls": 0,
+                "busy_calls": 0,
+                "no_answer_calls": 0,
+                "error_calls": 0,
+                "incomplete_calls": 0,
+                "avg_duration_seconds": 0,
+            }
+        )
 
-        answer_rate = round(
-            metrics["completed_calls"] / metrics["total_calls"] * 100, 1
-        ) if metrics["total_calls"] > 0 else 0
+        answer_rate = (
+            round(metrics["completed_calls"] / metrics["total_calls"] * 100, 1)
+            if metrics["total_calls"] > 0
+            else 0
+        )
 
         return {
             **metrics,
@@ -909,10 +1080,13 @@ async def dashboard_calls(request: Request, limit: int = 20, offset: int = 0):
                 ORDER BY created_at DESC
                 LIMIT $1 OFFSET $2
                 """,
-                limit, offset
+                limit,
+                offset,
             )
 
-            count_row = await conn.fetchrow("SELECT COUNT(*)::int AS total FROM call_logs")
+            count_row = await conn.fetchrow(
+                "SELECT COUNT(*)::int AS total FROM call_logs"
+            )
             total = count_row["total"] if count_row else 0
         finally:
             await conn.close()
@@ -920,17 +1094,21 @@ async def dashboard_calls(request: Request, limit: int = 20, offset: int = 0):
         calls = []
         for row in rows:
             cl = row["call_log"] if isinstance(row["call_log"], dict) else {}
-            calls.append({
-                "call_id": row["call_id"],
-                "status": row["status"],
-                "recording_url": row["recording_url"] or "",
-                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
-                "client_name": cl.get("client_name") or cl.get("client_id") or "",
-                "client_phone": cl.get("client_phone") or "",
-                "duration": cl.get("call_duration_seconds"),
-                "summary": cl.get("ai_summary") or "",
-                "purpose": (cl.get("prompt") or "")[:120],
-            })
+            calls.append(
+                {
+                    "call_id": row["call_id"],
+                    "status": row["status"],
+                    "recording_url": row["recording_url"] or "",
+                    "created_at": row["created_at"].isoformat()
+                    if row["created_at"]
+                    else None,
+                    "client_name": cl.get("client_name") or cl.get("client_id") or "",
+                    "client_phone": cl.get("client_phone") or "",
+                    "duration": cl.get("call_duration_seconds"),
+                    "summary": cl.get("ai_summary") or "",
+                    "purpose": (cl.get("prompt") or "")[:120],
+                }
+            )
 
         return {"calls": calls, "total": total, "limit": limit, "offset": offset}
     except Exception as e:
@@ -951,11 +1129,13 @@ async def dashboard_active_calls(request: Request):
         calls = []
         for call_id, room_name in active_map.items():
             status = await redis_client.get(f"calls:status:{call_id}")
-            calls.append({
-                "call_id": call_id,
-                "room_name": room_name,
-                "status": status or "unknown",
-            })
+            calls.append(
+                {
+                    "call_id": call_id,
+                    "room_name": room_name,
+                    "status": status or "unknown",
+                }
+            )
         return {"active_calls": calls}
     except Exception as e:
         logger.error(f"Active calls error: {e}")
@@ -964,23 +1144,24 @@ async def dashboard_active_calls(request: Request):
 
 # ── Knowledge Base Ingestion Endpoints ────────────────────────────────
 
+
 @app.post("/api/v1/knowledge/upload")
 async def kb_upload(request: Request, kb_id: str, file: UploadFile = File(...)):
     """Upload a file (.pdf, .txt, .md) and index it into the specified KB."""
     # require_auth(request)
-    
+
     if not file.filename:
         return JSONResponse({"error": "No filename provided"}, status_code=400)
-    
-    ext = file.filename.lower().split('.')[-1]
-    if ext not in ('pdf', 'txt', 'md'):
+
+    ext = file.filename.lower().split(".")[-1]
+    if ext not in ("pdf", "txt", "md"):
         return JSONResponse({"error": f"Unsupported file type: {ext}"}, status_code=400)
-    
+
     file_bytes = await file.read()
-    
+
     try:
         from mantra.knowledge_base import PostgresKnowledgeBase, ingest_file
-        
+
         dsn = (
             f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
             f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
@@ -988,7 +1169,7 @@ async def kb_upload(request: Request, kb_id: str, file: UploadFile = File(...)):
         kb = PostgresKnowledgeBase(dsn)
         result = await ingest_file(kb, kb_id, file_bytes, file.filename)
         await kb.close()
-        
+
         return {"status": "success", **result}
     except Exception as e:
         logger.error(f"KB upload failed: {e}")
@@ -999,26 +1180,28 @@ async def kb_upload(request: Request, kb_id: str, file: UploadFile = File(...)):
 async def kb_text(request: Request):
     """Ingest a raw text block into the specified KB."""
     # require_auth(request)
-    
+
     try:
         body = await request.json()
         kb_id = body.get("kb_id")
         content = body.get("content")
         title = body.get("title")
-        
+
         if not kb_id or not content:
-            return JSONResponse({"error": "kb_id and content are required"}, status_code=400)
-        
+            return JSONResponse(
+                {"error": "kb_id and content are required"}, status_code=400
+            )
+
         from mantra.knowledge_base import PostgresKnowledgeBase, ingest_text
-        
+
         dsn = (
             f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
             f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
         )
         kb = PostgresKnowledgeBase(dsn)
-        result = await ingest_text(kb, kb_id, content, title=title, source_type='text')
+        result = await ingest_text(kb, kb_id, content, title=title, source_type="text")
         await kb.close()
-        
+
         return {"status": "success", **result}
     except Exception as e:
         logger.error(f"KB text ingest failed: {e}")
@@ -1029,17 +1212,19 @@ async def kb_text(request: Request):
 async def kb_url(request: Request):
     """Fetch a URL, extract text, and index it into the specified KB."""
     # require_auth(request)
-    
+
     try:
         body = await request.json()
         kb_id = body.get("kb_id")
         url = body.get("url")
-        
+
         if not kb_id or not url:
-            return JSONResponse({"error": "kb_id and url are required"}, status_code=400)
-        
+            return JSONResponse(
+                {"error": "kb_id and url are required"}, status_code=400
+            )
+
         from mantra.knowledge_base import PostgresKnowledgeBase, ingest_url
-        
+
         dsn = (
             f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
             f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
@@ -1047,7 +1232,7 @@ async def kb_url(request: Request):
         kb = PostgresKnowledgeBase(dsn)
         result = await ingest_url(kb, kb_id, url)
         await kb.close()
-        
+
         return {"status": "success", **result}
     except Exception as e:
         logger.error(f"KB URL ingest failed: {e}")
@@ -1059,6 +1244,7 @@ async def kb_list(request: Request):
     """List distinct KB IDs available in the database."""
     try:
         from mantra.knowledge_base import PostgresKnowledgeBase
+
         dsn = (
             f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
             f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
@@ -1066,8 +1252,10 @@ async def kb_list(request: Request):
         kb = PostgresKnowledgeBase(dsn)
         pool = await kb._get_pool()
         async with pool.acquire() as conn:
-            rows = await conn.fetch("SELECT DISTINCT kb_id FROM kb_pages ORDER BY kb_id")
-            kbs = [r['kb_id'] for r in rows]
+            rows = await conn.fetch(
+                "SELECT DISTINCT kb_id FROM kb_pages ORDER BY kb_id"
+            )
+            kbs = [r["kb_id"] for r in rows]
         await kb.close()
         return {"status": "success", "kbs": kbs}
     except Exception as e:
@@ -1079,10 +1267,10 @@ async def kb_list(request: Request):
 async def kb_delete_page(request: Request, page_id: str):
     """Delete a single page from the KB."""
     # require_auth(request)
-    
+
     try:
         from mantra.knowledge_base import PostgresKnowledgeBase
-        
+
         dsn = (
             f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
             f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
@@ -1090,7 +1278,7 @@ async def kb_delete_page(request: Request, page_id: str):
         kb = PostgresKnowledgeBase(dsn)
         success = await kb.delete_page(page_id)
         await kb.close()
-        
+
         if success:
             return {"status": "success", "deleted": page_id}
         else:
@@ -1104,10 +1292,10 @@ async def kb_delete_page(request: Request, page_id: str):
 async def kb_delete_by_kb(request: Request, kb_id: str):
     """Delete all pages for a KB."""
     # require_auth(request)
-    
+
     try:
         from mantra.knowledge_base import PostgresKnowledgeBase
-        
+
         dsn = (
             f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
             f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
@@ -1115,7 +1303,7 @@ async def kb_delete_by_kb(request: Request, kb_id: str):
         kb = PostgresKnowledgeBase(dsn)
         count = await kb.delete_by_kb(kb_id)
         await kb.close()
-        
+
         return {"status": "success", "deleted_count": count, "kb_id": kb_id}
     except Exception as e:
         logger.error(f"KB delete by KB failed: {e}")
@@ -1124,6 +1312,7 @@ async def kb_delete_by_kb(request: Request, kb_id: str):
 
 def main():
     import uvicorn
+
     port = int(os.getenv("PORT", "8081"))
     logger.info(f"UI Server starting on http://0.0.0.0:{port}")
     try:
@@ -1132,14 +1321,21 @@ def main():
         logger.error(f"Failed to run UI server: {e}", exc_info=True)
         try:
             import asyncio
-            asyncio.run(send_crash_email(
-                service_name="Mantra UI Server (Core/Startup)", 
-                error=e, 
-                context_data={"Status": "Crashloop / Process Death", "PID": os.getpid()}
-            ))
+
+            asyncio.run(
+                send_crash_email(
+                    service_name="Mantra UI Server (Core/Startup)",
+                    error=e,
+                    context_data={
+                        "Status": "Crashloop / Process Death",
+                        "PID": os.getpid(),
+                    },
+                )
+            )
         except Exception as email_err:
             logger.error(f"Failed to dispatch core crash email: {email_err}")
         raise
+
 
 if __name__ == "__main__":
     main()
