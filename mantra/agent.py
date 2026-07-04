@@ -85,6 +85,8 @@ from mantra.utils import (
 
 # Import knowledge base
 from mantra.knowledge_base import PostgresKnowledgeBase
+from mantra.retriever import KnowledgeRetriever
+from typing import Annotated
 
 
 VOICE_MAPPING = {
@@ -123,7 +125,7 @@ class AssistantFunctions:
         job_metadata: str,
         room_name: str,
         ctx: JobContext = None,
-        kb_id: str = None,
+        kb_ids: list[str] = None,
     ):
         self.job_metadata = job_metadata
         self.room_name = room_name
@@ -131,8 +133,9 @@ class AssistantFunctions:
         self.agent = None
         self.session = None
         self.ctx = ctx
-        self.kb_id = kb_id
+        self.kb_ids = kb_ids or []
         self._kb: PostgresKnowledgeBase | None = None
+        self._retriever: KnowledgeRetriever | None = None
 
     async def _get_kb(self) -> PostgresKnowledgeBase:
         if self._kb is None:
@@ -142,6 +145,24 @@ class AssistantFunctions:
             )
             self._kb = PostgresKnowledgeBase(dsn)
         return self._kb
+
+    async def _get_retriever(self) -> KnowledgeRetriever:
+        if self._retriever is None:
+            kb = await self._get_kb()
+            self._retriever = KnowledgeRetriever(kb)
+        return self._retriever
+
+    @llm.function_tool(
+        description="Search the knowledge base for factual information relevant to the user's question. Use this tool to retrieve accurate information about products, services, policies, procedures, pricing, locations, schedules, people, organizations, documents, regulations, FAQs, or any domain-specific content stored in the knowledge base. ALWAYS use this tool before answering questions that require factual or organization-specific information."
+    )
+    async def search_knowledge_base(
+        self, 
+        query: Annotated[str, "The search query to look up in the knowledge base. Be specific, e.g., 'What are the symptoms of diabetes?' or 'How many paid leaves do I get?'"]
+    ):
+        logger.info(f"Agent requested knowledge base search for: '{query}'")
+        retriever = await self._get_retriever()
+        result = await retriever.retrieve(query, self.kb_ids)
+        return result
 
     @llm.function_tool(
         description="End the call. Call this tool when the conversation is over — the user said goodbye, is not interested, or there is nothing left to discuss."

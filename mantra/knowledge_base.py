@@ -51,7 +51,7 @@ class KnowledgeBase(ABC):
     @abstractmethod
     async def search(
         self,
-        kb_id: str,
+        kb_ids: list[str],
         query_embedding: list[float],
         top_k: int = 3,
         threshold: float = 0.7,
@@ -112,7 +112,7 @@ class PostgresKnowledgeBase(KnowledgeBase):
 
     async def search(
         self,
-        kb_id: str,
+        kb_ids: list[str],
         query_embedding: list[float],
         top_k: int = 3,
         threshold: float = 0.7,
@@ -124,13 +124,13 @@ class PostgresKnowledgeBase(KnowledgeBase):
                 SELECT id, kb_id, title, content, source_type, page_meta, content_in_text, created_at,
                        1 - (embedding <=> $2::vector) as similarity
                 FROM kb_pages
-                WHERE kb_id = $1
+                WHERE kb_id = ANY($1::text[])
                   AND embedding IS NOT NULL
                   AND 1 - (embedding <=> $2::vector) >= $3
                 ORDER BY embedding <=> $2::vector
                 LIMIT $4
             """,
-                kb_id,
+                kb_ids,
                 str(query_embedding) if query_embedding else None,
                 threshold,
                 top_k,
