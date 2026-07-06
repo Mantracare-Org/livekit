@@ -304,7 +304,7 @@ async def api_kb_chat(request: Request):
     try:
         kb = PostgresKnowledgeBase(dsn)
         query_embedding = await generate_embedding(user_input)
-        results = await kb.search(kb_id, query_embedding, top_k=3, threshold=0.3)
+        results = await kb.search([kb_id], query_embedding, top_k=3, threshold=0.3)
 
         context_str = ""
         formatted_context = []
