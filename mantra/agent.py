@@ -249,15 +249,20 @@ async def entrypoint(ctx: JobContext):
     logger.info(f"Metadata: {ctx.job.metadata}")
 
     # Initialize function context for handoff
-    kb_id = None
+    kb_ids_list = []
     if ctx.job.metadata:
         try:
             meta_payload = json.loads(ctx.job.metadata)
-            kb_id = meta_payload.get("kb_id")
+            if "kb_id" in meta_payload and meta_payload["kb_id"]:
+                kb_ids_list.append(meta_payload["kb_id"])
+            if "kb_ids" in meta_payload and isinstance(meta_payload["kb_ids"], list):
+                kb_ids_list.extend(meta_payload["kb_ids"])
+            # Remove duplicates
+            kb_ids_list = list(set(kb_ids_list))
         except:
             pass
 
-    fnc_ctx = AssistantFunctions(ctx.job.metadata, ctx.room.name, ctx=ctx, kb_ids=[kb_id] if kb_id else [])
+    fnc_ctx = AssistantFunctions(ctx.job.metadata, ctx.room.name, ctx=ctx, kb_ids=kb_ids_list)
     call_state = {
         "user_joined": False,
         "timeline": [

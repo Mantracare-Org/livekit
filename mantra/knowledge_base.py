@@ -246,7 +246,7 @@ def chunk_by_heading(text: str, max_tokens: int = 2000) -> list[dict]:
 def chunk_by_paragraph(text: str, max_tokens: int = 2000) -> list[dict]:
     """Chunk by paragraph breaks."""
     chunks = []
-    paragraphs = [p.strip() for p in text.split("\n\n") if len(p.strip()) > 50]
+    paragraphs = [p.strip() for p in text.split("\n\n") if len(p.strip()) > 0]
 
     current_chunk = []
     current_tokens = 0
@@ -289,7 +289,7 @@ def chunk_by_sliding_window(
 
     for i in range(0, len(words), step):
         chunk_words = words[i : i + max_tokens]
-        if len(chunk_words) < 50:
+        if len(chunk_words) == 0:
             break
         chunks.append(
             {

@@ -174,6 +174,89 @@
             margin-left: 20px;
             margin-bottom: 10px;
         }
+        
+        .custom-select-wrapper {
+            position: relative;
+            min-width: 250px;
+        }
+        .custom-select-display {
+            padding: 8px 12px;
+            border-radius: 4px;
+            border: 1px solid var(--border-default);
+            background: var(--bg-input);
+            color: var(--text-primary);
+            cursor: pointer;
+            font-size: 0.9rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            user-select: none;
+        }
+        .custom-select-display:after {
+            content: '▼';
+            font-size: 0.7em;
+            margin-left: 8px;
+            color: var(--text-secondary);
+        }
+        .custom-select-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--bg-input);
+            border: 1px solid var(--border-default);
+            border-radius: 4px;
+            margin-top: 4px;
+            display: none;
+            z-index: 10;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            flex-direction: column;
+        }
+        .custom-select-dropdown.show {
+            display: flex;
+        }
+        .dropdown-header {
+            padding: 8px 12px;
+            display: flex;
+            justify-content: flex-end;
+            border-bottom: 1px solid var(--border-default);
+        }
+        .dropdown-reset-btn {
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 4px 12px;
+            font-size: 0.8rem;
+            cursor: pointer;
+        }
+        .dropdown-reset-btn:hover {
+            background: var(--accent-hover);
+        }
+        .dropdown-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .custom-select-option {
+            padding: 10px 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            font-size: 0.9rem;
+            user-select: none;
+            color: var(--text-secondary);
+        }
+        .custom-select-option:hover {
+            background: var(--bg-hover);
+        }
+        .custom-select-option.selected {
+            color: var(--accent);
+        }
+        .custom-select-option.selected:after {
+            content: '✔';
+            font-size: 0.9rem;
+        }
     <style>
         /* ... existing styles ... */
         .markdown-body {
@@ -191,11 +274,13 @@
 <div class="container">
     <div class="header">
         <h1>KB Chat Tester</h1>
-        <div>
-            <label for="kb-id">KB ID: </label>
-            <select id="kb-id" class="kb-input">
-                <option value="">Loading...</option>
-            </select>
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <label>KB IDs: </label>
+            <div class="custom-select-wrapper" id="kb-select-wrapper">
+                <div class="custom-select-display" id="kb-select-display">Loading...</div>
+                <div class="custom-select-dropdown" id="kb-select-dropdown">
+                </div>
+            </div>
         </div>
     </div>
     
@@ -217,29 +302,94 @@
     const chatArea = document.getElementById('chat-area');
     const messageInput = document.getElementById('message-input');
     const sendBtn = document.getElementById('send-btn');
-    const kbIdSelect = document.getElementById('kb-id');
     const loading = document.getElementById('loading');
     
+    const kbSelectWrapper = document.getElementById('kb-select-wrapper');
+    const kbSelectDisplay = document.getElementById('kb-select-display');
+    const kbSelectDropdown = document.getElementById('kb-select-dropdown');
+    
     let history = [];
+    let selectedKbs = new Set();
+    
+    kbSelectDisplay.addEventListener('click', () => {
+        kbSelectDropdown.classList.toggle('show');
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!kbSelectWrapper.contains(e.target)) {
+            kbSelectDropdown.classList.remove('show');
+        }
+    });
+
+    function updateDisplay() {
+        if (selectedKbs.size === 0) {
+            kbSelectDisplay.textContent = 'Select KBs...';
+        } else {
+            const first = Array.from(selectedKbs)[0];
+            if (selectedKbs.size === 1) {
+                kbSelectDisplay.textContent = first;
+            } else {
+                kbSelectDisplay.textContent = `${first}, ... (Total: ${selectedKbs.size})`;
+            }
+        }
+    }
     
     // Load KB IDs
     async function loadKbIds() {
         try {
             const res = await fetch('/api/v1/knowledge/list');
             const data = await res.json();
-            kbIdSelect.innerHTML = '';
+            kbSelectDropdown.innerHTML = '';
+            
             if (data.status === 'success' && data.kbs.length > 0) {
-                data.kbs.forEach(kb => {
-                    const opt = document.createElement('option');
-                    opt.value = kb;
-                    opt.textContent = kb;
-                    kbIdSelect.appendChild(opt);
+                const header = document.createElement('div');
+                header.className = 'dropdown-header';
+                const resetBtn = document.createElement('button');
+                resetBtn.className = 'dropdown-reset-btn';
+                resetBtn.textContent = 'Reset';
+                resetBtn.type = 'button';
+                resetBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    selectedKbs.clear();
+                    updateDisplay();
+                    const options = listContainer.querySelectorAll('.custom-select-option');
+                    options.forEach(opt => opt.classList.remove('selected'));
                 });
+                header.appendChild(resetBtn);
+                kbSelectDropdown.appendChild(header);
+                
+                const listContainer = document.createElement('div');
+                listContainer.className = 'dropdown-list';
+                
+                data.kbs.forEach(kb => {
+                    const opt = document.createElement('div');
+                    opt.className = 'custom-select-option';
+                    opt.textContent = kb;
+                    
+                    opt.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        if (selectedKbs.has(kb)) {
+                            selectedKbs.delete(kb);
+                            opt.classList.remove('selected');
+                        } else {
+                            selectedKbs.add(kb);
+                            opt.classList.add('selected');
+                        }
+                        updateDisplay();
+                    });
+                    
+                    listContainer.appendChild(opt);
+                });
+                
+                kbSelectDropdown.appendChild(listContainer);
+                updateDisplay();
             } else {
-                kbIdSelect.innerHTML = '<option value="">No KBs found</option>';
+                kbSelectDisplay.textContent = 'No KBs found';
+                kbSelectDropdown.innerHTML = '<div style="padding: 8px;">No KBs found</div>';
             }
         } catch (e) {
-            kbIdSelect.innerHTML = '<option value="">Error loading</option>';
+            kbSelectDisplay.textContent = 'Error loading';
+            kbSelectDropdown.innerHTML = '<div style="padding: 8px;">Error loading</div>';
         }
     }
     
@@ -263,7 +413,7 @@
             let contextHtml = '<div class="context-box"><strong>Retrieved Context:</strong><br>';
             context.forEach((c, idx) => {
                 const preview = c.preview ? c.preview.substring(0, 150) : "";
-                contextHtml += `<div>[${idx + 1}] <b>${c.title}</b>: ${preview}...</div>`;
+                contextHtml += `<div>[${idx + 1}] <span style="color:var(--accent); font-size:0.8rem;">[${c.kb_id}]</span> <b>${c.title}</b>: ${preview}...</div>`;
             });
             contextHtml += '</div>';
             contentHtml = contextHtml + contentHtml;
@@ -276,10 +426,10 @@
 
     async function sendMessage() {
         const message = messageInput.value.trim();
-        const kbId = kbIdSelect.value;
+        const kbIds = Array.from(selectedKbs);
         
-        if (!message || !kbId) {
-            alert("Please select a KB ID and type a message.");
+        if (!message || kbIds.length === 0) {
+            alert("Please select at least one KB ID and type a message.");
             return;
         }
         
@@ -297,7 +447,7 @@
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    kb_id: kbId,
+                    kb_ids: kbIds,
                     message: message,
                     history: history
                 })

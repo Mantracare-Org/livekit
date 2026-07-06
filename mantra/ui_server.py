@@ -287,13 +287,16 @@ async def api_kb_chat(request: Request):
         )
 
     body = await request.json()
-    kb_id = body.get("kb_id")
+    kb_ids = body.get("kb_ids", [])
+    if "kb_id" in body and not kb_ids:  # backwards compatibility
+        kb_ids = [body.get("kb_id")]
+        
     user_input = body.get("message")
     history = body.get("history", [])
 
-    if not kb_id or not user_input:
+    if not kb_ids or not user_input:
         return JSONResponse(
-            {"error": "kb_id and message are required"}, status_code=400
+            {"error": "kb_ids and message are required"}, status_code=400
         )
 
     dsn = (
@@ -304,7 +307,7 @@ async def api_kb_chat(request: Request):
     try:
         kb = PostgresKnowledgeBase(dsn)
         query_embedding = await generate_embedding(user_input)
-        results = await kb.search([kb_id], query_embedding, top_k=3, threshold=0.3)
+        results = await kb.search(kb_ids, query_embedding, top_k=5, threshold=0.3)
 
         context_str = ""
         formatted_context = []
@@ -312,12 +315,16 @@ async def api_kb_chat(request: Request):
             formatted = []
             for i, page in enumerate(results, 1):
                 preview = (
-                    page.content_in_text[:500]
+                    page.content_in_text
                     if hasattr(page, "content_in_text")
-                    else page.content[:500]
+                    else page.content
                 )
-                formatted.append(f"[{i}] {page.title}: {preview}")
-                formatted_context.append({"title": page.title, "preview": preview})
+                formatted.append(f"[{i}] [KB: {page.kb_id}] {page.title}: {preview}")
+                formatted_context.append({
+                    "title": page.title, 
+                    "preview": preview,
+                    "kb_id": page.kb_id
+                })
             context_str = "\\n\\n".join(formatted)
 
         messages = [
