@@ -74,7 +74,7 @@ from livekit.agents import (
 from livekit.agents import TurnHandlingOptions
 
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
-from livekit.plugins import openai, google, silero, deepgram
+from livekit.plugins import openai, google, silero
 
 # Import our production helpers
 from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend, normalize_to_iso8601, save_call_log_to_db
@@ -453,7 +453,7 @@ Follow these specific instructions:
         voice_speed = ai_p.get("voice_speed") or payload.get("voice_speed") or 1
 
         primary_language = str(ai_p.get("primary_language") or payload.get("primary_language") or "english").strip()
-        secondary_language = str(ai_p.get("secondary_language") or payload.get("secondary_language") or "").strip()
+        secondary_language = str(ai_p.get("secondary_language") or "").strip()
     else:
         model_name = "openai"
         voice_input = "arushi"
@@ -502,16 +502,20 @@ Follow these specific instructions:
     # LiveKit Inference authenticates using LIVEKIT_API_KEY + LIVEKIT_API_SECRET.
     # Voice UUIDs are unchanged — all standard Cartesia voices are supported.
     # Voice UUIDs are unchanged — all standard Cartesia voices are supported.
-    language = primary_iso
+    tts_language = "" if secondary_language else primary_iso
+    if secondary_language:
+        stt_language = LANGUAGE_MAPPING.get(secondary_language.lower(), primary_iso)
+    else:
+        stt_language = primary_iso
 
-    logger.info(f"TTS Language resolved to: '{language}' (None means auto-detect)")
+    logger.info(f"TTS Language resolved to: '{tts_language}' (Empty means auto-detect)")
     logger.info("TTS Backend: LiveKit Inference (cartesia/sonic-3)")
     logger.info(f"TTS Voice: {voice_id} | Speed: {voice_speed}")
 
     tts_engine = inference.TTS(
         model="cartesia/sonic-3",
         voice=voice_id,
-        language=language,
+        language=tts_language,
         extra_kwargs={
             "speed": voice_speed,
             "emotion": ["calmness:high", "positivity:high"],
@@ -541,7 +545,7 @@ Follow these specific instructions:
             min_silence_duration=0.15,
         ),
         # Using Inference STT with Deepgram Nova 3
-        stt=inference.STT(model="deepgram/nova-3", language=primary_iso),
+        stt=inference.STT(model="deepgram/nova-3", language=stt_language),
         llm=llm_engine,
 
         tts=tts_engine,
@@ -791,10 +795,12 @@ Follow these specific instructions:
         async def finalize():
             recording_url = ""
             transcript_data = ""
+            translated_transcript_data = None
             summary_text = ""
             duration = 0
             call_status = "Error"
             webhook_payload = None
+            mp3_bytes = None
 
             try:
                 logger.info("Starting post-call processing...")
@@ -867,6 +873,9 @@ Follow these specific instructions:
                 try:
                     transcript_data = SessionRecorder.build_transcript(list(history_snapshot))
                     logger.info(f"Transcript built ({len(history_snapshot)} messages)")
+                    if primary_language.lower() != "english":
+                        logger.info(f"Primary language is {primary_language}, generating English translation...")
+                        translated_transcript_data = await SessionRecorder.translate_transcript_json(llm_engine, transcript_data, primary_language)
                 except Exception as e:
                     logger.error(f"Transcript step failed: {e}", exc_info=True)
 
@@ -940,6 +949,7 @@ Follow these specific instructions:
                         "call_status": call_status,
                         "status": call_status,
                         "call_transcript": transcript_data,
+                        "call_transcript_english": translated_transcript_data,
                         "ai_summary": summary_text,
                         "summary": summary_text,
                         "recording_url": recording_url,
@@ -961,6 +971,24 @@ Follow these specific instructions:
 
             except Exception as e:
                 logger.error(f"Pipeline error in finalize: {e}", exc_info=True)
+
+            # Local Data Saving (per user request)
+            try:
+                safe_call_id = str(call_id) if 'call_id' in locals() else str(ctx.job.id)
+                local_dir = os.path.join(os.getcwd(), "local_data", safe_call_id)
+                os.makedirs(local_dir, exist_ok=True)
+                
+                if webhook_payload:
+                    with open(os.path.join(local_dir, "payload.json"), "w") as f:
+                        json.dump(webhook_payload, f, indent=2)
+                
+                if mp3_bytes:
+                    with open(os.path.join(local_dir, "recording.mp3"), "wb") as f:
+                        f.write(mp3_bytes)
+                        
+                logger.info(f"Saved all local data for call {safe_call_id} to {local_dir}")
+            except Exception as e:
+                logger.error(f"Failed to save local data: {e}", exc_info=True)
 
             # 8. Send to MantraAssist backend and save to local DB
             try:

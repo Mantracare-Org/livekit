@@ -1209,7 +1209,6 @@ dependencies = [
     { name = "livekit-api" },
     { name = "livekit-plugins-ai-coustics" },
     { name = "livekit-plugins-assemblyai" },
-    { name = "livekit-plugins-deepgram" },
     { name = "livekit-plugins-google" },
     { name = "livekit-plugins-noise-cancellation" },
     { name = "livekit-plugins-openai" },
@@ -1233,7 +1232,6 @@ requires-dist = [
     { name = "livekit-api", specifier = ">=1.1.0" },
     { name = "livekit-plugins-ai-coustics" },
     { name = "livekit-plugins-assemblyai" },
-    { name = "livekit-plugins-deepgram" },
     { name = "livekit-plugins-google" },
     { name = "livekit-plugins-noise-cancellation", specifier = ">=0.2.5" },
     { name = "livekit-plugins-openai" },
@@ -1374,19 +1372,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8f/d4/c79252372ac0d7c158164aa87d12bcfab6b567f310c6e788ea635c45cf5e/livekit_plugins_assemblyai-1.5.4.tar.gz", hash = "sha256:48024e8de256f64f5ee7dd441fea271744cbeffcf9948cc9c01e08f0d33ab67a", size = 8949, upload-time = "2026-04-16T04:50:46.523Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2b/7b/ea3d648b7d9c69290db1c2bd92a3fd57bc62ed9c799a65f5c5d7abebbdfb/livekit_plugins_assemblyai-1.5.4-py3-none-any.whl", hash = "sha256:2b4da5d5cddee6c87ecebdbf46f405f29246a4e14ca4bab9d6824f86a47335e5", size = 9436, upload-time = "2026-04-16T04:50:45.144Z" },
-]
-
-[[package]]
-name = "livekit-plugins-deepgram"
-version = "1.5.4"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "livekit-agents", extra = ["codecs"] },
-    { name = "numpy" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/e3/8c/f5637006e656fb04dc9dd8654de61a61261d17e10177133f85ba8ef6e33c/livekit_plugins_deepgram-1.5.4.tar.gz", hash = "sha256:974dd0ec7c6702794e7f2c31207d731b94403bbca4491139cd9608952ea9f47c", size = 17246, upload-time = "2026-04-16T04:51:14.364Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/70/73/ce57c5d57ba822f4261b19c926bacfbf383626b5b208fae49d08436e87ed/livekit_plugins_deepgram-1.5.4-py3-none-any.whl", hash = "sha256:7ff7301ed58c8ba2a115fe800fca0b713ffe12fe4ddc1bffc99e0c499e417e38", size = 22216, upload-time = "2026-04-16T04:51:13.304Z" },
 ]
 
 [[package]]

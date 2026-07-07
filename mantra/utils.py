@@ -246,6 +246,39 @@ class SessionRecorder:
         return json.dumps(structured)
 
     @staticmethod
+    async def translate_transcript_json(llm_engine: llm.LLM, transcript_json: str, language: str) -> str:
+        prompt = (
+            f"You are an expert translator. The following is a phone call transcript in {language}, "
+            "formatted as a JSON array of objects. "
+            "Translate all the text values into English, keeping the exact same JSON structure. "
+            "Output ONLY valid JSON and nothing else.\n\n"
+            f"```json\n{transcript_json}\n```"
+        )
+        try:
+            messages = [
+                llm.ChatMessage(role="system", content=["You are an expert translator. Output only valid JSON."]),
+                llm.ChatMessage(role="user", content=[prompt]),
+            ]
+            stream = llm_engine.chat(chat_ctx=llm.ChatContext(items=messages))
+            response = await stream.collect()
+            text = response.text.strip()
+            
+            if text.startswith("```"):
+                first_newline = text.find("\n")
+                if first_newline != -1:
+                    text = text[first_newline:]
+                if text.endswith("```"):
+                    text = text[:-3]
+                text = text.strip()
+            
+            # verify it parses
+            json.loads(text)
+            return text
+        except Exception as e:
+            logger.error(f"Transcript translation failed: {e}")
+            return ""
+
+    @staticmethod
     async def generate_summary(llm_engine: llm.LLM, history: list) -> str:
         summary_prompt = (
             "Generate a call summary as a single, coherent paragraph. It must properly state: "
