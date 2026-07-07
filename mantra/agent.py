@@ -92,6 +92,15 @@ VOICE_MAPPING = {
     "arushi": "95d51f79-c397-46f9-b49a-23763d3eaa2d"
 }
 
+LANGUAGE_MAPPING = {
+    "english": "en", "spanish": "es", "french": "fr", "german": "de",
+    "italian": "it", "dutch": "nl", "polish": "pl", "portuguese": "pt",
+    "arabic": "ar", "japanese": "ja", "chinese": "zh", "chinese (mandarin)": "zh",
+    "mandarin": "zh", "malay": "ms", "hindi": "hi", "tamil": "ta",
+    "telugu": "te", "bengali": "bn", "marathi": "mr", "gujarati": "gu",
+    "kannada": "kn", "malayalam": "ml", "punjabi": "pa", "urdu": "ur"
+}
+
 # ── Tone configurations ──────────────────────────────────────────────────────
 TONE_INSTRUCTIONS = {
     "professional": (
@@ -319,7 +328,6 @@ async def entrypoint(ctx: JobContext):
 
 CORE BEHAVIOR:
 - This is a PHONE CALL. Speak naturally.
-- You are BILINGUAL. Start in English. If the user speaks Hindi or asks for it, switch to Hindi immediately.
 - Do NOT use markdown, bullet points, or special characters.
 - If the user pauses, wait patiently for them to finish.
 - ACTIVELY LISTEN: If the user asks a question, address it directly and helpfully BEFORE returning to the main topic. Never ignore their questions.
@@ -423,6 +431,9 @@ Follow these specific instructions:
             logger.error(f"Failed to parse metadata: {e}")
 
     # 3. Select LLM and Voice based on payload
+    primary_language = "english"
+    secondary_language = ""
+
     if 'payload' in locals():
         # Handle nested ai_payload if present
         ai_p = payload.get("ai_payload")
@@ -440,11 +451,20 @@ Follow these specific instructions:
         
         # Priority for Speed: ai_payload.voice_speed -> payload.voice_speed -> default 1.05
         voice_speed = ai_p.get("voice_speed") or payload.get("voice_speed") or 1
+
+        primary_language = str(ai_p.get("primary_language") or payload.get("primary_language") or "english").strip()
+        secondary_language = str(ai_p.get("secondary_language") or payload.get("secondary_language") or "").strip()
     else:
         model_name = "openai"
         voice_input = "arushi"
         voice_id = VOICE_MAPPING["arushi"]
         voice_speed = 1.0
+
+    primary_iso = LANGUAGE_MAPPING.get(primary_language.lower(), "en")
+    if secondary_language:
+        initial_instructions += f"\n\n- BILINGUAL CAPABILITY: The user may speak in {primary_language} and {secondary_language}. Always reply in the language the user speaks. Start in {primary_language} if unsure.\n"
+    else:
+        initial_instructions += f"\n\n- LANGUAGE: You MUST speak in {primary_language}. If the user speaks in a different language, gently guide them back to {primary_language}.\n"
 
     # Safe parsing and clamping for speed (0.1 to 2.0)
     try:
@@ -481,10 +501,8 @@ Follow these specific instructions:
     # TTS via LiveKit Inference — no separate Cartesia API key needed.
     # LiveKit Inference authenticates using LIVEKIT_API_KEY + LIVEKIT_API_SECRET.
     # Voice UUIDs are unchanged — all standard Cartesia voices are supported.
-    language = "en"
-        
-    if language:
-        language = str(language).lower()
+    # Voice UUIDs are unchanged — all standard Cartesia voices are supported.
+    language = primary_iso
 
     logger.info(f"TTS Language resolved to: '{language}' (None means auto-detect)")
     logger.info("TTS Backend: LiveKit Inference (cartesia/sonic-3)")
@@ -522,8 +540,8 @@ Follow these specific instructions:
             min_speech_duration=0.08,
             min_silence_duration=0.15,
         ),
-        # Using Hindi STT as it's better at catching Hinglish/Indian English
-        stt=deepgram.STT(model="nova-3", language="hi", smart_format=True, numerals=True),
+        # Using Inference STT with Deepgram Nova 3
+        stt=inference.STT(model="deepgram/nova-3", language=primary_iso),
         llm=llm_engine,
 
         tts=tts_engine,

@@ -11,6 +11,7 @@
 
 ## Recently Completed
 
+- [x] Dynamic multi-language integration with LiveKit Inference (22 languages) — 2026-07
 - [x] Cartesia TTS migration to LiveKit Inference — 2026-06
 - [x] Dynamic tone/style configurations for agent prompts — 2026-06
 - [x] `end_call` tool with graceful disconnect — 2026-05

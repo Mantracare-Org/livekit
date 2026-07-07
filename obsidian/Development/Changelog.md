@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-07-07
+
+- **feat:** Dynamic 22-language support mapping payload to LiveKit Inference STT and TTS
+- **feat:** Optional secondary language prompting for bilingual agents
+
 ## 2026-06-30
 
 - **doc:** Created `obsidian/` — comprehensive Obsidian knowledge base (48 files)
