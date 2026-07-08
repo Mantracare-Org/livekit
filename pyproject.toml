@@ -27,6 +27,7 @@ dependencies = [
     "openai>=1.30.0",
     "pypdf>=3.17.0",
     "trafilatura>=1.8.0",
+    "prometheus-fastapi-instrumentator>=8.0.2",
 ]
 
 [tool.setuptools.packages.find]

@@ -4,11 +4,11 @@
     "type": "split",
     "children": [
       {
-        "id": "1a66377bb4f3ab4f",
+        "id": "b57ea9200996fe2b",
         "type": "tabs",
         "children": [
           {
-            "id": "ba89d0ebd22c5ea3",
+            "id": "d8a3992f72a1ffd0",
             "type": "leaf",
             "state": {
               "type": "graph",
@@ -176,8 +176,10 @@
       "bases:Create new base": false
     }
   },
-  "active": "ba89d0ebd22c5ea3",
+  "active": "d8a3992f72a1ffd0",
   "lastOpenFiles": [
+    "Untitled.canvas",
+    "Untitled",
     "Features/Telephony Integration.md",
     "Knowledge/Conventions.md",
     "Context/Project Summary.md",

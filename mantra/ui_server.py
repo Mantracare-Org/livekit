@@ -14,6 +14,7 @@ import aiohttp
 import asyncpg
 import redis.asyncio as redis
 from fastapi import FastAPI, Request, HTTPException, File, UploadFile
+from prometheus_fastapi_instrumentator import Instrumentator
 from mantra.email_alerts import send_crash_email
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -112,9 +113,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
-
-# ── Request logging middleware ────────────────────────────────────────
-# Suppress uvicorn's default access log (we handle it ourselves with timing + filtering)
+Instrumentator().instrument(app).expose(app, include_in_schema=False, should_gzip=True)
 
 SCANNER_PATHS = (
     "/.well-known/",
@@ -261,6 +260,12 @@ async def dashboard_page():
 async def console_page():
     """Serve the test console."""
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+
+@app.get("/network")
+async def network_page():
+    """Serve the network monitoring page."""
+    return FileResponse(os.path.join(STATIC_DIR, "network.html"))
 
 
 @app.get("/kb-chat")
