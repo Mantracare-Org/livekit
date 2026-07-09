@@ -288,11 +288,11 @@ class SessionRecorder:
         fallback_stage_id = current_stage_id
         
         # Parse stage details to find fallback IDs based on rules
-        not_answering_id = current_stage_id
-        interested_id = current_stage_id
-        confirmed_id = current_stage_id
-        follow_up_id = current_stage_id
-        not_interested_id = current_stage_id
+        not_answering_id = None
+        interested_id = None
+        confirmed_id = None
+        follow_up_id = None
+        not_interested_id = None
         
         for stage in stage_details:
             desc = stage.get("description", "").lower()
@@ -417,7 +417,8 @@ Provide ONLY the JSON object. Do not include markdown code block syntax or other
             hospital_location = ""
             sentiment_score = 0.5
 
-        if new_stage_id in [not_answering_id, follow_up_id] and not next_call_on:
+        target_stage_ids = [sid for sid in [not_answering_id, follow_up_id] if sid is not None]
+        if new_stage_id is not None and new_stage_id in target_stage_ids and not next_call_on:
             tomorrow = current_time + datetime.timedelta(hours=24)
             next_call_on = tomorrow.strftime("%Y-%m-%d %H:%M:%S")
 
