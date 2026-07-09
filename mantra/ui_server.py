@@ -56,6 +56,7 @@ async def get_db_connection():
         database=os.getenv("POSTGRES_DB"),
         host=os.getenv("POSTGRES_HOST"),
         port=os.getenv("POSTGRES_PORT"),
+        timeout=5.0,
     )
 
 @asynccontextmanager
@@ -892,8 +893,9 @@ async def dashboard_metrics(request: Request):
             "answer_rate": answer_rate,
         }
     except Exception as e:
-        logger.error(f"Dashboard metrics error: {e}")
-        return {"error": str(e)}
+        err_msg = str(e) or repr(e)
+        logger.error(f"Dashboard metrics error: {err_msg}")
+        return {"error": err_msg}
 
 
 @app.get("/api/v1/dashboard/calls")
