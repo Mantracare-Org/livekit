@@ -1,13 +1,14 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)  
-> **Last Updated:** 2026-06-30  
+> **Last Updated:** 2026-07-09  
 > **Status:** Active maintenance + incremental features
 
 ## In Progress
 
 - [ ] Migrate remaining `mantra/agent.py` tool callbacks to separate module
 - [ ] Set up automated test suite (currently manual only)
+- [x] Grafana observability — Prometheus metrics + JSON logging — 2026-07-09
 
 ## Recently Completed
 

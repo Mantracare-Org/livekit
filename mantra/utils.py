@@ -18,7 +18,9 @@ from livekit.plugins import openai
 from livekit.agents import llm
 import boto3
 
-logger = logging.getLogger("mantra.utils")
+from mantra.log_config import setup_json_logger
+
+logger = setup_json_logger("mantra.utils")
 
 async def save_call_log_to_db(call_id: str, call_log: str, status: str, recording_url: str):
     """Save call details to the isolated PostgreSQL logging database."""

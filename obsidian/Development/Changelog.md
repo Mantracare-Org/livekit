@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-07-09
+
+- **feat:** Grafana observability integration (Prometheus metrics + structured JSON logging)
+  - New `mantra/telemetry.py` — shared Prometheus metrics registry (HTTP, calls, queue, pipeline, SIP)
+  - New `mantra/log_config.py` — structured JSON logging via `python-json-logger`
+  - Added `/metrics` endpoint on UI server (port 9090) for Prometheus scraping
+  - Instruments FastAPI HTTP middleware with request count, latency, in-flight gauges
+  - Instrumented call lifecycle: `calls_total`, `calls_in_progress`, `call_duration_seconds`
+  - Instrumented dispatcher: `queue_depth`, `dispatch_attempts_total`, `dispatches_in_flight`
+  - Instrumented SIP calls: `sip_calls_total` by provider/status
+  - Added `crash_total` counter to exception handlers
+  - Added `LOG_LEVEL`, `LOG_FORMAT`, `METRICS_PORT`, `METRICS_PREFIX` env vars
+  - Updated Dockerfile to expose port 9090
+
 ## 2026-06-30
 
 - **doc:** Created `obsidian/` — comprehensive Obsidian knowledge base (48 files)

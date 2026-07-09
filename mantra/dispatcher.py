@@ -9,12 +9,15 @@ from dotenv import load_dotenv
 import redis.asyncio as redis
 from livekit import api
 
+from mantra.log_config import setup_json_logger
+from mantra.telemetry import queue_depth, dispatch_attempts_total, dispatches_in_flight
+
 # Load environment variables
 load_dotenv(".env.local")
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("mantra.dispatcher")
+logger = setup_json_logger("mantra.dispatcher")
 
 # Limits
 MAX_CONCURRENCY = int(os.getenv("MAX_CONCURRENCY", os.getenv("CARTESIA_MAX_CONCURRENCY", "5")))
@@ -121,6 +124,8 @@ async def main():
 
                 # 2. Check Capacity
                 active_count = await redis_client.hlen("calls:active")
+                pending_count = await redis_client.zcard("queue:pending")
+                queue_depth.set(pending_count)
                 available_capacity = min(
                     MAX_CONCURRENCY - active_count,
                     AGENT_MAX_WORKERS - active_count,
@@ -129,7 +134,6 @@ async def main():
 
                 if available_capacity > 0:
                     # 3. Dequeue highest priority call
-                    # zpopmin returns a list of tuples: [(member, score)]
                     popped = await redis_client.zpopmin("queue:pending")
                     if popped:
                         call_entry, score = popped[0]
@@ -137,21 +141,26 @@ async def main():
                         call_id = payload.get("call_id") or payload.get("voice_id")
                         room_name = payload.get("_resolved_room_name", f"call_{call_id}")
 
-                        logger.info(f"Dequeued call {call_id}. Capacity before: {active_count}. Available: {available_capacity}")
+                        logger.info("Dequeued call", extra={"call_id": call_id, "capacity_before": active_count, "available": available_capacity})
 
                         # 4. State Update
                         await redis_client.hset("calls:active", call_id, room_name)
                         await redis_client.set(f"calls:status:{call_id}", "dispatching")
 
                         # 5. Dispatch
+                        dispatches_in_flight.inc()
+                        dispatch_attempts_total.labels(status="attempted").inc()
                         try:
                             await dispatch_call(lk_client, payload)
                             await redis_client.set(f"calls:status:{call_id}", "in_progress")
+                            dispatch_attempts_total.labels(status="success").inc()
+                            dispatches_in_flight.dec()
+                            logger.info("Dispatch succeeded", extra={"call_id": call_id})
                         except Exception as e:
-                            # Re-queue on failure and free up capacity
-                            logger.error(f"Failed to dispatch {call_id}. Re-queueing...")
+                            dispatch_attempts_total.labels(status="failed").inc()
+                            dispatches_in_flight.dec()
+                            logger.error("Dispatch failed, re-queueing", extra={"call_id": call_id, "error": str(e)})
                             await redis_client.hdel("calls:active", call_id)
-                            # Increment score to push it back slightly, or keep same score
                             await redis_client.zadd("queue:pending", {call_entry: score + 10})
                             await redis_client.set(f"calls:status:{call_id}", "failed_dispatch_requeued")
             except Exception as e:

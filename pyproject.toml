@@ -24,6 +24,8 @@ dependencies = [
     "pydub>=0.25.1",
     "redis>=8.0.0",
     "pyjwt>=2.8.0",
+    "prometheus-client>=0.21.0",
+    "python-json-logger>=2.0.7",
 ]
 
 [tool.setuptools.packages.find]

@@ -44,3 +44,38 @@ Launches both agent + UI server, prints API endpoints.
 | DeepSeek API | LLM (DeepSeek) | API key |
 | Cartesia API | Text-to-speech | API key(s) |
 | MantraAssist Backend | CRM webhook target | HTTP + HMAC |
+
+## Observability
+
+### Prometheus Metrics (`mantra/telemetry.py`)
+
+Available at `GET /metrics` on the UI server (port 9090).
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `mantra_app_info` | Info | name, version | Application metadata |
+| `mantra_http_requests_total` | Counter | method, path, status | Total HTTP requests |
+| `mantra_http_request_duration_seconds` | Histogram | method, path | HTTP request latency |
+| `mantra_http_requests_in_flight` | Gauge | method | Concurrent HTTP requests |
+| `mantra_calls_total` | Counter | status, model | Total calls processed |
+| `mantra_calls_in_progress` | Gauge | — | Current active calls |
+| `mantra_call_duration_seconds` | Histogram | status, model | Call duration |
+| `mantra_queue_depth` | Gauge | — | Pending calls in Redis queue |
+| `mantra_dispatch_attempts_total` | Counter | status | Dispatch attempts |
+| `mantra_dispatches_in_flight` | Gauge | — | Current dispatches |
+| `mantra_pipeline_duration_seconds` | Histogram | stage | Pipeline stage latency |
+| `mantra_pipeline_errors_total` | Counter | stage | Pipeline errors |
+| `mantra_sip_calls_total` | Counter | provider, status | SIP call attempts |
+| `mantra_crash_total` | Counter | service | Crash/exception count |
+
+### Structured Logging (`mantra/log_config.py`)
+
+All modules emit JSON logs by default (`LOG_FORMAT=json`). Set `LOG_FORMAT=text` for plain text output. Log level controlled via `LOG_LEVEL` (default `INFO`).
+
+Fields: `timestamp`, `level`, `name`, `message`, plus extra context per event.
+
+### Grafana Setup
+
+1. Add `http://<host>:8081/metrics` as a Prometheus data source
+2. Add Loki as a log data source (scrape stdout JSON logs via Promtail)
+3. Import or create dashboards using the metrics above

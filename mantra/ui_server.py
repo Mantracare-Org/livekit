@@ -14,23 +14,28 @@ import aiohttp
 import asyncpg
 import redis.asyncio as redis
 from fastapi import FastAPI, Request, HTTPException
-from mantra.email_alerts import send_crash_email
-from mantra.utils import save_call_log_to_db
-from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 from livekit import api
 from dotenv import load_dotenv
 
+from mantra.email_alerts import send_crash_email
+from mantra.utils import save_call_log_to_db
+from mantra.log_config import setup_json_logger
+from mantra.telemetry import (
+    http_requests_total,
+    http_request_duration_seconds,
+    http_requests_in_flight,
+    sip_calls_total,
+    crash_total,
+    generate_metrics,
+    metrics_content_type,
+)
 
 # Load environment variables from .env.local
 load_dotenv(".env.local")
 
-logger = logging.getLogger("mantra.ui_server")
-logger.setLevel(logging.INFO)
-_handler = logging.StreamHandler(sys.stdout)
-_handler.setFormatter(logging.Formatter("%(asctime)s INFO %(name)s: %(message)s"))
-logger.addHandler(_handler)
-logger.propagate = False
+logger = setup_json_logger("mantra.ui_server")
 
 # Persistent LiveKit API clients
 lk_client: api.LiveKitAPI = None           # Direct — used for Twilio, Zadarma, and general operations
@@ -106,8 +111,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# ── Metrics endpoint ──────────────────────────────────────────────
+
+@app.get("/metrics")
+async def metrics():
+    return Response(content=generate_metrics(), media_type=metrics_content_type())
+
+
 # ── Request logging middleware ────────────────────────────────────────
-# Suppress uvicorn's default access log (we handle it ourselves with timing + filtering)
 
 SCANNER_PATHS = (
     "/.well-known/", "/favicon", "/wp-",
@@ -117,16 +128,17 @@ SCANNER_PATHS = (
     "/cms/", "/sito/",
 )
 
+
 @app.exception_handler(Exception)
 async def global_crash_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Error in UI server: {exc}", exc_info=True)
-    
+    logger.error("Unhandled exception", exc_info=True, extra={"path": str(request.url), "method": request.method})
+    crash_total.labels(service="ui_server").inc()
+
     context_data = {
         "Request URL": str(request.url),
-        "HTTP Method" : request.method,
+        "HTTP Method": request.method,
         "User-Agent": request.headers.get("User-Agent"),
         "Client IP": request.client.host if request.client else None,
-        
     }
 
     await send_crash_email(
@@ -140,26 +152,36 @@ async def global_crash_exception_handler(request: Request, exc: Exception):
         content={"error": "Internal server error, An Automated alert has been dispatched. The technical team is working on resolving this issue."}
     )
 
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start = time.time()
     client_host = request.client.host if request.client else "unknown"
     path = request.url.path
+    method = request.method
+
+    http_requests_in_flight.labels(method=method).inc()
     try:
         response = await call_next(request)
         duration = time.time() - start
 
-        # Suppress scanner junk at INFO level
+        http_requests_total.labels(method=method, path=path, status=response.status_code).inc()
+        http_request_duration_seconds.labels(method=method, path=path).observe(duration)
+
         if path.startswith(SCANNER_PATHS):
-            logger.debug(f"Scanner: {client_host} {request.method} {path} {response.status_code}")
+            logger.debug("Scanner request", extra={"client": client_host, "method": method, "path": path, "status": response.status_code, "duration_ms": f"{duration*1000:.0f}"})
         else:
-            logger.info(f"{client_host} {request.method} {path} {response.status_code} in {duration*1000:.0f}ms")
+            logger.info("HTTP request", extra={"client": client_host, "method": method, "path": path, "status": response.status_code, "duration_ms": f"{duration*1000:.0f}"})
 
         return response
     except Exception as e:
         duration = time.time() - start
-        logger.error(f"{client_host} {request.method} {path} ERROR in {duration*1000:.0f}ms: {e}")
-        raise  # let FastAPI handle the error response
+        http_requests_total.labels(method=method, path=path, status=500).inc()
+        http_request_duration_seconds.labels(method=method, path=path).observe(duration)
+        logger.error("HTTP request error", extra={"client": client_host, "method": method, "path": path, "error": str(e), "duration_ms": f"{duration*1000:.0f}"})
+        raise
+    finally:
+        http_requests_in_flight.labels(method=method).dec()
 
 # Get the directory of the current file
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -399,7 +421,9 @@ async def handle_outbound_call_webhook(request: Request):
                 )
             )
             logger.info(f"SIP Participant created: {sip_part.participant_identity}")
+            sip_calls_total.labels(provider=provider, status="success").inc()
         except Exception as e:
+            sip_calls_total.labels(provider=provider, status="failed").inc()
             logger.error(f"SIP Call trigger failed for {room_name}: {e}\n{traceback.format_exc()}")
             
             # Store exact SIP failure reason in Redis for the agent to read
@@ -697,6 +721,8 @@ async def create_and_call_plivo(request: Request):
             )
         )
 
+        sip_calls_total.labels(provider="plivo", status="success").inc()
+
         return JSONResponse({
             "status": "success",
             "sip_trunk_id": trunk_id,
@@ -706,6 +732,7 @@ async def create_and_call_plivo(request: Request):
         })
 
     except Exception as e:
+        sip_calls_total.labels(provider="plivo", status="failed").inc()
         logger.error(f"Plivo unified call failed: {e}\n{traceback.format_exc()}")
         return JSONResponse({"error": str(e)}, status_code=500)
 

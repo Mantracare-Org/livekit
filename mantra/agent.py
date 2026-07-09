@@ -4,9 +4,39 @@ import asyncio
 import aiohttp
 import os
 import datetime
-from mantra.email_alerts import send_crash_email
 import sys
 from typing import Annotated
+
+from dotenv import load_dotenv
+from livekit import rtc, api
+from livekit.agents.llm import (
+    ChatContext,
+    ChatMessage,
+)
+from livekit.agents import (
+    Agent,
+    AgentServer,
+    AgentSession,
+    JobContext,
+    cli,
+    inference,
+    llm,
+)
+from livekit.agents import TurnHandlingOptions
+from livekit.plugins.turn_detector.multilingual import MultilingualModel
+from livekit.plugins import openai, google, silero, deepgram
+
+from mantra.email_alerts import send_crash_email
+from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend, normalize_to_iso8601, save_call_log_to_db
+from mantra.log_config import setup_json_logger
+from mantra.telemetry import (
+    calls_total,
+    calls_in_progress,
+    call_duration_seconds,
+    pipeline_errors_total,
+    crash_total,
+    start_metrics_server,
+)
 
 # ── Suppress OpenTelemetry 429 errors ──────────────────────────────────
 os.environ.setdefault("OTEL_METRICS_EXPORTER", "none")
@@ -40,44 +70,19 @@ class ColorFormatter(logging.Formatter):
 _is_inference = os.getenv("LIVEKIT_AGENTS_INFERENCE") == "1"
 _proc_type = "Inference Subprocess" if _is_inference else "Main Worker"
 
-_handler = logging.StreamHandler(sys.stdout)
-_handler.setFormatter(ColorFormatter(
-    f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s"
-))
-
-
-
-logging.basicConfig(level=logging.DEBUG, handlers=[_handler])
-logger = logging.getLogger("mantra.agent")
+logger = setup_json_logger("mantra.agent")
 logging.getLogger("livekit.agents").setLevel(logging.DEBUG)
-logger.info("Initializing process...")
-
-# Also suppress noisy OTEL SDK logs once the SDK initialises
 logging.getLogger("opentelemetry").setLevel(logging.ERROR)
 
-from dotenv import load_dotenv
+# Add color terminal handler alongside JSON for local dev
+_color_handler = logging.StreamHandler(sys.stdout)
+_color_handler.setFormatter(ColorFormatter(
+    f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s"
+))
+_color_handler.setLevel(logging.DEBUG)
+logger.addHandler(_color_handler)
 
-from livekit import rtc, api
-from livekit.agents.llm import (
-    ChatContext,
-    ChatMessage,
-)
-from livekit.agents import (
-    Agent,
-    AgentServer,
-    AgentSession,
-    JobContext,
-    cli,
-    inference,
-    llm,
-)
-from livekit.agents import TurnHandlingOptions
-
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
-from livekit.plugins import openai, google, silero, deepgram
-
-# Import our production helpers
-from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend, normalize_to_iso8601, save_call_log_to_db
+logger.info("Initializing process...", extra={"proc_type": _proc_type, "pid": os.getpid()})
 
 
 
@@ -244,16 +249,13 @@ class AssistantFunctions:
 @server.rtc_session(agent_name="mantra-agent")
 async def entrypoint(ctx: JobContext):
     entrypoint_start_time = asyncio.get_event_loop().time()
-    # Plain log to verify entrypoint is reached
-    logger.info(f"Entrypoint reached for room: {ctx.room.name}")
-    
-    await ctx.connect()
+    call_start_time = entrypoint_start_time
+    resolved_model = "openai"
 
-    # logger.info(f"{Fore.GREEN}➕ Room Created / Connected: {ctx.room.name}{Style.RESET_ALL}")
-    logger.info(f"--- Starting agent session ---")
-    logger.info(f"Room: {ctx.room.name}")
-    logger.info(f"Job ID: {ctx.job.id}")
-    logger.info(f"Metadata: {ctx.job.metadata}")
+    logger.info("Entrypoint reached", extra={"room": ctx.room.name})
+
+    await ctx.connect()
+    logger.info("Session connected", extra={"room": ctx.room.name, "job_id": ctx.job.id})
 
     # Initialize function context for handoff
     fnc_ctx = AssistantFunctions(ctx.job.metadata, ctx.room.name, ctx=ctx)
@@ -424,14 +426,13 @@ Follow these specific instructions:
 
     # 3. Select LLM and Voice based on payload
     if 'payload' in locals():
-        # Handle nested ai_payload if present
         ai_p = payload.get("ai_payload")
         if not isinstance(ai_p, dict):
             ai_p = {}
         
-        # Priority for Model: ai_payload.ai_model -> payload.model -> default "openai"
         model_name = ai_p.get("ai_model") or payload.get("model") or "openai"
         model_name = str(model_name).lower()
+        resolved_model = model_name
         
         # Priority for Voice: ai_payload.voice_id -> payload.voice_id -> voice_name -> voice -> default "arushi"
         _raw_voice = ai_p.get("voice_id") or payload.get("voice_id") or payload.get("voice_name") or payload.get("voice") or "arushi"
@@ -695,6 +696,7 @@ Follow these specific instructions:
 
     try:
         await session.start(agent=agent, room=ctx.room)
+        calls_in_progress.inc()
         limiter_task = asyncio.create_task(call_limiter())
         inactivity_task = asyncio.create_task(inactivity_monitor())
         safety_net_task = asyncio.create_task(farewell_safety_net())
@@ -743,6 +745,7 @@ Follow these specific instructions:
         logger.info("Call entrypoint coroutine cancelled.")
     except Exception as e:
         logger.error(f"Error in entrypoint execution: {e}", exc_info=True)
+        crash_total.labels(service="agent_worker").inc()
         context_data = {
             "Room Name": getattr(ctx.room, "name", "N/A"),
             "Job ID": getattr(ctx.job, "id", "N/A"),
@@ -996,14 +999,22 @@ Follow these specific instructions:
             except Exception as e:
                 logger.error(f"Failed to free Redis capacity slot: {e}")
 
+            calls_in_progress.dec()
+            call_duration = asyncio.get_event_loop().time() - call_start_time
+            calls_total.labels(status=call_status, model=resolved_model).inc()
+            call_duration_seconds.labels(status=call_status, model=resolved_model).observe(call_duration)
+
             logger.info(
-                f"Post-call processing complete | "
-                f"Call ID: {ctx.job.id} | "
-                f"Lead: {webhook_payload.get('data', {}).get('client_id', 'N/A')} | "
-                f"Status: {webhook_payload.get('data', {}).get('call_status', 'N/A')} | "
-                f"Duration: {duration}s | "
-                f"S3: {'✓' if recording_url else '✗'} | "
-                f"Backend: {'✓' if delivered else '✗'}"
+                "Post-call processing complete",
+                extra={
+                    "call_id": ctx.job.id,
+                    "lead": webhook_payload.get('data', {}).get('client_id', 'N/A'),
+                    "status": webhook_payload.get('data', {}).get('call_status', 'N/A'),
+                    "duration_s": duration,
+                    "model": resolved_model,
+                    "s3_uploaded": bool(recording_url),
+                    "backend_delivered": delivered if 'delivered' in locals() else False,
+                }
             )
 
         await asyncio.shield(finalize())
@@ -1031,6 +1042,9 @@ def run_agent():
     _is_start_cmd = "start" in sys.argv
     if _is_start_cmd:
         logger.info("Mantra Agent Server is starting...")
+
+    start_metrics_server()
+    logger.info("Prometheus metrics server started", extra={"port": os.getenv("METRICS_PORT", "9090")})
     
     try:
         cli.run_app(server)
