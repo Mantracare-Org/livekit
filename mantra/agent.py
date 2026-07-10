@@ -6,7 +6,7 @@ import os
 import datetime
 from mantra.email_alerts import send_crash_email
 import sys
-from typing import Annotated
+from typing import Annotated, AsyncIterable
 
 # ── Suppress OpenTelemetry 429 errors ──────────────────────────────────
 os.environ.setdefault("OTEL_METRICS_EXPORTER", "none")
@@ -70,6 +70,8 @@ from livekit.agents import (
     cli,
     inference,
     llm,
+    stt,
+    ModelSettings,
 )
 from livekit.agents import TurnHandlingOptions
 
@@ -81,15 +83,58 @@ from mantra.utils import SessionRecorder, upload_to_s3, send_to_backend, normali
 
 
 
-VOICE_MAPPING = {
-    "gemma": "62ae83ad-4f6a-430b-af41-a9bede9286ca",
-    "alistair": "c8f7835e-28a3-4f0c-80d7-c1302ac62aae",
-    "sunny": "156fb8d2-335b-4950-9cb3-a2d33befec77",
-    "tyler": "820a3788-2b37-4d21-847a-b65d8a68c99a",
-    "vikas": "adf97b9d-905c-41de-9fe9-afb387116d06",
-    "camila": "bef2ba57-5c10-433b-b215-3bef35110a81",
-    "renata": "d3793b7b-4996-409c-9d59-96dd09f47717",
-    "arushi": "95d51f79-c397-46f9-b49a-23763d3eaa2d"
+VOICE_CONFIG = {
+    # Livekit Inference (Cartesia, ElevenLabs, Rime)
+    "michael": {"provider": "livekit", "model": "cartesia/sonic-3", "voice": "a167e0f3-df7e-4d52-a9c3-f949145efdab"},
+    "jessica": {"provider": "livekit", "model": "cartesia/sonic-3", "voice": "cgSgspJ2msm6clMCkdW9"},
+    "mateo": {"provider": "livekit", "model": "cartesia/sonic-3", "voice": "846fa30b-6e1a-49b9-b7df-6be47092a09a"},
+    "amanecer": {"provider": "livekit", "model": "rime/arcana", "voice": "amanecer"},
+    "hector": {"provider": "livekit", "model": "rime/arcana", "voice": "hector"},
+    "amarante": {"provider": "livekit", "model": "rime/arcana", "voice": "amarante"},
+    "julius": {"provider": "livekit", "model": "rime/arcana", "voice": "julius"},
+    "lorelei": {"provider": "livekit", "model": "rime/arcana", "voice": "lorelei"},
+    "flavio": {"provider": "livekit", "model": "rime/arcana", "voice": "flavio"},
+    "demetra": {"provider": "livekit", "model": "rime/arcana", "voice": "demetra"},
+    "lars": {"provider": "livekit", "model": "rime/arcana", "voice": "lars"},
+    "cornelia": {"provider": "livekit", "model": "rime/arcana", "voice": "cornelia"},
+    "celso": {"provider": "livekit", "model": "rime/arcana", "voice": "celso"},
+    "isadora": {"provider": "livekit", "model": "rime/arcana", "voice": "isadora"},
+    "batin": {"provider": "livekit", "model": "rime/arcana", "voice": "batin"},
+    "layla": {"provider": "livekit", "model": "rime/arcana", "voice": "layla"},
+    "ren": {"provider": "livekit", "model": "rime/arcana", "voice": "ren"},
+    "uzume": {"provider": "livekit", "model": "rime/arcana", "voice": "uzume"},
+    
+    # Cartesia API via Plugin
+    "wei": {"provider": "cartesia", "voice": "16212f18-4955-4be9-a6cd-2196ce2c11d1"},
+    "mei": {"provider": "cartesia", "voice": "7a5d4663-88ae-47b7-808e-8f9b9ee4127b"},
+    "arjun": {"provider": "cartesia", "voice": "TX3LPaxmHKxFdv7VOQHJ"},
+    "ananya": {"provider": "cartesia", "voice": "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4"},
+    "karthik": {"provider": "cartesia", "voice": "d2870b91-1b4c-47ab-81a8-3718d8e9c222"},
+    "meena": {"provider": "cartesia", "voice": "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4"},
+    "charan": {"provider": "cartesia", "voice": "a167e0f3-df7e-4d52-a9c3-f949145efdab"},
+    "sruthi": {"provider": "cartesia", "voice": "cf061d8b-a752-4865-81a2-57570a6e0565"},
+    "arup": {"provider": "cartesia", "voice": "2ba861ea-7cdc-43d1-8608-4045b5a41de5"},
+    "ritu": {"provider": "cartesia", "voice": "48b9e1de-e2fa-4914-8b32-31c437813548"},
+    "sameer": {"provider": "cartesia", "voice": "f227bc18-3704-47fe-b759-8c78a450fdfa"},
+    "pooja": {"provider": "cartesia", "voice": "5c32dce6-936a-4892-b131-bafe474afe5f"},
+    "nikhil": {"provider": "cartesia", "voice": "91925fe5-42ee-4ebe-96c1-c84b12a85a32"},
+    "kavya": {"provider": "cartesia", "voice": "4590a461-bc68-4a50-8d14-ac04f5923d22"},
+    "chetan": {"provider": "cartesia", "voice": "6baae46d-1226-45b5-a976-c7f9b797aae2"},
+    "lakshmi": {"provider": "cartesia", "voice": "7c6219d2-e8d2-462c-89d8-7ecba7c75d65"},
+    "arun": {"provider": "cartesia", "voice": "374b80da-e622-4dfc-90f6-1eeb13d331c9"},
+    "anjali": {"provider": "cartesia", "voice": "b426013c-002b-4e89-8874-8cd20b68373a"},
+    "harpreet": {"provider": "cartesia", "voice": "8bacd442-a107-4ec1-b6f1-2fcb3f6f4d56"},
+    "simran": {"provider": "cartesia", "voice": "991c62ce-631f-48b0-8060-2a0ebecbd15b"},
+
+    # Legacy mappings mapping directly to Cartesia inference
+    "gemma": {"provider": "livekit", "model": "cartesia/sonic-3", "voice": "62ae83ad-4f6a-430b-af41-a9bede9286ca"},
+    "alistair": {"provider": "livekit", "model": "cartesia/sonic-3", "voice": "c8f7835e-28a3-4f0c-80d7-c1302ac62aae"},
+    "sunny": {"provider": "livekit", "model": "cartesia/sonic-3", "voice": "156fb8d2-335b-4950-9cb3-a2d33befec77"},
+    "tyler": {"provider": "livekit", "model": "cartesia/sonic-3", "voice": "820a3788-2b37-4d21-847a-b65d8a68c99a"},
+    "vikas": {"provider": "livekit", "model": "cartesia/sonic-3", "voice": "adf97b9d-905c-41de-9fe9-afb387116d06"},
+    "camila": {"provider": "livekit", "model": "cartesia/sonic-3", "voice": "bef2ba57-5c10-433b-b215-3bef35110a81"},
+    "renata": {"provider": "livekit", "model": "cartesia/sonic-3", "voice": "d3793b7b-4996-409c-9d59-96dd09f47717"},
+    "arushi": {"provider": "livekit", "model": "cartesia/sonic-3", "voice": "95d51f79-c397-46f9-b49a-23763d3eaa2d"}
 }
 
 LANGUAGE_MAPPING = {
@@ -250,6 +295,100 @@ class AssistantFunctions:
     # 
     #     return "I am connecting you to a human assistant now. Please stay on the line. I will remain on the call to record and summarize our conversation."
 
+class MultilingualAgent(Agent):
+    def __init__(self, instructions: str, tools: list, default_language: str, tts_provider: str, tts_model: str):
+        super().__init__(instructions=instructions, tools=tools)
+        self._current_language = default_language
+        self._tts_provider = tts_provider
+        self._tts_model = tts_model
+
+    async def stt_node(
+        self, audio: AsyncIterable[rtc.AudioFrame], model_settings: ModelSettings
+    ) -> AsyncIterable[stt.SpeechEvent]:
+        default_stt = super().stt_node(audio, model_settings)
+        async for event in default_stt:
+            if self._is_transcript_event(event):
+                await self._handle_language_detection(event)
+            yield event
+
+    def _is_transcript_event(self, event: stt.SpeechEvent) -> bool:
+        return (
+            event.type
+            in [
+                stt.SpeechEventType.INTERIM_TRANSCRIPT,
+                stt.SpeechEventType.FINAL_TRANSCRIPT,
+            ]
+            and event.alternatives
+        )
+
+    async def _handle_language_detection(self, event: stt.SpeechEvent) -> None:
+        detected_language = event.alternatives[0].language
+        if not detected_language:
+            return
+            
+        base = detected_language.split("-")[0].lower() if detected_language else ""
+        if not base:
+            return
+            
+        if base != self._current_language:
+            self._current_language = base
+            self._update_tts_for_language(base)
+            asyncio.create_task(self._update_llm_language(base))
+
+    async def _update_llm_language(self, language: str) -> None:
+        logger.info(f"Updating LLM instructions to match user language: {language}")
+        try:
+            language_map = {
+                "en": "English", "es": "Spanish", "fr": "French", "de": "German", 
+                "it": "Italian", "pt": "Portuguese", "zh": "Chinese", "hi": "Hindi",
+                "ta": "Tamil", "te": "Telugu", "bn": "Bengali", "mr": "Marathi",
+                "gu": "Gujarati", "kn": "Kannada", "ml": "Malayalam", "pa": "Punjabi",
+                "ur": "Urdu", "ja": "Japanese", "ar": "Arabic", "ms": "Malay", "nl": "Dutch", "pl": "Polish"
+            }
+            lang_name = language_map.get(language, language)
+            
+            # Remove previous SYSTEM OVERRIDE if it exists to avoid appending indefinitely
+            base_instructions = str(self.instructions).split("\n\n[SYSTEM OVERRIDE]:")[0]
+            new_instructions = base_instructions + f"\n\n[SYSTEM OVERRIDE]: The user has switched to {lang_name}. You MUST strictly reply in {lang_name}. Do not use any other language."
+            
+            await self.update_instructions(new_instructions)
+        except Exception as e:
+            logger.warning(f"Failed to update LLM instructions: {e}")
+
+    def _update_tts_for_language(self, language: str) -> None:
+        logger.info(f"Updating TTS: detected language changed to {language}")
+        try:
+            if self._tts_provider == "cartesia":
+                self.session.tts.update_options(language=language)
+            else:
+                self.session.tts.update_options(
+                    model=self._tts_model,
+                    language=language
+                )
+        except Exception as e:
+            logger.warning(f"Failed to update TTS options: {e}")
+
+    async def on_user_turn_completed(
+        self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage
+    ) -> None:
+        language_map = {
+            "en": "English", "es": "Spanish", "fr": "French", "de": "German", 
+            "it": "Italian", "pt": "Portuguese", "zh": "Chinese", "hi": "Hindi",
+            "ta": "Tamil", "te": "Telugu", "bn": "Bengali", "mr": "Marathi",
+            "gu": "Gujarati", "kn": "Kannada", "ml": "Malayalam", "pa": "Punjabi",
+            "ur": "Urdu", "ja": "Japanese", "ar": "Arabic", "ms": "Malay", "nl": "Dutch", "pl": "Polish"
+        }
+        lang_name = language_map.get(self._current_language, self._current_language)
+        
+        # Inject a strong system prompt at the end of the context for THIS turn
+        reminder_msg = llm.ChatMessage(
+            role="system",
+            content=[f"[CRITICAL REMINDER]: The conversation is currently in {lang_name}. YOU MUST STRICTLY SPEAK, THINK, AND RESPOND IN {lang_name.upper()}. IGNORING THIS WILL CAUSE A SYSTEM FAILURE."]
+        )
+        turn_ctx.items.append(reminder_msg)
+        
+        await super().on_user_turn_completed(turn_ctx, new_message)
+
 @server.rtc_session(agent_name="mantra-agent")
 async def entrypoint(ctx: JobContext):
     entrypoint_start_time = asyncio.get_event_loop().time()
@@ -327,11 +466,13 @@ async def entrypoint(ctx: JobContext):
     initial_instructions = """You are an AI voice assistant on a phone call.
 
 CORE BEHAVIOR:
-- This is a PHONE CALL. Speak naturally.
+- This is a PHONE CALL. Speak naturally.    
 - Do NOT use markdown, bullet points, or special characters.
 - If the user pauses, wait patiently for them to finish.
 - ACTIVELY LISTEN: If the user asks a question, address it directly and helpfully BEFORE returning to the main topic. Never ignore their questions.
 - RETAIN CONTEXT & AVOID REPETITION: Remember the user's previous answers. Do NOT repeat the same questions. If they say no or change the subject, acknowledge it and move on. DO NOT be pushy.
+
+[SYSTEM OVERRIDE]: The user has switched to {language}. You MUST strictly reply in {language}. Do not use any other language.
 
 ENDING THE CALL (CRITICAL — YOU MUST FOLLOW THIS):
 - You have a tool called `end_call`. You MUST call this tool to end every call. There is NO other way to hang up.
@@ -345,6 +486,7 @@ ENDING THE CALL (CRITICAL — YOU MUST FOLLOW THIS):
 - Do NOT ask follow-up questions after the user indicates they want to end the call or is not interested.
 - Keep your final goodbye SHORT: "Thank you for your time, Anurag. Take care!" — that's it.
 - REMEMBER: If you find yourself writing a goodbye message, you MUST also call `end_call`. No exceptions.
+
 
 PRONUNCIATION (CRITICAL):
 - ALWAYS write the brand name as "MantraCare" (as a single word). NEVER write "Mantra Care" with a space.
@@ -447,7 +589,13 @@ Follow these specific instructions:
         # Priority for Voice: ai_payload.voice_id -> payload.voice_id -> voice_name -> voice -> default "arushi"
         _raw_voice = ai_p.get("voice_id") or payload.get("voice_id") or payload.get("voice_name") or payload.get("voice") or "arushi"
         voice_input = "arushi" if _raw_voice in (None, "null", "None") else _raw_voice
-        voice_id = VOICE_MAPPING.get(str(voice_input).lower(), voice_input)
+        voice_input_lower = str(voice_input).lower()
+        
+        if voice_input_lower in VOICE_CONFIG:
+            voice_info = VOICE_CONFIG[voice_input_lower]
+        else:
+            # Fallback to Cartesia on LiveKit if unmapped
+            voice_info = {"provider": "livekit", "model": "cartesia/sonic-3", "voice": voice_input}
         
         # Priority for Speed: ai_payload.voice_speed -> payload.voice_speed -> default 1.05
         voice_speed = ai_p.get("voice_speed") or payload.get("voice_speed") or 1
@@ -457,7 +605,7 @@ Follow these specific instructions:
     else:
         model_name = "openai"
         voice_input = "arushi"
-        voice_id = VOICE_MAPPING["arushi"]
+        voice_info = VOICE_CONFIG["arushi"]
         voice_speed = 1.0
 
     primary_iso = LANGUAGE_MAPPING.get(primary_language.lower(), "en")
@@ -476,7 +624,7 @@ Follow these specific instructions:
     # Explicit logs for call configuration
     logger.info("--- CALL CONFIGURATION ---")
     logger.info(f"Model: {model_name}")
-    logger.info(f"Voice: {voice_input} (ID: {voice_id})")
+    logger.info(f"Voice: {voice_input} (ID: {voice_info['voice']})")
     logger.info(f"Speed: {voice_speed}")
     logger.info("--------------------------")
 
@@ -498,29 +646,44 @@ Follow these specific instructions:
     else:
         logger.info("Using OpenAI LLM")
         llm_engine = openai.LLM(model="gpt-4o-mini")
-    # TTS via LiveKit Inference — no separate Cartesia API key needed.
-    # LiveKit Inference authenticates using LIVEKIT_API_KEY + LIVEKIT_API_SECRET.
-    # Voice UUIDs are unchanged — all standard Cartesia voices are supported.
-    # Voice UUIDs are unchanged — all standard Cartesia voices are supported.
-    tts_language = "" if secondary_language else primary_iso
     if secondary_language:
-        stt_language = LANGUAGE_MAPPING.get(secondary_language.lower(), primary_iso)
+        stt_language = "multi"
+        tts_language = primary_iso
     else:
         stt_language = primary_iso
+        tts_language = primary_iso
 
     logger.info(f"TTS Language resolved to: '{tts_language}' (Empty means auto-detect)")
-    logger.info("TTS Backend: LiveKit Inference (cartesia/sonic-3)")
-    logger.info(f"TTS Voice: {voice_id} | Speed: {voice_speed}")
+    
+    tts_provider = voice_info["provider"]
+    actual_model = voice_info.get("model", "")
+    actual_voice_id = voice_info["voice"]
+    
+    logger.info(f"TTS Voice config: Provider={tts_provider}, Model={actual_model}, VoiceID={actual_voice_id} | Speed: {voice_speed}")
 
-    tts_engine = inference.TTS(
-        model="cartesia/sonic-3",
-        voice=voice_id,
-        language=tts_language,
-        extra_kwargs={
-            "speed": voice_speed,
-            "emotion": ["calmness:high", "positivity:high"],
-        }
-    )
+    if tts_provider == "cartesia":
+        from livekit.plugins import cartesia
+        tts_engine = cartesia.TTS(
+            voice=actual_voice_id,
+            speed=voice_speed
+        )
+        logger.info("TTS Backend: Cartesia Plugin (Direct API)")
+    else:
+        extra_kwargs = {}
+        if "cartesia" in actual_model:
+            extra_kwargs["speed"] = voice_speed
+            extra_kwargs["emotion"] = ["calmness:high", "positivity:high"]
+        elif "rime" in actual_model:
+            # Rime time_scale_factor handles speed (1.0 = normal)
+            extra_kwargs["time_scale_factor"] = 1.0
+
+        tts_engine = inference.TTS(
+            model=actual_model,
+            voice=actual_voice_id,
+            language=tts_language,
+            extra_kwargs=extra_kwargs
+        )
+        logger.info(f"TTS Backend: LiveKit Inference ({actual_model})")
 
     session = AgentSession(
         turn_handling=TurnHandlingOptions(
@@ -544,16 +707,19 @@ Follow these specific instructions:
             min_speech_duration=0.08,
             min_silence_duration=0.15,
         ),
-        # Using Inference STT with Deepgram Nova 3
-        stt=inference.STT(model="deepgram/nova-3", language=stt_language),
+        # Using Inference STT with Deepgram
+        stt=inference.STT(model="deepgram/nova-3-general" if stt_language == "multi" else "deepgram/nova-3", language=stt_language),
         llm=llm_engine,
 
         tts=tts_engine,
     )
 
-    agent = Agent(
+    agent = MultilingualAgent(
         instructions=initial_instructions,
-        tools=[fnc_ctx.end_call]
+        tools=[fnc_ctx.end_call],
+        default_language=primary_iso,
+        tts_provider=tts_provider,
+        tts_model=actual_model
     )
     fnc_ctx.agent = agent
     fnc_ctx.session = session
