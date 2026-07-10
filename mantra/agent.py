@@ -928,6 +928,7 @@ Follow these specific instructions:
                         "call_duration_seconds": duration,
                         "next_call_on": normalize_to_iso8601(next_call_on),
                         "ai_call_id": ctx.job.id,
+                        "previous_stage_id": current_stage_id,
                         "new_stage_id": new_stage_id,
                         "process_id": call_payload.get("process_id"),
                         "notes": "",
