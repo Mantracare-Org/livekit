@@ -653,13 +653,14 @@ async def setup_inbound_sip(request: Request):
         logger.info(f"Updating Zadarma SIP ID for {number} to {sip_uri}")
         zadarma_response = await _update_zadarma_sip_forwarding(number, sip_uri)
         
-        return {
+        return JSONResponse({
             "status": "success",
+            "name": name,
             "sip_trunk_id": trunk_id,
             "sip_dispatch_rule_id": rule_id,
             "sip_uri": sip_uri,
             "zadarma_response": zadarma_response
-        }
+        })
         
     except Exception as e:
         logger.error(f"Error during SIP setup: {str(e)}")
