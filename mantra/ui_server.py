@@ -4,6 +4,10 @@ import logging
 import json
 import time
 import traceback
+import hmac
+import hashlib
+import base64
+from urllib.parse import urlencode
 from contextlib import asynccontextmanager
 
 import aiohttp
@@ -474,16 +478,7 @@ async def plivo_xml(request: Request):
         
     logger.info(f"Plivo XML parameters - CallUUID: {call_uuid}, To: {to_number}, From: {from_number}")
         
-    lk_url = os.getenv("LIVEKIT_URL", "")
-    host_lk = lk_url.replace("wss://", "").replace("ws://", "")
-    if "mantraassist-0ek43ife" in host_lk:
-        sip_domain = "4mp2ouvchg3.india.sip.livekit.cloud"
-    elif "livekit.cloud" in host_lk:
-        subdomain = host_lk.split(".")[0]
-        # Fallback to default behavior if it's a different project
-        sip_domain = f"{subdomain}.sip.livekit.cloud"
-    else:
-        sip_domain = "4mp2ouvchg3.india.sip.livekit.cloud"
+    sip_domain = _get_sip_domain()
         
     # Build absolute action URL dynamically using headers for ngrok support
     req_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or "localhost:8081"
@@ -498,6 +493,178 @@ async def plivo_xml(request: Request):
     </Dial>
 </Response>'''
     return Response(content=xml_content, media_type="application/xml")
+
+
+def _get_sip_domain() -> str:
+    lk_url = os.getenv("LIVEKIT_URL", "")
+    host_lk = lk_url.replace("wss://", "").replace("ws://", "")
+    if "mantraassist-0ek43ife" in host_lk:
+        return "4mp2ouvchg3.india.sip.livekit.cloud"
+    elif "livekit.cloud" in host_lk:
+        subdomain = host_lk.split(".")[0]
+        return f"{subdomain}.sip.livekit.cloud"
+    return "4mp2ouvchg3.india.sip.livekit.cloud"
+
+
+async def _update_zadarma_sip_forwarding(phone_number: str, sip_uri: str) -> dict:
+    """
+    Updates the SIP URI forwarding in Zadarma using their REST API.
+    Handles the HMAC-SHA1 + MD5 signature required by Zadarma.
+    """
+    zadarma_key = os.getenv("ZADARMA_API_KEY")
+    zadarma_secret = os.getenv("ZADARMA_API_SECRET")
+    
+    if not zadarma_key or not zadarma_secret:
+        raise ValueError("Zadarma API credentials not found in environment variables.")
+
+    # Normalize phone number (Zadarma expects it without the '+')
+    number_clean = phone_number.replace("+", "")
+    
+    # Zadarma expects external SIP URIs without the 'sip:' prefix
+    sip_uri_clean = sip_uri.replace("sip:", "")
+    
+    # Sort parameters alphabetically as required by Zadarma for signature
+    params = {
+        'number': number_clean,
+        'sip_id': sip_uri_clean
+    }
+    # Create ordered query string
+    sorted_params = {k: params[k] for k in sorted(params.keys())}
+    query_string = urlencode(sorted_params)
+    
+    # 1. MD5 of the query string
+    md5_hash = hashlib.md5(query_string.encode('utf-8')).hexdigest()
+    
+    # 2. String to sign: API_METHOD + QUERY_STRING + MD5_HASH
+    api_method = "/v1/direct_numbers/set_sip_id/"
+    string_to_sign = api_method + query_string + md5_hash
+    
+    # 3. HMAC-SHA1 signature using Secret Key, hex digest, then Base64 encoded
+    mac_hex = hmac.new(
+        zadarma_secret.encode('utf-8'),
+        string_to_sign.encode('utf-8'),
+        hashlib.sha1
+    ).hexdigest()
+    signature = base64.b64encode(mac_hex.encode('utf-8')).decode('utf-8')
+    
+    headers = {
+        'Authorization': f'{zadarma_key}:{signature}',
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    
+    url = f"https://api.zadarma.com{api_method}"
+    
+    # Send PUT request with query parameters
+    async with aiohttp.ClientSession() as session:
+        async with session.put(url, data=sorted_params, headers=headers) as resp:
+            text = await resp.text()
+            if resp.status == 200:
+                try:
+                    return json.loads(text)
+                except Exception:
+                    return {"status": "success", "response": text}
+            else:
+                logger.error(f"Zadarma API error {resp.status}: {text}")
+                raise Exception(f"Zadarma API error: {text}")
+
+
+@app.post("/api/v1/sip/inbound/setup")
+async def setup_inbound_sip(request: Request):
+    """
+    End-to-end inbound SIP setup:
+    1. Creates LiveKit Inbound Trunk
+    2. Creates LiveKit Dispatch Rule
+    3. Triggers Zadarma API to update the forwarding URI
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+        
+    number = payload.get("number")
+    if not number:
+        return JSONResponse({"error": "number is required"}, status_code=400)
+        
+    name = payload.get("name", f"Inbound {number}")
+    prompt = payload.get("prompt", "You are a helpful voice assistant.")
+    voice = payload.get("voice", "arushi")
+    model = payload.get("model", "deepseek")
+    
+    logger.info(f"Starting end-to-end SIP setup for number: {number}")
+    
+    try:
+        # 1. Create Inbound Trunk
+        # Add both exact number and + stripped number so LiveKit definitely matches the To header
+        clean_number = number.replace("+", "")
+        trunk = await lk_client.sip.create_sip_inbound_trunk(
+            api.CreateSIPInboundTrunkRequest(
+                trunk=api.SIPInboundTrunkInfo(
+                    name=name,
+                    numbers=[number, clean_number],
+                )
+            )
+        )
+        trunk_id = trunk.sip_trunk_id
+        logger.info(f"Created LiveKit SIP Inbound Trunk: {trunk_id}")
+        
+        # 2. Create Dispatch Rule
+        # We inject direction=inbound and the given prompt/voice into metadata
+        room_prefix = f"inbound_{trunk_id[-6:]}"
+        metadata_dict = {
+            "direction": "inbound",
+            "prompt": prompt,
+            "voice": voice,
+            "model": model,
+            "phone_number": number
+        }
+        
+        rule_req = api.CreateSIPDispatchRuleRequest(
+            name=f"Rule for {name}",
+            metadata=json.dumps(metadata_dict),
+            rule=api.SIPDispatchRule(
+                dispatch_rule_individual=api.SIPDispatchRuleIndividual(
+                    room_prefix=room_prefix
+                )
+            ),
+            room_config=api.RoomConfiguration(
+                empty_timeout=300,
+                departure_timeout=60,
+                agents=[
+                    api.RoomAgentDispatch(
+                        agent_name="mantra-agent",
+                        metadata=json.dumps(metadata_dict)
+                    )
+                ]
+            ),
+            trunk_ids=[trunk_id]
+        )
+        
+        rule = await lk_client.sip.create_sip_dispatch_rule(rule_req)
+        rule_id = rule.sip_dispatch_rule_id
+        logger.info(f"Created LiveKit SIP Dispatch Rule: {rule_id}")
+        
+        # 3. Generate SIP URI
+        sip_domain = _get_sip_domain()
+        # Use the clean_number so that Zadarma sends the INVITE with To: <clean_number>@<sip_domain>
+        # This allows LiveKit to correctly match the inbound SIP trunk which has this number in its numbers array.
+        sip_uri = f"sip:{clean_number}@{sip_domain}"
+        
+        # 4. Update Zadarma
+        logger.info(f"Updating Zadarma SIP ID for {number} to {sip_uri}")
+        zadarma_response = await _update_zadarma_sip_forwarding(number, sip_uri)
+        
+        return {
+            "status": "success",
+            "sip_trunk_id": trunk_id,
+            "sip_dispatch_rule_id": rule_id,
+            "sip_uri": sip_uri,
+            "zadarma_response": zadarma_response
+        }
+        
+    except Exception as e:
+        logger.error(f"Error during SIP setup: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 
