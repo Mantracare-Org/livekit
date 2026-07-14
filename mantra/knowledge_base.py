@@ -33,7 +33,6 @@ class KnowledgePage:
     source_type: str
     page_meta: dict
     content_in_text: str
-    embedding: Optional[list] = None
     created_at: Optional[str] = None
 
 
@@ -52,11 +51,11 @@ class KnowledgeBase(ABC):
     async def search(
         self,
         kb_ids: list[str],
-        query_embedding: list[float],
+        query: str,
         top_k: int = 3,
-        threshold: float = 0.7,
+        tags: Optional[list[str]] = None,
     ) -> list[KnowledgePage]:
-        """Vector similarity search within a KB."""
+        """Full-text search within a KB, with optional metadata tag filtering."""
         pass
 
     @abstractmethod
@@ -95,8 +94,8 @@ class PostgresKnowledgeBase(KnowledgeBase):
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                INSERT INTO kb_pages (id, kb_id, title, content, source_type, embedding, page_meta, content_in_text)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                INSERT INTO kb_pages (id, kb_id, title, content, source_type, page_meta, content_in_text)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
                 RETURNING id
             """,
                 uuid.UUID(page.id),
@@ -104,7 +103,6 @@ class PostgresKnowledgeBase(KnowledgeBase):
                 page.title,
                 page.content,
                 page.source_type,
-                str(page.embedding) if page.embedding else None,
                 json.dumps(page.page_meta),
                 page.content_in_text,
             )
@@ -113,27 +111,27 @@ class PostgresKnowledgeBase(KnowledgeBase):
     async def search(
         self,
         kb_ids: list[str],
-        query_embedding: list[float],
+        query: str,
         top_k: int = 3,
-        threshold: float = 0.7,
+        tags: Optional[list[str]] = None,
     ) -> list[KnowledgePage]:
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 """
                 SELECT id, kb_id, title, content, source_type, page_meta, content_in_text, created_at,
-                       1 - (embedding <=> $2::vector) as similarity
+                       ts_rank(text_search, websearch_to_tsquery('simple', $2)) as similarity
                 FROM kb_pages
                 WHERE kb_id = ANY($1::text[])
-                  AND embedding IS NOT NULL
-                  AND 1 - (embedding <=> $2::vector) >= $3
-                ORDER BY embedding <=> $2::vector
-                LIMIT $4
+                  AND text_search @@ websearch_to_tsquery('simple', $2)
+                  AND ($4::text[] IS NULL OR page_meta->>'tags_name' = ANY($4::text[]))
+                ORDER BY similarity DESC
+                LIMIT $3
             """,
                 kb_ids,
-                str(query_embedding) if query_embedding else None,
-                threshold,
+                query,
                 top_k,
+                tags,
             )
 
             return [
@@ -315,45 +313,6 @@ def adaptive_chunk(text: str, max_tokens: int = 2000) -> list[dict]:
         return chunk_by_sliding_window(text, max_tokens)
 
 
-# ---- Embedding Pipeline ----
-
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
-OPENAI_API_KEY = os.getenv("EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY")
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-
-
-async def generate_embedding(text: str) -> list[float]:
-    """Generate embedding via OpenAI API."""
-    if not OPENAI_API_KEY:
-        raise ValueError("OPENAI_API_KEY or EMBEDDING_API_KEY not set")
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(
-            f"{OPENAI_BASE_URL}/embeddings",
-            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-            json={"model": EMBEDDING_MODEL, "input": text},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data["data"][0]["embedding"]
-
-
-async def generate_embeddings_batch(texts: list[str]) -> list[list[float]]:
-    """Generate embeddings for multiple texts in one API call."""
-    if not OPENAI_API_KEY:
-        raise ValueError("OPENAI_API_KEY or EMBEDDING_API_KEY not set")
-
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(
-            f"{OPENAI_BASE_URL}/embeddings",
-            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-            json={"model": EMBEDDING_MODEL, "input": texts},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return [d["embedding"] for d in data["data"]]
-
-
 # ---- Ingestion Pipeline ----
 
 
@@ -403,7 +362,8 @@ async def extract_url_text(url: str) -> str:
 
 
 async def ingest_file(
-    kb: KnowledgeBase, kb_id: str, file_bytes: bytes, filename: str
+    kb: KnowledgeBase, kb_id: str, file_bytes: bytes, filename: str,
+    page_meta: Optional[dict] = None
 ) -> dict:
     """Ingest a file into the knowledge base."""
     # Extract text
@@ -414,7 +374,7 @@ async def ingest_file(
     else:
         raise ValueError(f"Unsupported file type: {filename}")
 
-    return await ingest_text(kb, kb_id, text, source_type="file", content=filename)
+    return await ingest_text(kb, kb_id, text, source_type="file", content=filename, page_meta=page_meta)
 
 
 async def ingest_text(
@@ -424,31 +384,31 @@ async def ingest_text(
     title: Optional[str] = None,
     source_type: str = "text",
     content: str = "",
+    page_meta: Optional[dict] = None,
 ) -> dict:
     """Ingest raw text into the knowledge base."""
     # Chunk adaptively
     chunks = adaptive_chunk(content_in_text)
 
-    # Generate embeddings
-    chunk_texts = [c["content"] for c in chunks]
-    embeddings = await generate_embeddings_batch(chunk_texts)
-
     # Store pages
     page_ids = []
-    for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+    for i, chunk in enumerate(chunks):
+        meta = {
+            "strategy": chunk["strategy"],
+            "chunk_index": i,
+            "total_chunks": len(chunks),
+        }
+        if page_meta:
+            meta.update(page_meta)
+            
         page = KnowledgePage(
             id=str(uuid.uuid4()),
             kb_id=kb_id,
             title=title or chunk["heading"],
             content=content,
             source_type=source_type,
-            page_meta={
-                "strategy": chunk["strategy"],
-                "chunk_index": i,
-                "total_chunks": len(chunks),
-            },
+            page_meta=meta,
             content_in_text=chunk["content"],
-            embedding=embedding,
         )
         page_id = await kb.add_page(page)
         page_ids.append(page_id)

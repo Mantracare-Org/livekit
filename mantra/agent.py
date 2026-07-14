@@ -139,6 +139,7 @@ class AssistantFunctions:
         room_name: str,
         ctx: JobContext = None,
         kb_ids: list[str] = None,
+        kb_tags: list[str] = None,
     ):
         self.job_metadata = job_metadata
         self.room_name = room_name
@@ -147,6 +148,7 @@ class AssistantFunctions:
         self.session = None
         self.ctx = ctx
         self.kb_ids = kb_ids or []
+        self.kb_tags = kb_tags or []
         self._retriever: KnowledgeRetriever | None = None
 
     async def _get_kb(self) -> PostgresKnowledgeBase:
@@ -165,9 +167,9 @@ class AssistantFunctions:
         self, 
         query: Annotated[str, "The search query to look up in the knowledge base. Be specific, e.g., 'What are the symptoms of diabetes?' or 'How many paid leaves do I get?'"]
     ):
-        logger.info(f"Agent requested knowledge base search for: '{query}'")
+        logger.info(f"Agent requested knowledge base search for: '{query}' with tags {self.kb_tags}")
         retriever = await self._get_retriever()
-        result = await retriever.retrieve(query, self.kb_ids)
+        result = await retriever.retrieve(query, kb_ids=self.kb_ids, tags=self.kb_tags if self.kb_tags else None)
         return result
 
     @llm.function_tool(
@@ -256,6 +258,7 @@ async def entrypoint(ctx: JobContext):
 
     # Initialize function context for handoff
     kb_ids_list = []
+    kb_tags_list = []
     if ctx.job.metadata:
         try:
             meta_payload = json.loads(ctx.job.metadata)
@@ -263,12 +266,23 @@ async def entrypoint(ctx: JobContext):
                 kb_ids_list.append(meta_payload["kb_id"])
             if "kb_ids" in meta_payload and isinstance(meta_payload["kb_ids"], list):
                 kb_ids_list.extend(meta_payload["kb_ids"])
+            
+            if "kb_tags" in meta_payload and isinstance(meta_payload["kb_tags"], list):
+                kb_tags_list.extend(meta_payload["kb_tags"])
+                
             # Remove duplicates
             kb_ids_list = list(set(kb_ids_list))
+            kb_tags_list = list(set(kb_tags_list))
         except:
             pass
 
-    fnc_ctx = AssistantFunctions(ctx.job.metadata, ctx.room.name, ctx=ctx, kb_ids=kb_ids_list)
+    fnc_ctx = AssistantFunctions(
+        ctx.job.metadata, 
+        ctx.room.name, 
+        ctx=ctx, 
+        kb_ids=kb_ids_list,
+        kb_tags=kb_tags_list
+    )
     call_state = {
         "user_joined": False,
         "timeline": [

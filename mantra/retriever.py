@@ -1,6 +1,6 @@
 import logging
 from typing import List
-from mantra.knowledge_base import PostgresKnowledgeBase, generate_embedding
+from mantra.knowledge_base import PostgresKnowledgeBase
 
 logger = logging.getLogger("mantra.retriever")
 
@@ -9,30 +9,29 @@ class KnowledgeRetriever:
         self.kb = kb
         self.session_cache = {}
 
-    async def retrieve(self, query: str, kb_ids: List[str], top_k: int = 3) -> str:
+    async def retrieve(self, query: str, kb_ids: List[str], top_k: int = 3, tags: List[str] = None) -> str:
         """
-        Searches the given knowledge bases for the query.
-        Uses an in-memory session cache to avoid repeated DB/embedding calls.
+        Searches the given knowledge bases for the query with optional tag filtering.
+        Uses an in-memory session cache to avoid repeated DB calls.
         """
         if not kb_ids:
             return "No Knowledge Base configured for this session."
             
-        # Create a cache key using the query and sorted kb_ids
-        cache_key = (query.lower().strip(), tuple(sorted(kb_ids)))
+        # Create a cache key using the query, sorted kb_ids, and sorted tags
+        cache_key = (query.lower().strip(), tuple(sorted(kb_ids)), tuple(sorted(tags)) if tags else None)
         
         if cache_key in self.session_cache:
             logger.info(f"Retriever cache hit for query: '{query}'")
             return self.session_cache[cache_key]
             
-        logger.info(f"Retriever cache miss for query: '{query}'. Generating embedding...")
+        logger.info(f"Retriever cache miss for query: '{query}'.")
         try:
-            query_embedding = await generate_embedding(query)
-            
-            logger.info(f"Searching KBs {kb_ids} for query: '{query}'")
+            logger.info(f"Searching KBs {kb_ids} with tags {tags} for query: '{query}'")
             results = await self.kb.search(
                 kb_ids=kb_ids, 
-                query_embedding=query_embedding,
-                top_k=top_k
+                query=query,
+                top_k=top_k,
+                tags=tags
             )
             
             if not results:
