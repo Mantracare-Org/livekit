@@ -119,6 +119,19 @@ def create_bg_task(coro):
     return task
 
 
+_global_kb: PostgresKnowledgeBase | None = None
+
+def get_global_kb() -> PostgresKnowledgeBase:
+    global _global_kb
+    if _global_kb is None:
+        dsn = (
+            f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
+            f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
+        )
+        _global_kb = PostgresKnowledgeBase(dsn)
+    return _global_kb
+
+
 class AssistantFunctions:
     def __init__(
         self,
@@ -134,17 +147,10 @@ class AssistantFunctions:
         self.session = None
         self.ctx = ctx
         self.kb_ids = kb_ids or []
-        self._kb: PostgresKnowledgeBase | None = None
         self._retriever: KnowledgeRetriever | None = None
 
     async def _get_kb(self) -> PostgresKnowledgeBase:
-        if self._kb is None:
-            dsn = (
-                f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
-                f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
-            )
-            self._kb = PostgresKnowledgeBase(dsn)
-        return self._kb
+        return get_global_kb()
 
     async def _get_retriever(self) -> KnowledgeRetriever:
         if self._retriever is None:
@@ -356,6 +362,7 @@ CORE BEHAVIOR:
 - If the user pauses, wait patiently for them to finish.
 - ACTIVELY LISTEN: If the user asks a question (e.g., about directions, a bus stand, or any other detail), address it directly and helpfully BEFORE returning to the main topic. Never ignore the user's questions or blindly repeat your script.
 - RETAIN CONTEXT & AVOID REPETITION: Remember the user's previous answers. Do NOT repeatedly ask the same questions. If they say no or want to focus on something else, acknowledge it and move on. DO NOT be pushy.
+- KNOWLEDGE BASE USAGE: If the user asks a factual question or inquires about policies, services, or locations, you MUST use the `search_knowledge_base` tool to find the accurate answer.
 
 POLITENESS & EMPATHY:
 - Always be polite, courteous, and respectful.
@@ -566,7 +573,7 @@ Follow these specific instructions:
         tts=tts_engine,
     )
 
-    agent = Agent(instructions=initial_instructions, tools=[fnc_ctx.end_call])
+    agent = Agent(instructions=initial_instructions, tools=[fnc_ctx.end_call, fnc_ctx.search_knowledge_base])
     fnc_ctx.agent = agent
     fnc_ctx.session = session
 
