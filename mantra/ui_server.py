@@ -17,7 +17,7 @@ from fastapi import FastAPI, Request, Response
 import hmac
 import base64
 from urllib.parse import urlencode
-from fastapi import HTTPException, File, UploadFile, Form, BackgroundTasks
+from fastapi import HTTPException, File, UploadFile, Form
 from prometheus_fastapi_instrumentator import Instrumentator
 import boto3
 from botocore.exceptions import NoCredentialsError, PartialCredentialsError
@@ -362,9 +362,12 @@ async def api_kb_chat(request: Request):
         )
         messages.append({"role": "user", "content": prompt})
 
-        client = openai.AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        client = openai.AsyncOpenAI(
+            api_key=os.getenv("DEEPSEEK_API_KEY"),
+            base_url="https://api.deepseek.com"
+        )
         response = await client.chat.completions.create(
-            model="gpt-4o-mini", messages=messages
+            model="deepseek-chat", messages=messages
         )
 
         ai_message = response.choices[0].message.content
