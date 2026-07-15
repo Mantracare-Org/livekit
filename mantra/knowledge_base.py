@@ -5,7 +5,6 @@ PostgreSQL + pgvector with OpenAI embeddings.
 Multi-KB isolation via kb_id column filtering.
 """
 
-import os
 import json
 import uuid
 import logging
@@ -14,7 +13,6 @@ from dataclasses import dataclass
 from abc import ABC, abstractmethod
 
 import asyncpg
-import httpx
 from pypdf import PdfReader
 import trafilatura
 import asyncio
@@ -66,6 +64,11 @@ class KnowledgeBase(ABC):
     @abstractmethod
     async def delete_by_kb(self, kb_id: str) -> int:
         """Delete all pages for a KB. Returns count."""
+        pass
+
+    @abstractmethod
+    async def delete_by_document(self, kb_id: str, document_id: str) -> int:
+        """Delete all pages for a specific document. Returns count."""
         pass
 
     @abstractmethod

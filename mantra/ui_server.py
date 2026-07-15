@@ -445,6 +445,15 @@ async def ingest_kb_data(
 
         kb = PostgresKnowledgeBase(dsn)
         
+        # If document_id is provided, automatically delete old chunks to handle updates cleanly
+        if document_id:
+            try:
+                deleted_count = await kb.delete_by_document(org_id, document_id)
+                if deleted_count > 0:
+                    logger.info(f"Deleted {deleted_count} old chunks for document {document_id}")
+            except Exception as e:
+                logger.error(f"Failed to delete old chunks for document {document_id}: {e}")
+        
         if file and file.filename:
             file_bytes = await file.read()
             await ingest_file(
@@ -480,6 +489,39 @@ async def ingest_kb_data(
         logger.error(f"KB ingest error: {e}\n{traceback.format_exc()}")
         return JSONResponse({"error": f"Failed to ingest to DB: {str(e)}"}, status_code=500)
 
+
+@app.delete("/api/v1/kb/document")
+async def delete_kb_document(
+    org_id: str = Form(None),
+    document_id: str = Form(None)
+):
+    """Delete all KB chunks associated with a specific document_id."""
+    if not org_id or not document_id:
+        return JSONResponse({"error": "org_id and document_id are required"}, status_code=400)
+
+    from mantra.knowledge_base import PostgresKnowledgeBase
+    dsn = (
+        f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
+        f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
+    )
+
+    try:
+        kb = PostgresKnowledgeBase(dsn)
+        deleted_count = await kb.delete_by_document(org_id, document_id)
+        await kb.close()
+        
+        return JSONResponse({
+            "status_code": 200,
+            "status": "success",
+            "message": "Document successfully deleted.",
+            "deleted_chunks": deleted_count,
+            "document_id": document_id,
+            "org_id": org_id
+        })
+    except Exception as e:
+        import traceback
+        logger.error(f"KB document delete error: {e}\n{traceback.format_exc()}")
+        return JSONResponse({"error": f"Failed to delete document: {str(e)}"}, status_code=500)
 
 @app.post("/dispatch-test")
 async def dispatch_test(request: Request):
