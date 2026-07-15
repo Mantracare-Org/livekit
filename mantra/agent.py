@@ -531,6 +531,11 @@ PRONUNCIATION (CRITICAL):
 - ALWAYS write "MantraAssist" (as a single word). NEVER write "Mantra Assist" with a space.
 - These are spoken brand names on a phone call — single-word format ensures correct pronunciation.
 
+PROSODY AND TONE (CRITICAL):
+- DO NOT use exclamation marks (!) or ALL CAPS in your responses.
+- The voice engine uses punctuation and casing to determine volume and emotion. Exclamation marks or ALL CAPS will cause the agent to yell or shout inappropriately.
+- Keep your punctuation flat (use periods and commas). Instead of "HELLO!", write "Hello." Instead of "Great!", write "Great."
+
 Follow these specific instructions:
 """
     client_name = "User"
@@ -713,7 +718,6 @@ Follow these specific instructions:
         language=language,
         extra_kwargs={
             "speed": voice_speed,
-            "emotion": ["calmness:high", "positivity:high"],
         },
     )
 
