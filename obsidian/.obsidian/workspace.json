@@ -4,17 +4,21 @@
     "type": "split",
     "children": [
       {
-        "id": "b57ea9200996fe2b",
+        "id": "1a66377bb4f3ab4f",
         "type": "tabs",
         "children": [
           {
-            "id": "d8a3992f72a1ffd0",
+            "id": "ba89d0ebd22c5ea3",
             "type": "leaf",
             "state": {
-              "type": "graph",
-              "state": {},
-              "icon": "lucide-git-fork",
-              "title": "Graph view"
+              "type": "markdown",
+              "state": {
+                "file": "Context/External Services.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "External Services"
             }
           }
         ]
@@ -176,10 +180,15 @@
       "bases:Create new base": false
     }
   },
-  "active": "d8a3992f72a1ffd0",
+  "active": "ba89d0ebd22c5ea3",
   "lastOpenFiles": [
-    "Untitled.canvas",
-    "Untitled",
+    "Architecture/Design Decisions.md",
+    "Features/Dashboard.md",
+    "Features/Dispatcher.md",
+    "Features/Crash Alerts.md",
+    "Architecture/Database.md",
+    "Agents/DevOps Agent.md",
+    "Context.md",
     "Features/Telephony Integration.md",
     "Knowledge/Conventions.md",
     "Context/Project Summary.md",
