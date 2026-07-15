@@ -161,15 +161,17 @@ class AssistantFunctions:
         return self._retriever
 
     @llm.function_tool(
-        description="Search the knowledge base for factual information relevant to the user's question. Use this tool to retrieve accurate information about products, services, policies, procedures, pricing, locations, schedules, people, organizations, documents, regulations, FAQs, or any domain-specific content stored in the knowledge base. ALWAYS use this tool before answering questions that require factual or organization-specific information."
+        description="Search the knowledge base for factual information relevant to the user's question. Use this tool to retrieve accurate information about products, services, policies, procedures, pricing, locations, schedules, people, organizations, documents, regulations, FAQs, or any domain-specific content stored in the knowledge base. ALWAYS use this tool before answering questions that require factual or organization-specific information. If the user switches topics to a specific category (like 'support' or 'pricing'), you can provide that category in 'specific_tag' to override the default search scope."
     )
     async def search_knowledge_base(
         self, 
-        query: Annotated[str, "The search query to look up in the knowledge base. Be specific, e.g., 'What are the symptoms of diabetes?' or 'How many paid leaves do I get?'"]
+        query: Annotated[str, "The search query to look up in the knowledge base. Be specific, e.g., 'What are the symptoms of diabetes?' or 'How many paid leaves do I get?'"],
+        specific_tag: Annotated[Optional[str], "An optional specific tag or category to search within (e.g., 'sales', 'support', 'pricing') if the user explicitly switches context. Leaves empty to search the default context."] = None
     ):
-        logger.info(f"Agent requested knowledge base search for: '{query}' with tags {self.kb_tags}")
+        tags_to_search = [specific_tag] if specific_tag else self.kb_tags
+        logger.info(f"Agent requested knowledge base search for: '{query}' with tags {tags_to_search}")
         retriever = await self._get_retriever()
-        result = await retriever.retrieve(query, kb_ids=self.kb_ids, tags=self.kb_tags if self.kb_tags else None)
+        result = await retriever.retrieve(query, kb_ids=self.kb_ids, tags=tags_to_search if tags_to_search else None)
         return result
 
     @llm.function_tool(

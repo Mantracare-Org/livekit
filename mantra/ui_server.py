@@ -382,7 +382,12 @@ async def ingest_kb_data(
 ):
     """
     Ingest endpoint for MantraAssist KB data.
-    Receives a file and metadata, uploads the file to S3, and stores its content in the KB.
+    Receives a file and metadata, uploads the file to S3 (if credentials exist), 
+    and stores its content via Vectorless FTS in PostgreSQL.
+    
+    The `tags_name` parameter can accept a single tag or a comma-separated 
+    list of tags (e.g. "sales, support"). These are parsed into a JSONB array 
+    and appended to the chunk's `page_meta` for runtime filtering.
     """
     from mantra.knowledge_base import PostgresKnowledgeBase, ingest_file
 
@@ -424,11 +429,16 @@ async def ingest_kb_data(
         # Read the file contents for PostgreSQL ingestion
         file_bytes = await file.read()
         
+        # Parse tags_name into a list if it contains commas
+        parsed_tags = None
+        if tags_name:
+            parsed_tags = [t.strip() for t in tags_name.split(",")] if "," in tags_name else [tags_name.strip()]
+
         # Build the metadata dictionary
         page_meta = {
             "process_id": process_id,
             "stage_id": stage_id,
-            "tags_name": tags_name,
+            "tags_name": parsed_tags,
             "category_name": category_name,
             "s3_url": s3_url
         }

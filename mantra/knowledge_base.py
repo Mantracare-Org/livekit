@@ -115,6 +115,12 @@ class PostgresKnowledgeBase(KnowledgeBase):
         top_k: int = 3,
         tags: Optional[list[str]] = None,
     ) -> list[KnowledgePage]:
+        """
+        Executes a Vectorless Full-Text Search (FTS) query against kb_pages.
+        Filters by kb_id and optionally by tags. 
+        The tags filter uses the JSONB ?| operator to natively check for overlaps 
+        between the requested tags and the stored 'tags_name' JSONB array in page_meta.
+        """
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
@@ -124,7 +130,10 @@ class PostgresKnowledgeBase(KnowledgeBase):
                 FROM kb_pages
                 WHERE kb_id = ANY($1::text[])
                   AND text_search @@ websearch_to_tsquery('simple', $2)
-                  AND ($4::text[] IS NULL OR page_meta->>'tags_name' = ANY($4::text[]))
+                  AND ($4::text[] IS NULL OR 
+                      (jsonb_typeof(page_meta->'tags_name') = 'array' AND page_meta->'tags_name' ?| $4::text[]) OR
+                      (jsonb_typeof(page_meta->'tags_name') = 'string' AND page_meta->>'tags_name' = ANY($4::text[]))
+                  )
                 ORDER BY similarity DESC
                 LIMIT $3
             """,
@@ -141,7 +150,7 @@ class PostgresKnowledgeBase(KnowledgeBase):
                     title=r["title"],
                     content=r["content"],
                     source_type=r["source_type"],
-                    page_meta=r["page_meta"],
+                    page_meta=json.loads(r["page_meta"]) if isinstance(r["page_meta"], str) else r["page_meta"],
                     content_in_text=r["content_in_text"],
                     created_at=r["created_at"].isoformat() if r["created_at"] else None,
                 )
