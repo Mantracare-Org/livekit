@@ -16,7 +16,8 @@ import redis.asyncio as redis
 from fastapi import FastAPI, Request, Response
 import hmac
 import base64
-from urllib.parse import urlencode, HTTPException, File, UploadFile, Form
+from urllib.parse import urlencode
+from fastapi import HTTPException, File, UploadFile, Form, BackgroundTasks
 from prometheus_fastapi_instrumentator import Instrumentator
 import boto3
 from botocore.exceptions import NoCredentialsError, PartialCredentialsError
