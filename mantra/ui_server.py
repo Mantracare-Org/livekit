@@ -13,7 +13,10 @@ import jwt
 import aiohttp
 import asyncpg
 import redis.asyncio as redis
-from fastapi import FastAPI, Request, HTTPException, File, UploadFile, Form
+from fastapi import FastAPI, Request, Response
+import hmac
+import base64
+from urllib.parse import urlencode, HTTPException, File, UploadFile, Form
 from prometheus_fastapi_instrumentator import Instrumentator
 import boto3
 from botocore.exceptions import NoCredentialsError, PartialCredentialsError
@@ -21,6 +24,8 @@ from mantra.email_alerts import send_crash_email
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from livekit import api
+
+from livekit.protocol import sip as proto_sip
 from dotenv import load_dotenv
 
 
@@ -1569,6 +1574,128 @@ async def delete_sip_outbound_trunk(trunk_id: str):
     except Exception as e:
         logger.error(f"Failed to delete SIP outbound trunk {trunk_id}: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ──────────────────────────────────────────────
+# SIP INBOUND TRUNK UPDATE
+# ──────────────────────────────────────────────
+
+@app.patch("/api/v1/sip/trunks/inbound/{trunk_id}")
+async def update_inbound_sip_trunk(trunk_id: str, request: Request):
+    """Update fields on an existing inbound SIP trunk without recreating it.
+
+    Supports partial updates for allowed addresses, allowed numbers,
+    auth credentials, and metadata.  Only the fields provided in the
+    request body are changed.
+    """
+    payload = await request.json()
+    if not payload:
+        return JSONResponse({"error": "No payload provided"}, status_code=400)
+
+    kwargs = {}
+
+    if "name" in payload:
+        kwargs["name"] = payload["name"]
+
+    if "metadata" in payload:
+        kwargs["metadata"] = json.dumps(payload["metadata"]) if isinstance(payload["metadata"], dict) else payload["metadata"]
+
+    if "auth_username" in payload:
+        kwargs["auth_username"] = payload["auth_username"]
+
+    if "auth_password" in payload:
+        kwargs["auth_password"] = payload["auth_password"]
+
+    if "numbers" in payload:
+        nums = payload["numbers"]
+        if isinstance(nums, str):
+            nums = [n.strip() for n in nums.split(",") if n.strip()]
+        kwargs["numbers"] = nums
+
+    if "allowed_addresses" in payload:
+        addrs = payload["allowed_addresses"]
+        if isinstance(addrs, str):
+            addrs = [a.strip() for a in addrs.split(",") if a.strip()]
+        kwargs["allowed_addresses"] = addrs
+
+    if "allowed_numbers" in payload:
+        nums = payload["allowed_numbers"]
+        if isinstance(nums, str):
+            nums = [n.strip() for n in nums.split(",") if n.strip()]
+        kwargs["allowed_numbers"] = nums
+
+    if not kwargs:
+        return JSONResponse({"error": "No updatable fields provided"}, status_code=400)
+
+    try:
+        await lk_client.sip.update_inbound_trunk_fields(trunk_id, **kwargs)
+        logger.info(f"Inbound trunk updated: {trunk_id}")
+        return JSONResponse({
+            "status": "success",
+            "message": f"Inbound trunk {trunk_id} updated",
+            "sip_trunk_id": trunk_id,
+        })
+    except Exception as e:
+        logger.error(f"Failed to update inbound trunk {trunk_id}: {e}\n{traceback.format_exc()}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ──────────────────────────────────────────────
+# SIP DISPATCH RULE UPDATE
+# ──────────────────────────────────────────────
+
+@app.patch("/api/v1/sip/dispatch-rules/{rule_id}")
+async def update_sip_dispatch_rule(rule_id: str, request: Request):
+    """Update fields on an existing SIP dispatch rule without recreating it."""
+    payload = await request.json()
+    if not payload:
+        return JSONResponse({"error": "No payload provided"}, status_code=400)
+
+    kwargs = {}
+
+    if "name" in payload:
+        kwargs["name"] = payload["name"]
+
+    if "metadata" in payload:
+        kwargs["metadata"] = json.dumps(payload["metadata"]) if isinstance(payload["metadata"], dict) else payload["metadata"]
+
+    if "attributes" in payload and isinstance(payload["attributes"], dict):
+        kwargs["attributes"] = payload["attributes"]
+
+    if "trunk_ids" in payload:
+        tids = payload["trunk_ids"]
+        if isinstance(tids, str):
+            tids = [t.strip() for t in tids.split(",") if t.strip()]
+        kwargs["trunk_ids"] = tids
+
+    if "rule" in payload:
+        rule_config = payload["rule"]
+        room_prefix = rule_config.get("room_prefix", "inbound_")
+        pin = rule_config.get("pin", "")
+        no_randomness = rule_config.get("no_randomness", False)
+        kwargs["rule"] = proto_sip.SIPDispatchRule(
+            dispatch_rule_individual=proto_sip.SIPDispatchRuleIndividual(
+                room_prefix=room_prefix,
+                pin=pin,
+                no_randomness=no_randomness,
+            )
+        )
+
+    if not kwargs:
+        return JSONResponse({"error": "No updatable fields provided"}, status_code=400)
+
+    try:
+        await lk_client.sip.update_dispatch_rule_fields(rule_id, **kwargs)
+        logger.info(f"Dispatch rule updated: {rule_id}")
+        return JSONResponse({
+            "status": "success",
+            "message": f"Dispatch rule {rule_id} updated",
+            "sip_dispatch_rule_id": rule_id,
+        })
+    except Exception as e:
+        logger.error(f"Failed to update dispatch rule {rule_id}: {e}\n{traceback.format_exc()}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 
 
 @app.get("/config")

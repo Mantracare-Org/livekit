@@ -60,6 +60,7 @@ logging.getLogger("opentelemetry").setLevel(logging.ERROR)
 from dotenv import load_dotenv
 
 from livekit import rtc, api
+from livekit.agents import mcp as lk_mcp
 from livekit.agents import (
     Agent,
     AgentServer,
@@ -86,7 +87,7 @@ from mantra.utils import (
 # Import knowledge base
 from mantra.knowledge_base import PostgresKnowledgeBase
 from mantra.retriever import KnowledgeRetriever
-from typing import Annotated
+from typing import Annotated, Optional
 
 
 VOICE_MAPPING = {
@@ -561,6 +562,22 @@ Follow these specific instructions:
                         pass
 
             # 1. Handle main prompt
+
+            # If the call arrived via an external IVR (SIP header passthrough),
+            # inject a dedicated context block so the LLM understands the caller's
+            # origin and reason for calling without having to re-ask.
+            ivr_keys = {"account_number", "call_reason", "department", "language", "user_id", "caller_choice"}
+            ivr_block = ""
+            for key in payload:
+                if key in ivr_keys and payload[key]:
+                    ivr_block += f"- {key.replace('_', ' ').title()}: {payload[key]}\n"
+            
+            if ivr_block:
+                initial_instructions += "\n--- EXTERNAL IVR / CALLER CONTEXT ---\n"
+                initial_instructions += "The caller was routed from an automated system with the following context.\n"
+                initial_instructions += "DO NOT ask the user for this information again:\n"
+                initial_instructions += ivr_block
+
             if "prompt" in payload:
                 # Remove the impatient "not responding" rule which causes repetitive loops
                 clean_prompt = payload["prompt"].replace(
@@ -730,7 +747,25 @@ Follow these specific instructions:
         tts=tts_engine,
     )
 
-    agent = Agent(instructions=initial_instructions, tools=[fnc_ctx.end_call, fnc_ctx.search_knowledge_base, fnc_ctx.transfer_to_human])
+
+    # Initialize MCP Server connection
+    try:
+        mcp_server = lk_mcp.CstdioServerParameters(
+            command="uv",
+            args=["run", "python", "mcp/server.py"]
+        )
+        mcp_client = lk_mcp.McpClient(mcp_server)
+        await mcp_client.start()
+        logger.info("Connected to local MCP database server")
+        # Add MCP tools to the agent's toolset dynamically
+        agent_tools = [fnc_ctx.end_call, fnc_ctx.search_knowledge_base, fnc_ctx.transfer_to_human]
+        agent_tools.append(mcp_client.create_tool_context())
+    except Exception as e:
+        logger.error(f"Failed to start MCP server: {e}")
+        agent_tools = [fnc_ctx.end_call, fnc_ctx.search_knowledge_base, fnc_ctx.transfer_to_human]
+
+    agent = Agent(instructions=initial_instructions, tools=agent_tools)
+
     fnc_ctx.agent = agent
     fnc_ctx.session = session
 
