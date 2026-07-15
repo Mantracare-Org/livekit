@@ -72,6 +72,17 @@ class KnowledgeBase(ABC):
         pass
 
     @abstractmethod
+
+    async def delete_by_document(self, kb_id: str, document_id: str) -> int:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM kb_pages WHERE kb_id = $1 AND page_meta->>'document_id' = $2",
+                kb_id,
+                document_id,
+            )
+            return int(result.split()[-1]) if result.startswith("DELETE") else 0
+
     async def close(self):
         """Close connections."""
         pass
@@ -172,6 +183,17 @@ class PostgresKnowledgeBase(KnowledgeBase):
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             result = await conn.execute("DELETE FROM kb_pages WHERE kb_id = $1", kb_id)
+            return int(result.split()[-1]) if result.startswith("DELETE") else 0
+
+
+    async def delete_by_document(self, kb_id: str, document_id: str) -> int:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM kb_pages WHERE kb_id = $1 AND page_meta->>'document_id' = $2",
+                kb_id,
+                document_id,
+            )
             return int(result.split()[-1]) if result.startswith("DELETE") else 0
 
     async def close(self):
