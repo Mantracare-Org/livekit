@@ -1,4 +1,5 @@
 import os
+import io
 import json
 import time
 import hmac
@@ -7,46 +8,88 @@ import asyncio
 import datetime
 import logging
 import httpx
-from typing import Optional, List, Dict
+import numpy as np
+import asyncpg
+from typing import Dict, List, Optional
 
 from livekit import rtc
-from livekit.plugins import openai
 from livekit.agents import llm
 import boto3
 
 logger = logging.getLogger("mantra.utils")
 
+
+async def save_call_log_to_db(
+    call_id: str, call_log: str, status: str, recording_url: str
+):
+    """Save call details to the isolated PostgreSQL logging database."""
+    db_user = os.getenv("POSTGRES_USER")
+    db_password = os.getenv("POSTGRES_PASSWORD")
+    db_name = os.getenv("POSTGRES_DB")
+    db_host = os.getenv("POSTGRES_HOST")
+    db_port = os.getenv("POSTGRES_PORT")
+
+    conn = None
+    try:
+        logger.info(
+            f"Attempting to connect to PostgreSQL at {db_host}:{db_port} for call_id: {call_id}..."
+        )
+        conn = await asyncpg.connect(
+            user=db_user,
+            password=db_password,
+            database=db_name,
+            host=db_host,
+            port=db_port,
+            timeout=5.0,
+        )
+        logger.info(f"Successfully connected to PostgreSQL at {db_host}:{db_port}")
+        # Insert or update the call log
+        query = """
+        INSERT INTO call_logs (call_id, call_log, status, recording_url)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (call_id) DO UPDATE 
+        SET call_log = EXCLUDED.call_log,
+            status = EXCLUDED.status,
+            recording_url = EXCLUDED.recording_url;
+        """
+        await conn.execute(query, call_id, call_log, status, recording_url)
+        logger.info(f"Successfully saved call log to DB for call_id: {call_id}")
+    except Exception as e:
+        logger.error(f"Failed to save call log to DB: {e}")
+    finally:
+        if conn:
+            await conn.close()
+
+
 async def send_to_backend(payload: dict, max_retries: int = 3) -> bool:
     """POST the post-call payload to the MantraAssist backend with HMAC signing."""
     base_url = os.getenv("MANTRAASSIST_BACKEND_URL", "").rstrip("/")
     webhook_secret = os.getenv("MANTRAASSIST_WEBHOOK_SECRET", "")
-    
+
     if not base_url:
         logger.warning("MANTRAASSIST_BACKEND_URL not set — skipping backend webhook")
         return False
 
     url = f"{base_url}/webhooks/n8n"
-    
+
     timestamp = str(int(time.time()))
-    
+
     if not payload:
-        payload_str = '{}'
+        payload_str = "{}"
     else:
-        payload_str = json.dumps(payload, separators=(',', ':'))
-    
+        payload_str = json.dumps(payload, separators=(",", ":"))
+
     data_to_sign = f"{payload_str}.{timestamp}"
-    
+
     headers = {
         "Content-Type": "application/json",
         "x-timestamp": timestamp,
         "x-source": "n8n",
     }
-    
+
     if webhook_secret:
         signature = hmac.new(
-            webhook_secret.encode('utf-8'),
-            data_to_sign.encode('utf-8'),
-            hashlib.sha256
+            webhook_secret.encode("utf-8"), data_to_sign.encode("utf-8"), hashlib.sha256
         ).hexdigest()
         headers["x-signature"] = signature
         logger.info(f"Signing request with HMAC (timestamp: {timestamp})")
@@ -60,7 +103,9 @@ async def send_to_backend(payload: dict, max_retries: int = 3) -> bool:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(url, content=payload_str, headers=headers)
                 resp.raise_for_status()
-                logger.info(f"Backend webhook delivered successfully (HTTP {resp.status_code})")
+                logger.info(
+                    f"Backend webhook delivered successfully (HTTP {resp.status_code})"
+                )
                 return True
         except Exception as e:
             logger.error(f"Backend webhook attempt {attempt}/{max_retries} failed: {e}")
@@ -70,18 +115,25 @@ async def send_to_backend(payload: dict, max_retries: int = 3) -> bool:
 
     return False
 
+
 def upload_to_s3(file_bytes: bytes, s3_key: str) -> Optional[str]:
     """Upload bytes to S3 and return the public URL."""
     bucket_name = os.getenv("AWS_S3_BUCKET_NAME")
     region = os.getenv("AWS_REGION", "us-east-1")
-    
+
     if not bucket_name:
         logger.warning("AWS_S3_BUCKET_NAME not set — skipping upload")
         return None
 
     # Strip proxy env vars so requests/urllib3 doesn't pick them up
     _saved = {}
-    for _var in ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "PLIVO_PROXY"):
+    for _var in (
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "https_proxy",
+        "http_proxy",
+        "PLIVO_PROXY",
+    ):
         _val = os.environ.pop(_var, None)
         if _val is not None:
             _saved[_var] = _val
@@ -95,8 +147,14 @@ def upload_to_s3(file_bytes: bytes, s3_key: str) -> Optional[str]:
             s3_kwargs["aws_access_key_id"] = aws_access_key_id
             s3_kwargs["aws_secret_access_key"] = aws_secret_access_key
 
-        s3 = boto3.client('s3', **s3_kwargs)
-        s3.put_object(Bucket=bucket_name, Key=s3_key, Body=file_bytes, ContentType='audio/mpeg', ACL='public-read')
+        s3 = boto3.client("s3", **s3_kwargs)
+        s3.put_object(
+            Bucket=bucket_name,
+            Key=s3_key,
+            Body=file_bytes,
+            ContentType="audio/mpeg",
+            ACL="public-read",
+        )
         url = f"https://{bucket_name}.s3.{region}.amazonaws.com/{s3_key}"
         logger.info(f"Uploaded recording to S3: {url}")
         return url
@@ -106,27 +164,111 @@ def upload_to_s3(file_bytes: bytes, s3_key: str) -> Optional[str]:
     finally:
         os.environ.update(_saved)
 
+
 class SessionRecorder:
     """Namespace for call recording utilities: transcript building, summary, analysis."""
+    
+    def __init__(self):
+        self._tracks: Dict[str, List[bytes]] = {}
+        self._recording_tasks: List[asyncio.Task] = []
+        self.start_time = datetime.datetime.now()
+        self.end_time = None
+        self.recording_duration_seconds = 0.0
+
+        self.SAMPLE_RATE = 48000
+        self.NUM_CHANNELS = 1
+        self.SAMPLE_WIDTH = 2  # 16-bit
+
+    def start_recording(self, track: rtc.Track, label: str):
+        track_id = track.sid or str(id(track))
+        if track_id in self._tracks:
+            return
+        self._tracks[track_id] = []
+        task = asyncio.create_task(self._consume_track(track, track_id, label))
+        self._recording_tasks.append(task)
+
+    async def _consume_track(self, track: rtc.Track, track_id: str, label: str):
+        audio_stream = rtc.AudioStream(
+            track, sample_rate=self.SAMPLE_RATE, num_channels=self.NUM_CHANNELS
+        )
+        try:
+            async for frame_event in audio_stream:
+                self._tracks[track_id].append(bytes(frame_event.frame.data))
+        except Exception as e:
+            logger.error(f"Error recording track {label}: {e}")
+        finally:
+            await audio_stream.aclose()
+
+    async def stop_recording(self):
+        self.end_time = datetime.datetime.now()
+        cancelled = []
+        for task in self._recording_tasks:
+            if not task.done():
+                task.cancel()
+                cancelled.append(task)
+        if cancelled:
+            await asyncio.gather(*cancelled, return_exceptions=True)
+        self._recording_tasks.clear()
+
+    def get_combined_mp3_bytes(self) -> bytes:
+        self.end_time = datetime.datetime.now()
+        if not self._tracks:
+            return b""
+
+        track_arrays = []
+        for frames in self._tracks.values():
+            if frames:
+                track_arrays.append(np.frombuffer(b"".join(frames), dtype=np.int16))
+
+        if not track_arrays:
+            return b""
+
+        max_len = max(len(a) for a in track_arrays)
+        mixed = np.zeros(max_len, dtype=np.float32)
+        for arr in track_arrays:
+            if len(arr) < max_len:
+                arr = np.pad(arr, (0, max_len - len(arr)), mode="constant")
+            mixed += arr.astype(np.float32)
+        mixed = np.clip(mixed, -32768, 32767).astype(np.int16)
+
+        try:
+            from pydub import AudioSegment
+            from pydub.silence import detect_nonsilent
+
+            audio = AudioSegment(
+                mixed.tobytes(),
+                frame_rate=self.SAMPLE_RATE,
+                sample_width=self.SAMPLE_WIDTH,
+                channels=self.NUM_CHANNELS,
+            )
+            nonsilent = detect_nonsilent(
+                audio, min_silence_len=200, silence_thresh=-40, seek_step=10
+            )
+            if nonsilent:
+                start_ms = nonsilent[0][0]
+                if start_ms > 0:
+                    audio = audio[start_ms:]
+
+            self.recording_duration_seconds = len(audio) / 1000.0
+
+            buf = io.BytesIO()
+            audio.export(buf, format="mp3", bitrate="128k")
+            return buf.getvalue()
+        except Exception as e:
+            logger.error(f"MP3 conversion failed: {e}")
+            return b""
 
     @staticmethod
     def build_transcript(history: list, handoff_info: dict = None) -> str:
         structured = []
         for msg in history:
             role = msg.role.name if hasattr(msg.role, "name") else str(msg.role)
-            content = " ".join([str(c) for c in msg.content]) if isinstance(msg.content, list) else msg.content
-            if content:
-                role_label = "bot" if role.lower() == "assistant" else "user"
-                structured.append({role_label: content})
-        if handoff_info:
-            structured.append({"handoff": handoff_info})
-            structured.append({"info": "Speech after this point is human agent conversation, not yet transcribed"})
-        return json.dumps(structured)
-        structured = []
-        for msg in history:
-            role = msg.role.name if hasattr(msg.role, "name") else str(msg.role)
-            content = " ".join([str(c) for c in msg.content]) if isinstance(msg.content, list) else msg.content
-            if content:
+            content = (
+                " ".join([str(c) for c in msg.content])
+                if isinstance(msg.content, list)
+                else msg.content
+            )
+            if content and not content.startswith("[System:"):
                 role_label = "bot" if role.lower() == "assistant" else "user"
                 structured.append({role_label: content})
         if handoff_info:
@@ -144,21 +286,33 @@ class SessionRecorder:
         )
         for msg in history:
             role = msg.role.name if hasattr(msg.role, "name") else str(msg.role)
-            content = " ".join([str(c) for c in msg.content]) if isinstance(msg.content, list) else msg.content
-            summary_prompt += f"{role.upper()}: {content}\n"
-        
+            content = (
+                " ".join([str(c) for c in msg.content])
+                if isinstance(msg.content, list)
+                else msg.content
+            )
+            if content and not content.startswith("[System:"):
+                summary_prompt += f"{role.upper()}: {content}\n"
+
         try:
             messages = [
-                llm.ChatMessage(role="system", content=["You are a helpful assistant."]),
+                llm.ChatMessage(
+                    role="system", content=["You are a helpful assistant."]
+                ),
                 llm.ChatMessage(role="user", content=[summary_prompt]),
             ]
             stream = llm_engine.chat(chat_ctx=llm.ChatContext(items=messages))
             response = await stream.collect()
-            
+
             import re
-            clean_text = re.sub(r'[*#_~`\[\]]', '', response.text)
-            clean_text = clean_text.encode('ascii', 'ignore').decode('ascii')
-            lines = [" ".join(line.split()) for line in clean_text.splitlines() if line.strip()]
+
+            clean_text = re.sub(r"[*#_~`\[\]]", "", response.text)
+            clean_text = clean_text.encode("ascii", "ignore").decode("ascii")
+            lines = [
+                " ".join(line.split())
+                for line in clean_text.splitlines()
+                if line.strip()
+            ]
             return "\n".join(lines)
         except Exception as e:
             logger.error(f"Summary failed: {e}")
@@ -170,38 +324,39 @@ class SessionRecorder:
         history: list,
         current_stage_id: Optional[int],
         stage_details: List[dict],
-        duration: int
+        duration: int,
     ) -> dict:
         # Fallback values
         fallback_stage_id = current_stage_id
-        
+
         # Parse stage details to find fallback IDs based on rules
         not_answering_id = current_stage_id
-        interested_id = current_stage_id
-        confirmed_id = current_stage_id
         follow_up_id = current_stage_id
-        not_interested_id = current_stage_id
-        
+
         for stage in stage_details:
             desc = stage.get("description", "").lower()
             sid = stage.get("stage_id")
             if "not answering" in desc or "failed" in desc or "incomplete" in desc:
                 not_answering_id = sid
             elif "shown interest" in desc or "interested" in desc:
-                interested_id = sid
+                pass
             elif "confirmed" in desc or "appointment date" in desc:
-                confirmed_id = sid
+                pass
             elif "follow up" in desc or "call later" in desc:
                 follow_up_id = sid
             elif "not interested" in desc or "no further follow" in desc:
-                not_interested_id = sid
+                pass
 
         # Construct transcript
         transcript_lines = []
         for msg in history:
             role = msg.role.name if hasattr(msg.role, "name") else str(msg.role)
-            content = " ".join([str(c) for c in msg.content]) if isinstance(msg.content, list) else msg.content
-            if content:
+            content = (
+                " ".join([str(c) for c in msg.content])
+                if isinstance(msg.content, list)
+                else msg.content
+            )
+            if content and not content.startswith("[System:"):
                 role_label = "Assistant" if role.lower() == "assistant" else "User"
                 transcript_lines.append(f"{role_label}: {content}")
         transcript_text = "\n".join(transcript_lines)
@@ -259,12 +414,14 @@ Provide ONLY the JSON object. Do not include markdown code block syntax or other
 
         try:
             messages = [
-                llm.ChatMessage(role="system", content=["You are a helpful assistant."]),
+                llm.ChatMessage(
+                    role="system", content=["You are a helpful assistant."]
+                ),
                 llm.ChatMessage(role="user", content=[prompt]),
             ]
             stream = llm_engine.chat(chat_ctx=llm.ChatContext(items=messages))
             response = await stream.collect()
-            
+
             text = response.text.strip()
             if text.startswith("```"):
                 first_newline = text.find("\n")
@@ -273,9 +430,9 @@ Provide ONLY the JSON object. Do not include markdown code block syntax or other
                 if text.endswith("```"):
                     text = text[:-3]
                 text = text.strip()
-            
+
             res_dict = json.loads(text)
-            
+
             summary = res_dict.get("summary") or ""
             new_stage_id = res_dict.get("new_stage_id")
             next_call_on = res_dict.get("next_call_on")
@@ -283,7 +440,7 @@ Provide ONLY the JSON object. Do not include markdown code block syntax or other
             doctor = res_dict.get("doctor")
             hospital_location = res_dict.get("hospital_location")
             sentiment_score = res_dict.get("sentiment_score", 0.5)
-            
+
             if new_stage_id is not None:
                 try:
                     new_stage_id = int(new_stage_id)
@@ -296,7 +453,9 @@ Provide ONLY the JSON object. Do not include markdown code block syntax or other
                 summary = await SessionRecorder.generate_summary(llm_engine, history)
 
         except Exception as e:
-            logger.error(f"analyze_call failed: {e}. Falling back to default heuristics.")
+            logger.error(
+                f"analyze_call failed: {e}. Falling back to default heuristics."
+            )
             summary = await SessionRecorder.generate_summary(llm_engine, history)
             new_stage_id = fallback_stage_id
             next_call_on = None
@@ -316,14 +475,18 @@ Provide ONLY the JSON object. Do not include markdown code block syntax or other
             "appointment_date_time": appointment_date_time,
             "doctor": doctor,
             "hospital_location": hospital_location,
-            "sentiment_score": sentiment_score
+            "sentiment_score": sentiment_score,
         }
 
     @staticmethod
     def parse_summary_data(summary_text: str):
         sentiment_score = 0.5
         next_call_on = None
-        custom_fields = {"appointment_date_time": "", "doctor": "", "hospital_location": ""}
+        custom_fields = {
+            "appointment_date_time": "",
+            "doctor": "",
+            "hospital_location": "",
+        }
         try:
             for line in summary_text.split("\n"):
                 line = line.strip()

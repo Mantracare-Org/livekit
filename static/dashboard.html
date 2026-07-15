@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MantraAssist · Dashboard</title>
+    <link rel="icon" type="image/png" href="/static/favicon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Consolas', monospace;
+
+            --bg-page:           #1e1f22;
+            --bg-surface:        #2b2d31;
+            --bg-elevated:       #313338;
+            --bg-hover:          #35373c;
+            --bg-active:         #3f4148;
+            --bg-input:          #1e1f22;
+
+            --border-default:    #3f4148;
+            --border-strong:     #4e5058;
+            --border-accent:     #5865F2;
+
+            --text-primary:      #f2f3f5;
+            --text-secondary:    #949ba4;
+            --text-tertiary:     #6d6f78;
+
+            --accent:            #5865F2;
+            --accent-hover:      #4752c4;
+            --accent-subtle:     rgba(88, 101, 242, 0.12);
+
+            --success:           #23a55a;
+            --success-subtle:    rgba(35, 165, 90, 0.12);
+            --warning:           #f0b232;
+            --warning-subtle:    rgba(240, 178, 50, 0.12);
+            --danger:            #da373c;
+            --danger-subtle:     rgba(218, 55, 60, 0.12);
+
+            --shadow-sm:         0 1px 2px rgba(0, 0, 0, 0.3);
+            --shadow-md:         0 4px 12px rgba(0, 0, 0, 0.4);
+
+            --text-xs:   0.75rem;
+            --text-sm:   0.8125rem;
+            --text-base: 0.875rem;
+            --text-lg:   1rem;
+            --text-xl:   1.25rem;
+            --text-2xl:  1.625rem;
+            --text-3xl:  2.25rem;
+
+            --weight-regular: 400;
+            --weight-medium:  500;
+            --weight-semibold: 600;
+
+            --tracking-normal: 0em;
+            --tracking-wide:   0.02em;
+            --tracking-mono:  -0.01em;
+        }
+
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        .loading-spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: var(--font-sans);
+            font-size: var(--text-base);
+            background: var(--bg-page);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--bg-active); border-radius: 3px; }
+        * { scrollbar-width: thin; scrollbar-color: var(--bg-active) transparent; }
+
+        :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+        .navbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 52px;
+            padding: 0 24px;
+            background: var(--bg-page);
+            border-bottom: 1px solid var(--border-default);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .nav-left { display: flex; align-items: center; gap: 20px; }
+
+        .nav-logo { display: flex; align-items: center; gap: 10px; }
+
+        .nav-logo-icon {
+            width: 28px; height: 28px;
+            background: var(--accent);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .nav-logo-icon svg { width: 16px; height: 16px; color: white; }
+
+        .nav-title {
+            font-size: var(--text-lg);
+            font-weight: var(--weight-semibold);
+            color: var(--text-primary);
+        }
+
+        .nav-links { display: flex; gap: 2px; }
+
+        .nav-link {
+            padding: 6px 14px;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--text-secondary);
+            font-family: var(--font-sans);
+            font-size: var(--text-sm);
+            font-weight: var(--weight-medium);
+            text-decoration: none;
+            transition: background 0.15s ease, color 0.15s ease;
+        }
+
+        .nav-link:hover { background: var(--bg-hover); color: var(--text-primary); }
+        .nav-link.active { background: var(--accent); color: white; }
+
+        .nav-right { display: flex; align-items: center; gap: 16px; }
+
+        .nav-user { font-size: var(--text-sm); color: var(--text-secondary); }
+
+        .btn-logout {
+            padding: 6px 14px;
+            border-radius: 6px;
+            border: 1px solid var(--border-default);
+            background: transparent;
+            color: var(--text-secondary);
+            font-family: var(--font-sans);
+            font-size: var(--text-xs);
+            font-weight: var(--weight-medium);
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .btn-logout:hover {
+            border-color: var(--danger);
+            color: var(--danger);
+            background: var(--danger-subtle);
+        }
+
+        .main-grid {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 24px 32px;
+            display: grid;
+            grid-template-columns: 1fr 340px;
+            gap: 20px;
+        }
+
+        .left-col { display: flex; flex-direction: column; gap: 20px; }
+        .right-col { display: flex; flex-direction: column; gap: 20px; }
+
+        .card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .card-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-default);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .card-header h3 {
+            font-family: var(--font-sans);
+            font-size: var(--text-base);
+            font-weight: var(--weight-semibold);
+            color: var(--text-primary);
+            margin: 0;
+        }
+
+        .card-body { padding: 16px 20px; }
+
+        .metrics-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+        }
+
+        .metric-card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: 8px;
+            padding: 18px 20px;
+            text-align: center;
+        }
+
+        .metric-value {
+            font-family: var(--font-mono);
+            font-size: var(--text-2xl);
+            font-weight: var(--weight-semibold);
+            color: var(--text-primary);
+            line-height: 1.15;
+            letter-spacing: var(--tracking-mono);
+        }
+
+        .metric-label {
+            font-family: var(--font-sans);
+            font-size: var(--text-xs);
+            font-weight: var(--weight-medium);
+            color: var(--text-secondary);
+            margin-top: 4px;
+            text-transform: uppercase;
+            letter-spacing: var(--tracking-wide);
+        }
+
+        .metric-card.accent .metric-value { color: var(--accent); }
+        .metric-card.success .metric-value { color: var(--success); }
+        .metric-card.warning .metric-value { color: var(--warning); }
+
+        #active-calls-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .call-card {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-default);
+            border-radius: 6px;
+            padding: 12px 16px;
+            transition: border-color 0.15s ease;
+        }
+
+        .call-card:hover { border-color: var(--border-strong); }
+
+        .call-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 4px;
+        }
+
+        .call-id {
+            font-family: var(--font-mono);
+            font-weight: var(--weight-medium);
+            font-size: var(--text-sm);
+            color: var(--text-primary);
+            letter-spacing: var(--tracking-mono);
+        }
+
+        .call-card-body {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: var(--text-xs);
+            color: var(--text-secondary);
+        }
+
+        .call-room { font-family: var(--font-sans); }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: var(--text-xs);
+            font-weight: var(--weight-medium);
+            padding: 3px 10px;
+            border-radius: 4px;
+            text-transform: capitalize;
+        }
+
+        .status-in_progress, .status-completed { background: var(--success-subtle); color: var(--success); }
+        .status-dispatching, .status-pending { background: var(--warning-subtle); color: var(--warning); }
+        .status-failed, .status-error { background: var(--danger-subtle); color: var(--danger); }
+        .status-no_answer, .status-unknown { background: var(--accent-subtle); color: var(--accent); }
+
+        .status-dot-sm {
+            display: inline-block;
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+
+        .status-dot-sm.completed, .status-dot-sm.in_progress { background: var(--success); }
+        .status-dot-sm.busy, .status-dot-sm.dispatching { background: var(--warning); }
+        .status-dot-sm.error, .status-dot-sm.failed { background: var(--danger); }
+        .status-dot-sm.no_answer, .status-dot-sm.unknown { background: var(--text-tertiary); }
+
+        .table-wrap { overflow-x: auto; }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: var(--text-sm);
+        }
+
+        thead th {
+            text-align: left;
+            padding: 10px 16px;
+            color: var(--text-secondary);
+            font-weight: var(--weight-medium);
+            font-size: var(--text-xs);
+            text-transform: uppercase;
+            letter-spacing: var(--tracking-wide);
+            border-bottom: 1px solid var(--border-default);
+            background: var(--bg-page);
+            position: sticky;
+            top: 0;
+        }
+
+        tbody td {
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--border-default);
+            color: var(--text-primary);
+        }
+
+        tbody tr { transition: background 0.1s ease; }
+        tbody tr:hover { background: var(--bg-hover); }
+
+        .cell-mono {
+            font-family: var(--font-mono);
+            font-size: var(--text-xs);
+            color: var(--text-secondary);
+            letter-spacing: var(--tracking-mono);
+        }
+
+        .cell-time {
+            font-size: var(--text-xs);
+            color: var(--text-secondary);
+        }
+
+        .queue-stats {
+            display: flex;
+            justify-content: space-around;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        .queue-stat { text-align: center; }
+
+        .queue-stat-value {
+            font-family: var(--font-mono);
+            font-size: var(--text-xl);
+            font-weight: var(--weight-semibold);
+            color: var(--text-primary);
+            letter-spacing: var(--tracking-mono);
+        }
+
+        .queue-stat-label {
+            font-family: var(--font-sans);
+            font-size: var(--text-xs);
+            font-weight: var(--weight-medium);
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: var(--tracking-wide);
+            margin-top: 2px;
+        }
+
+        .gauge-track {
+            width: 100%;
+            height: 6px;
+            background: var(--bg-elevated);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .gauge-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.4s ease, background 0.4s ease;
+        }
+
+        .gauge-fill.low { background: var(--success); }
+        .gauge-fill.medium { background: var(--warning); }
+        .gauge-fill.high { background: var(--danger); }
+
+        .gauge-label {
+            text-align: right;
+            font-size: var(--text-xs);
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        /* Knowledge Base Styles */
+        .kb-tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 16px;
+            border-bottom: 1px solid var(--border-default);
+            padding-bottom: 4px;
+        }
+
+        .kb-tab {
+            padding: 8px 16px;
+            border: none;
+            background: transparent;
+            color: var(--text-secondary);
+            font-family: var(--font-sans);
+            font-size: var(--text-sm);
+            font-weight: var(--weight-medium);
+            cursor: pointer;
+            border-radius: 6px;
+            transition: all 0.15s ease;
+        }
+
+        .kb-tab:hover { background: var(--bg-hover); color: var(--text-primary); }
+        .kb-tab.active { background: var(--accent-subtle); color: var(--accent); }
+
+        .kb-pane { display: none; }
+        .kb-pane.active { display: block; }
+
+        .form-group { margin-bottom: 14px; }
+
+        .form-group label {
+            display: block;
+            font-size: var(--text-xs);
+            font-weight: var(--weight-medium);
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+
+        .required { color: var(--warning); }
+
+        .form-group input,
+        .form-group textarea {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--border-default);
+            border-radius: 6px;
+            background: var(--bg-input);
+            color: var(--text-primary);
+            font-family: var(--font-sans);
+            font-size: var(--text-sm);
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .form-group input:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px var(--accent-subtle);
+        }
+
+        .form-group textarea { resize: vertical; }
+
+        .btn {
+            padding: 10px 20px;
+            border-radius: 6px;
+            border: none;
+            font-family: var(--font-sans);
+            font-size: var(--text-sm);
+            font-weight: var(--weight-medium);
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover { background: var(--accent-hover); }
+        .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        .kb-result {
+            margin-top: 16px;
+            padding: 12px 16px;
+            border-radius: 6px;
+            font-size: var(--text-sm);
+            font-family: var(--font-mono);
+        }
+
+        .kb-result.success {
+            background: var(--success-subtle);
+            color: var(--success);
+            border: 1px solid var(--success);
+        }
+
+        .kb-result.error {
+            background: var(--danger-subtle);
+            color: var(--danger);
+            border: 1px solid var(--danger);
+        }
+
+        #feed-list {
+            max-height: 400px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            padding: 4px 0;
+        }
+
+        .feed-item {
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+            padding: 6px 0;
+            font-size: var(--text-sm);
+        }
+
+        .feed-item + .feed-item {
+            border-top: 1px solid var(--border-default);
+            padding-top: 7px;
+        }
+
+        .feed-time {
+            font-family: var(--font-mono);
+            font-size: var(--text-xs);
+            color: var(--text-tertiary);
+            flex-shrink: 0;
+            min-width: 58px;
+            letter-spacing: var(--tracking-mono);
+        }
+
+        .feed-msg { color: var(--text-primary); }
+        .feed-item.feed-success .feed-msg { color: var(--success); }
+        .feed-item.feed-warning .feed-msg { color: var(--warning); }
+        .feed-item.feed-info .feed-msg { color: var(--text-primary); }
+
+        .badge-count {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 20px;
+            height: 20px;
+            padding: 0 6px;
+            border-radius: 4px;
+            background: var(--accent-subtle);
+            color: var(--accent);
+            font-size: var(--text-xs);
+            font-weight: var(--weight-semibold);
+            font-family: var(--font-mono);
+        }
+
+        .empty-state {
+            text-align: center;
+            color: var(--text-tertiary);
+            font-size: var(--text-sm);
+            padding: 32px 16px;
+            font-style: italic;
+        }
+
+        @media (max-width: 1024px) {
+            .main-grid { grid-template-columns: 1fr; padding: 16px; }
+            .metrics-row { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        @media (max-width: 640px) {
+            .metrics-row { grid-template-columns: 1fr; }
+            .navbar { padding: 0 16px; }
+            .main-grid { padding: 12px; }
+        }
+    <style>
+        /* CSS Variables & Global Styles */
+        :root {
+            /* Discord-like dark mode */
+            --bg-base: #1E1F22;
+            --bg-page: #313338;
+            --bg-surface: #2B2D31;
+            --bg-hover: #3F4147;
+            --bg-input: #1E1F22;
+            
+            --text-primary: #DBDEE1;
+            --text-secondary: #B5BAC1;
+            --text-tertiary: #949BA4;
+            --text-inverse: #FFFFFF;
+            
+            --border-default: #1E1F22;
+            --border-hover: #3F4147;
+            
+            --accent-primary: #5865F2;
+            --accent-hover: #4752C4;
+            --accent-active: #3C45A5;
+            
+            --status-success: #23A559;
+            --status-warning: #FEE75C;
+            --status-error: #DA373C;
+            --status-info: #5865F2;
+            
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
+        }
+        
+        .markdown-body {
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+        .markdown-body p { margin-top: 0; margin-bottom: 8px; }
+        .markdown-body ul, .markdown-body ol { margin-top: 0; margin-bottom: 8px; padding-left: 20px; }
+        .markdown-body strong { color: var(--text-inverse); }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-left">
+            <div class="nav-logo">
+                <div class="nav-logo-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                </div>
+                <span class="nav-title">MantraAssist</span>
+            </div>
+            <div class="nav-links">
+                <a class="nav-link active" href="/dashboard">Dashboard</a>
+                <a class="nav-link" href="/console">Test Console</a>
+                <a class="nav-link" href="/network">Network Monitoring</a>
+            </div>
+        </div>
+        <div class="nav-right">
+            <span class="nav-user" id="nav-username"></span>
+            <button class="btn-logout" id="logout-btn">Sign Out</button>
+        </div>
+    </nav>
+
+    <div class="main-grid">
+        <div class="left-col">
+            <div class="metrics-row">
+                <div class="metric-card accent">
+                    <div class="metric-value" id="metric-total">—</div>
+                    <div class="metric-label">Calls Today</div>
+                </div>
+                <div class="metric-card success">
+                    <div class="metric-value" id="metric-answer-rate">—</div>
+                    <div class="metric-label">Answer Rate</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value" id="metric-avg-duration">—</div>
+                    <div class="metric-label">Avg Duration</div>
+                </div>
+                <div class="metric-card warning">
+                    <div class="metric-value" id="metric-active">—</div>
+                    <div class="metric-label">Active Now</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3>Call History</h3>
+                    <span class="badge-count" id="calls-total">0</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Status</th>
+                                <th>Call ID</th>
+                                <th>Client</th>
+                                <th>Duration</th>
+                                <th>Time</th>
+                            </tr>
+                        </thead>
+                        <tbody id="calls-table-body">
+                            <tr><td colspan="5" class="empty-state">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="right-col">
+            <div class="card">
+                <div class="card-header">
+                    <h3>Active Calls</h3>
+                    <span class="badge-count" id="active-count">0</span>
+                </div>
+                <div class="card-body" id="active-calls-list">
+                    <div class="empty-state">No active calls</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3>Queue &amp; Capacity</h3>
+                </div>
+                <div class="card-body">
+                    <div class="queue-stats">
+                        <div class="queue-stat">
+                            <div class="queue-stat-value" id="queue-active-stat">0</div>
+                            <div class="queue-stat-label">Active</div>
+                        </div>
+                        <div class="queue-stat">
+                            <div class="queue-stat-value" id="queue-pending-stat">0</div>
+                            <div class="queue-stat-label">Queued</div>
+                        </div>
+                        <div class="queue-stat">
+                            <div class="queue-stat-value" id="queue-max-stat">5</div>
+                            <div class="queue-stat-label">Capacity</div>
+                        </div>
+                    </div>
+                    <div class="gauge-track">
+                        <div class="gauge-fill low" id="queue-fill" style="width:0%"></div>
+                    </div>
+                    <div class="gauge-label">Concurrency Usage</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3>Activity Feed</h3>
+                </div>
+                <div class="card-body" style="padding:12px 16px;" id="feed-list">
+                    <div class="empty-state">Waiting for activity...</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3>Knowledge Base</h3>
+                </div>
+                <div class="card-body">
+                    <div class="kb-tabs">
+                        <button class="kb-tab active" data-tab="upload">Upload File</button>
+                        <button class="kb-tab" data-tab="text">Paste Text</button>
+                        <button class="kb-tab" data-tab="url">From URL</button>
+                        <button class="kb-tab" data-tab="chat">Test Chat</button>
+                    </div>
+                    
+                    <div class="kb-pane active" id="kb-upload">
+                        <div class="form-group">
+                            <label for="kb-id-upload">KB ID <span class="required">*</span></label>
+                            <input type="text" id="kb-id-upload" placeholder="e.g., hospital-001" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="kb-file">File (.pdf, .txt, .md) <span class="required">*</span></label>
+                            <input type="file" id="kb-file" accept=".pdf,.txt,.md" required>
+                        </div>
+                        <button class="btn btn-primary" id="btn-kb-upload">Upload & Index</button>
+                    </div>
+                    
+                    <div class="kb-pane" id="kb-text">
+                        <div class="form-group">
+                            <label for="kb-id-text">KB ID <span class="required">*</span></label>
+                            <input type="text" id="kb-id-text" placeholder="e.g., hospital-001" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="kb-title">Title (optional)</label>
+                            <input type="text" id="kb-title" placeholder="e.g., Clinic Hours Policy">
+                        </div>
+                        <div class="form-group">
+                            <label for="kb-content">Content <span class="required">*</span></label>
+                            <textarea id="kb-content" rows="6" placeholder="Paste your text here..." required></textarea>
+                        </div>
+                        <button class="btn btn-primary" id="btn-kb-text">Index Text</button>
+                    </div>
+                    
+                    <div class="kb-pane" id="kb-url">
+                        <div class="form-group">
+                            <label for="kb-id-url">KB ID <span class="required">*</span></label>
+                            <input type="text" id="kb-id-url" placeholder="e.g., hospital-001" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="kb-url-input">URL <span class="required">*</span></label>
+                            <input type="url" id="kb-url-input" placeholder="https://example.com/page" required>
+                        </div>
+                        <button class="btn btn-primary" id="btn-kb-url">Extract Page to KB</button>
+                    </div>
+
+                    <div class="kb-pane" id="kb-chat">
+                        <div class="form-group">
+                            <label for="kb-id-chat">KB ID <span class="required">*</span></label>
+                            <select id="kb-id-chat" required>
+                                <option value="">Loading...</option>
+                            </select>
+                        </div>
+                        <div class="chat-area" id="chat-area" style="height: 250px; overflow-y: auto; background: var(--bg-page); border: 1px solid var(--border-default); border-radius: 6px; padding: 12px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px;">
+                            <div style="color: var(--text-secondary); font-size: var(--text-xs); align-self: center; font-style: italic;">Hello! Type a question to search this KB.</div>
+                        </div>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="text" id="chat-input" placeholder="Ask a question..." style="flex: 1; padding: 8px; border-radius: 6px; border: 1px solid var(--border-default); background: var(--bg-input); color: var(--text-primary); font-size: var(--text-sm);" autocomplete="off">
+                            <button class="btn btn-primary" id="btn-kb-chat">Send</button>
+                        </div>
+                    </div>
+                    
+                    <div id="kb-result" class="kb-result" style="display:none;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/dashboard.js?v=5"></script>
+</body>
+</html>

@@ -25,7 +25,32 @@ const tabContents = document.querySelectorAll('.tab-content');
 const inputClientName = document.getElementById('input-client-name');
 const inputCallId = document.getElementById('input-call-id');
 const inputLeadId = document.getElementById('input-lead-id');
+const inputKbId = document.getElementById('input-kb-id');
 const inputPrompt = document.getElementById('input-prompt');
+
+// Load KB IDs
+async function loadKbIdsForConsole() {
+    if (!inputKbId) return;
+    try {
+        const res = await fetch('/api/v1/knowledge/list', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const data = await res.json();
+        
+        inputKbId.innerHTML = '<option value="">None (No KB context)</option>';
+        if (data.status === 'success' && data.kbs.length > 0) {
+            data.kbs.forEach(kb => {
+                const opt = document.createElement('option');
+                opt.value = kb;
+                opt.textContent = kb;
+                inputKbId.appendChild(opt);
+            });
+        }
+    } catch (e) {
+        console.error("Failed to load KB IDs", e);
+    }
+}
+loadKbIdsForConsole();
 
 // Raw Inputs
 const payloadRaw = document.getElementById('payload-raw');
@@ -58,6 +83,7 @@ parseRawBtn.addEventListener('click', () => {
         if (data.client_name) inputClientName.value = data.client_name;
         if (data.call_id) inputCallId.value = data.call_id;
         if (data.lead_id) inputLeadId.value = data.lead_id;
+        if (data.kb_id) inputKbId.value = data.kb_id;
         if (data.prompt) inputPrompt.value = data.prompt;
         
         // Switch to structured tab
@@ -78,6 +104,7 @@ async function connect() {
             client_name: inputClientName.value || 'User',
             call_id: inputCallId.value || '99999',
             lead_id: inputLeadId.value || '12345',
+            kb_id: inputKbId.value || undefined,
             prompt: inputPrompt.value || 'You are a helpful assistant.'
         };
 

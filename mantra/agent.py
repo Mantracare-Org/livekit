@@ -3,9 +3,8 @@ import json
 import asyncio
 import os
 import datetime
+from mantra.email_alerts import send_crash_email
 import sys
-import time
-from typing import Annotated
 
 # ── Suppress OpenTelemetry 429 errors ──────────────────────────────────
 os.environ.setdefault("OTEL_METRICS_EXPORTER", "none")
@@ -18,7 +17,9 @@ os.environ.pop("http_proxy", None)
 
 # ── Colorama for cross-platform colored terminal logs ──────────────────
 from colorama import Fore, Back, Style, init as colorama_init
+
 colorama_init(autoreset=True)
+
 
 class ColorFormatter(logging.Formatter):
     LEVEL_COLORS = {
@@ -35,19 +36,20 @@ class ColorFormatter(logging.Formatter):
         record.msg = f"{color}{record.msg}{Style.RESET_ALL}"
         return super().format(record)
 
+
 # LLM Selection Logic
 _is_inference = os.getenv("LIVEKIT_AGENTS_INFERENCE") == "1"
 _proc_type = "Inference Subprocess" if _is_inference else "Main Worker"
 
 _handler = logging.StreamHandler(sys.stdout)
-_handler.setFormatter(ColorFormatter(
-    f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s"
-))
-_file_handler = logging.FileHandler("/tmp/agent.log")
-_file_handler.setFormatter(logging.Formatter(
-    f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s"
-))
-logging.basicConfig(level=logging.DEBUG, handlers=[_handler, _file_handler])
+_handler.setFormatter(
+    ColorFormatter(
+        f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s"
+    )
+)
+
+
+logging.basicConfig(level=logging.DEBUG, handlers=[_handler])
 logger = logging.getLogger("mantra.agent")
 logging.getLogger("livekit.agents").setLevel(logging.DEBUG)
 logger.info("Initializing process...")
@@ -58,27 +60,33 @@ logging.getLogger("opentelemetry").setLevel(logging.ERROR)
 from dotenv import load_dotenv
 
 from livekit import rtc, api
-from livekit.agents.llm import (
-    ChatContext,
-    ChatMessage,
-)
 from livekit.agents import (
     Agent,
     AgentServer,
     AgentSession,
     JobContext,
     cli,
+    inference,
     llm,
 )
 from livekit.agents import TurnHandlingOptions
 
-from livekit.agents.tts import FallbackAdapter
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
-from livekit.plugins import openai, google, cartesia, silero, deepgram
+from livekit.plugins import openai, google, silero, deepgram
 
 # Import our production helpers
-from mantra.utils import SessionRecorder, send_to_backend, normalize_to_iso8601
+from mantra.utils import (
+    SessionRecorder,
+    upload_to_s3,
+    send_to_backend,
+    normalize_to_iso8601,
+    save_call_log_to_db,
+)
 
+# Import knowledge base
+from mantra.knowledge_base import PostgresKnowledgeBase
+from mantra.retriever import KnowledgeRetriever
+from typing import Annotated
 
 
 VOICE_MAPPING = {
@@ -89,12 +97,14 @@ VOICE_MAPPING = {
     "vikas": "adf97b9d-905c-41de-9fe9-afb387116d06",
     "camila": "bef2ba57-5c10-433b-b215-3bef35110a81",
     "renata": "d3793b7b-4996-409c-9d59-96dd09f47717",
-    "arushi": "95d51f79-c397-46f9-b49a-23763d3eaa2d"
+    "arushi": "95d51f79-c397-46f9-b49a-23763d3eaa2d",
 }
 
 # Load environment variables
-load_dotenv()          # Load .env (OpenAI, etc.)
-load_dotenv(".env.local", override=True)  # Load .env.local (LiveKit, etc.) and override if needed
+load_dotenv()  # Load .env (OpenAI, etc.)
+load_dotenv(
+    ".env.local", override=True
+)  # Load .env.local (LiveKit, etc.) and override if needed
 
 
 server = AgentServer()
@@ -116,13 +126,57 @@ if TRANSFER_SIP_TRUNK_ID:
     logger.info(f"Transfer SIP trunk configured: {TRANSFER_SIP_TRUNK_ID}")
 # -------------------------------------------------
 
+
+_bg_tasks = set()
+
+
+def create_bg_task(coro):
+    task = asyncio.create_task(coro)
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+    return task
+
+
+_global_kb: PostgresKnowledgeBase | None = None
+
+def get_global_kb() -> PostgresKnowledgeBase:
+    global _global_kb
+    if _global_kb is None:
+        dsn = (
+            f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
+            f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
+        )
+        _global_kb = PostgresKnowledgeBase(dsn)
+    return _global_kb
+
+
 class AssistantFunctions:
-    def __init__(self, job_metadata: str, room_name: str, room: rtc.Room = None):
+    def __init__(
+        self,
+        job_metadata: str,
+        room_name: str,
+        ctx: JobContext = None,
+        kb_ids: list[str] = None,
+        kb_tags: list[str] = None,
+    ):
         self.job_metadata = job_metadata
         self.room_name = room_name
-        self.room = room
         self.handoff_triggered = False
         self.agent = None
+        self.session = None
+        self.ctx = ctx
+        self.kb_ids = kb_ids or []
+        self.kb_tags = kb_tags or []
+        self._retriever: KnowledgeRetriever | None = None
+
+    async def _get_kb(self) -> PostgresKnowledgeBase:
+        return get_global_kb()
+
+    async def _get_retriever(self) -> KnowledgeRetriever:
+        if self._retriever is None:
+            kb = await self._get_kb()
+            self._retriever = KnowledgeRetriever(kb)
+        return self._retriever
 
     @llm.function_tool(
         description="Transfer the call to a human agent in a specific department when the user requests it, "
@@ -225,65 +279,213 @@ class AssistantFunctions:
 
         return "TRANSFER_COMPLETE. Do not speak."
 
+    @llm.function_tool(
+        description="Search the knowledge base for factual information relevant to the user's question. Use this tool to retrieve accurate information about products, services, policies, procedures, pricing, locations, schedules, people, organizations, documents, regulations, FAQs, or any domain-specific content stored in the knowledge base. ALWAYS use this tool before answering questions that require factual or organization-specific information. If the user switches topics to a specific category (like 'support' or 'pricing'), you can provide that category in 'specific_tag' to override the default search scope."
+    )
+    async def search_knowledge_base(
+        self, 
+        query: Annotated[str, "The search query to look up in the knowledge base. Be specific, e.g., 'What are the symptoms of diabetes?' or 'How many paid leaves do I get?'"],
+        specific_tag: Annotated[Optional[str], "An optional specific tag or category to search within (e.g., 'sales', 'support', 'pricing') if the user explicitly switches context. Leaves empty to search the default context."] = None
+    ):
+        tags_to_search = [specific_tag] if specific_tag else self.kb_tags
+        logger.info(f"Agent requested knowledge base search for: '{query}' with tags {tags_to_search}")
+        retriever = await self._get_retriever()
+        result = await retriever.retrieve(query, kb_ids=self.kb_ids, tags=tags_to_search if tags_to_search else None)
+        return result
+
+    @llm.function_tool(
+        description="End the call. Call this tool when the conversation is over — the user said goodbye, is not interested, or there is nothing left to discuss."
+    )
+    async def end_call(self):
+        logger.info(
+            "Agent decided to end the call via function tool. Waiting for speech to finish before disconnecting."
+        )
+
+        async def graceful_disconnect():
+            if self.session:
+                try:
+                    await asyncio.wait_for(
+                        self.session.wait_for_inactive(), timeout=12.0
+                    )
+                    logger.info(
+                        "Agent finished speaking. Pausing briefly before disconnect."
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Agent did not finish speaking within 12s. Disconnecting anyway."
+                    )
+            else:
+                await asyncio.sleep(4.0)
+            await asyncio.sleep(1.0)
+            if self.ctx:
+                await _force_disconnect_room(self.ctx)
+
+        self._disconnect_task = create_bg_task(graceful_disconnect())
+        return "Call is ending. Say a brief, warm goodbye now."
+
+    # Removed query_knowledge_base tool as per user request to inject KB directly into the main job
+
+    # @llm.ai_callable(description="Transfer the call to a human assistant when requested or if the issue is too complex.")
+    # async def transfer_to_human(
+    #     self,
+    #     reason: Annotated[str, "The reason why a human is needed"]
+    # ):
+    #     logger.info(f"Handoff requested. Reason: {reason}")
+    #     self.handoff_triggered = True
+    #
+    #     # Parse metadata to get call/lead IDs
+    #     try:
+    #         payload = json.loads(self.job_metadata) if self.job_metadata else {}
+    #     except Exception:
+    #         payload = {}
+    #
+    #     # Notify backend
+    #     webhook_payload = {
+    #         "event": "HANDOFF_REQUESTED",
+    #         "data": {
+    #             "room_name": self.room_name,
+    #             "reason": reason,
+    #             "call_id": payload.get("call_id") or payload.get("voice_id"),
+    #             "lead_id": payload.get("lead_id"),
+    #             "client_name": payload.get("client_name", "User"),
+    #         }
+    #     }
+    #     await send_to_backend(webhook_payload)
+    #
+    #     if self.agent:
+    #         logger.info("Handoff triggered — switching to passive monitoring instructions")
+    #         await self.agent.update_instructions(
+    #             "A human has joined the call. You are now in PASSIVE MONITORING MODE. "
+    #             "DO NOT speak. DO NOT respond to the user. DO NOT generate any audio. "
+    #             "Just observe and maintain the transcript for the final summary."
+    #         )
+    #
+    #     return "I am connecting you to a human assistant now. Please stay on the line. I will remain on the call to record and summarize our conversation."
+
+
 @server.rtc_session(agent_name="mantra-agent")
 async def entrypoint(ctx: JobContext):
     entrypoint_start_time = asyncio.get_event_loop().time()
     # Plain log to verify entrypoint is reached
     logger.info(f"Entrypoint reached for room: {ctx.room.name}")
-    
+
     await ctx.connect()
 
-    logger.info(f"--- Starting agent session ---")
+    # logger.info(f"{Fore.GREEN}➕ Room Created / Connected: {ctx.room.name}{Style.RESET_ALL}")
+    logger.info("--- Starting agent session ---")
     logger.info(f"Room: {ctx.room.name}")
     logger.info(f"Job ID: {ctx.job.id}")
     logger.info(f"Metadata: {ctx.job.metadata}")
 
     # Initialize function context for handoff
-    fnc_ctx = AssistantFunctions(ctx.job.metadata, ctx.room.name, ctx.room)
-    call_state = {"user_joined": False}
-    call_start_time = datetime.datetime.now()
+    kb_ids_list = []
+    kb_tags_list = []
+    if ctx.job.metadata:
+        try:
+            meta_payload = json.loads(ctx.job.metadata)
+            if "kb_id" in meta_payload and meta_payload["kb_id"]:
+                kb_ids_list.append(meta_payload["kb_id"])
+            if "kb_ids" in meta_payload and isinstance(meta_payload["kb_ids"], list):
+                kb_ids_list.extend(meta_payload["kb_ids"])
+            
+            if "kb_tags" in meta_payload and isinstance(meta_payload["kb_tags"], list):
+                kb_tags_list.extend(meta_payload["kb_tags"])
+                
+            # Remove duplicates
+            kb_ids_list = list(set(kb_ids_list))
+            kb_tags_list = list(set(kb_tags_list))
+        except:
+            pass
 
-    # Session ID for naming
+    fnc_ctx = AssistantFunctions(
+        ctx.job.metadata, 
+        ctx.room.name, 
+        ctx=ctx, 
+        kb_ids=kb_ids_list,
+        kb_tags=kb_tags_list
+    )
+    call_state = {
+        "user_joined": False,
+        "timeline": [
+            {
+                "event": "Agent Session Started",
+                "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+            }
+        ],
+    }
+
+    # Session ID for S3 key naming
     session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Simple local recording: track_id -> metadata and raw PCM frames dict
-    recording_tracks: dict = {}
-    recording_tasks: list = []
-    recording_start_time = time.time()
+    # Parse metadata to get call_id safely
+    call_id = ctx.job.id
+    if ctx.job.metadata:
+        try:
+            payload = json.loads(ctx.job.metadata)
+            call_id = payload.get("call_id") or payload.get("voice_id") or ctx.job.id
+        except:
+            pass
 
-    def start_record_track(track: rtc.Track, label: str):
-        tid = track.sid or str(id(track))
-        if tid in recording_tracks:
-            return
-        recording_tracks[tid] = {
-            "frames": [],
-            "first_frame_time": None,
-            "label": label
-        }
-        async def consume():
-            stream = rtc.AudioStream(track)
-            try:
-                async for ev in stream:
-                    if recording_tracks[tid]["first_frame_time"] is None:
-                        recording_tracks[tid]["first_frame_time"] = time.time()
-                    recording_tracks[tid]["frames"].append(bytes(ev.frame.data))
-            except Exception as e:
-                logger.error(f"Record error {label}: {e}")
-            finally:
-                await stream.aclose()
-        recording_tasks.append(asyncio.create_task(consume()))
+    # Ensure call is tracked in Redis (critical for inbound calls that bypass the queue)
+    try:
+        redis_url = os.getenv("REDIS_URL")
+        import redis.asyncio as redis
+
+        r = redis.from_url(redis_url, decode_responses=True)
+        # If it's an inbound call, it won't be in the hash yet.
+        is_tracked = await r.hexists("calls:active", call_id)
+        if not is_tracked:
+            MAX_CONCURRENCY = int(
+                os.getenv("MAX_CONCURRENCY", os.getenv("CARTESIA_MAX_CONCURRENCY", "5"))
+            )
+            active_count = await r.hlen("calls:active")
+            if active_count >= MAX_CONCURRENCY:
+                logger.warning(
+                    f"Capacity full ({active_count}/{MAX_CONCURRENCY}). Rejecting inbound call {call_id}."
+                )
+                await r.aclose()
+                await ctx.room.disconnect()
+                return
+            await r.hset("calls:active", call_id, ctx.room.name)
+            await r.set(f"calls:status:{call_id}", "in_progress_inbound")
+            logger.info(f"Registered inbound call {call_id} in Redis calls:active")
+        await r.aclose()
+    except Exception as e:
+        logger.error(f"Failed to register active call in Redis: {e}")
+
+    # Fully in-memory recorder — no disk I/O
+    recorder = SessionRecorder()
 
     @ctx.room.on("track_subscribed")
-    def on_track_subscribed(track: rtc.Track, publication: rtc.TrackPublication, participant: rtc.RemoteParticipant):
+    def on_track_subscribed(
+        track: rtc.Track,
+        publication: rtc.TrackPublication,
+        participant: rtc.RemoteParticipant,
+    ):
         if track.kind == rtc.TrackKind.KIND_AUDIO:
-            start_record_track(track, f"participant_{participant.identity}")
+            recorder.start_recording(track, f"participant_{participant.identity}")
 
     @ctx.room.on("local_track_published")
-    def on_local_track_published(publication: rtc.LocalTrackPublication, track: rtc.Track):
+    def on_local_track_published(
+        publication: rtc.LocalTrackPublication, track: rtc.Track
+    ):
         if track.kind == rtc.TrackKind.KIND_AUDIO:
-            start_record_track(track, "agent")
+            recorder.start_recording(track, "agent")
 
-    initial_instructions = """You are a warm, professional Care Support Assistant on a phone call.
+    @ctx.room.on("participant_disconnected")
+    def on_participant_disconnected(participant: rtc.RemoteParticipant):
+        call_state["timeline"].append(
+            {
+                "event": "Remote Participant Disconnected",
+                "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+            }
+        )
+        logger.info(
+            f"Participant {participant.identity} disconnected. Force-ending call."
+        )
+        create_bg_task(_force_disconnect_room(ctx))
+
+    initial_instructions = """You are a warm, polite, and empathetic Care Support Assistant on a phone call.
 
 CORE BEHAVIOR:
 - This is a PHONE CALL. Speak naturally.
@@ -295,13 +497,33 @@ CORE BEHAVIOR:
 - If the user pauses, wait patiently for them to finish.
 - ACTIVELY LISTEN: If the user asks a question (e.g., about directions, a bus stand, or any other detail), address it directly and helpfully BEFORE returning to the main topic. Never ignore the user's questions or blindly repeat your script.
 - RETAIN CONTEXT & AVOID REPETITION: Remember the user's previous answers. Do NOT repeatedly ask the same questions. If they say no or want to focus on something else, acknowledge it and move on. DO NOT be pushy.
+- KNOWLEDGE BASE USAGE: If the user asks a factual question or inquires about policies, services, or locations, you MUST use the `search_knowledge_base` tool to find the accurate answer.
 
 TRANSFER CAPABILITY (CRITICAL):
 - You HAVE a function called "transfer_to_human" that transfers the call to a real human agent.
 - When the user asks to speak to a human, you cannot resolve their issue, or they seem frustrated — USE the transfer_to_human function IMMEDIATELY. Do NOT say you cannot transfer. You CAN transfer. Use the function.
 - If the user mentions a specific department (refund, billing, support), pass it as the department parameter. Otherwise use "general".
 - After the function executes, you will be muted. Say nothing. The human takes over.
-- NEVER say "I can't transfer" or "I don't have that capability" — you DO have it. Call the function.
+
+POLITENESS & EMPATHY:
+- Always be polite, courteous, and respectful.
+- Show genuine empathy and understanding. Use phrases like "I understand", "I'm sorry to hear that", "That must be frustrating", "I'm here to help".
+- Be patient and kind, even if the user seems confused or annoyed.
+- Use a warm, caring, and reassuring tone.
+- Never be rude, dismissive, or impatient.
+
+ENDING THE CALL (CRITICAL — YOU MUST FOLLOW THIS):
+- You have a tool called `end_call`. You MUST call this tool to end every call. There is NO other way to hang up.
+- NEVER say goodbye, farewell, or any closing statement WITHOUT FIRST calling the `end_call` tool. Saying "goodbye" or "take care" without calling the tool means the call stays connected forever. This is a critical failure.
+- Call `end_call` IMMEDIATELY when ANY of these happen:
+  * The user says bye, goodbye, thank you, that's all, I'm done, not interested, hang up, disconnect, end the call, or anything similar.
+  * The user explicitly declines or rejects the offer (e.g. "not interested", "no thanks", "I don't need this").
+  * The conversation has reached a natural conclusion and there is nothing left to discuss.
+  * The user is clearly uninterested or disengaged.
+- The CORRECT sequence is: 1) Call `end_call` tool FIRST, 2) THEN say a brief warm goodbye in your response text.
+- Do NOT ask follow-up questions after the user indicates they want to end the call or is not interested.
+- Keep your final goodbye SHORT: "Thank you for your time, Anurag. Take care!" — that's it.
+- REMEMBER: If you find yourself writing a goodbye message, you MUST also call `end_call`. No exceptions.
 
 PRONUNCIATION (CRITICAL):
 - ALWAYS write the brand name as "MantraCare" (as a single word). NEVER write "Mantra Care" with a space.
@@ -320,7 +542,7 @@ Follow these specific instructions:
             if payload.get("direction") == "inbound":
                 is_inbound = True
 
-            
+
             # Normalize client_custom_fileds to client_custom_fields
             if "client_custom_fileds" in payload:
                 ccf = payload.pop("client_custom_fileds")
@@ -337,26 +559,29 @@ Follow these specific instructions:
                         payload["client_custom_fields"] = json.loads(ccf)
                     except Exception:
                         pass
-            
+
             # 1. Handle main prompt
             if "prompt" in payload:
                 # Remove the impatient "not responding" rule which causes repetitive loops
-                clean_prompt = payload["prompt"].replace("If the client is not responding, ask questions like 'hope you are hearing me', etc.", "")
+                clean_prompt = payload["prompt"].replace(
+                    "If the client is not responding, ask questions like 'hope you are hearing me', etc.",
+                    "",
+                )
                 initial_instructions += "\n" + clean_prompt
-            
+
             if "client_name" in payload:
                 client_name = payload["client_name"]
 
             # 2. Extract ALL other features as context for the LLM
             context_header = "\n\n--- ADDITIONAL CALL CONTEXT ---\n"
             context_body = ""
-            
+
             for key, value in payload.items():
                 if key == "prompt":
                     continue
-                
+
                 readable_key = key.replace("_", " ").title()
-                
+
                 if isinstance(value, dict):
                     context_body += f"{readable_key}:\n"
                     for k, v in value.items():
@@ -366,10 +591,10 @@ Follow these specific instructions:
                     context_body += f"- {readable_key}: {', '.join(map(str, value))}\n"
                 else:
                     context_body += f"- {readable_key}: {value}\n"
-            
+
             if context_body:
                 initial_instructions += context_header + context_body
-                
+
             # Add an overriding rule at the very end so it takes precedence over the backend prompt
             initial_instructions += "\n\n*** CRITICAL OVERRIDING RULES ***\n"
             initial_instructions += "1. NEVER repeat the same question twice. If the user dodges the question or asks a counter-question, answer them and DO NOT repeat your previous question.\n"
@@ -377,7 +602,7 @@ Follow these specific instructions:
             initial_instructions += "3. Answer user's questions DIRECTLY without appending a sales pitch or appointment request at the end of every turn.\n"
             initial_instructions += "4. If the user asks to speak to a human, asks to be transferred, or mentions a department — you MUST call the transfer_to_human function IMMEDIATELY. Do NOT keep talking. Call the function.\n"
 
-            
+
             if is_inbound:
                 initial_instructions += "\n--- INBOUND CALL CONTEXT ---\n"
                 initial_instructions += "- This is an INBOUND call. The caller reached out to you.\n"
@@ -387,25 +612,32 @@ Follow these specific instructions:
                 initial_instructions += "- If the caller seems confused, help them understand who you are.\n"
                 
             logger.info(f"Loaded full context for {client_name} (inbound: {is_inbound})")
+
         except Exception as e:
             logger.error(f"Failed to parse metadata: {e}")
 
     # 3. Select LLM and Voice based on payload
-    if 'payload' in locals():
+    if "payload" in locals():
         # Handle nested ai_payload if present
         ai_p = payload.get("ai_payload")
         if not isinstance(ai_p, dict):
             ai_p = {}
-        
+
         # Priority for Model: ai_payload.ai_model -> payload.model -> default "openai"
         model_name = ai_p.get("ai_model") or payload.get("model") or "openai"
         model_name = str(model_name).lower()
-        
+
         # Priority for Voice: ai_payload.voice_id -> payload.voice_id -> voice_name -> voice -> default "arushi"
-        _raw_voice = ai_p.get("voice_id") or payload.get("voice_id") or payload.get("voice_name") or payload.get("voice") or "arushi"
+        _raw_voice = (
+            ai_p.get("voice_id")
+            or payload.get("voice_id")
+            or payload.get("voice_name")
+            or payload.get("voice")
+            or "arushi"
+        )
         voice_input = "arushi" if _raw_voice in (None, "null", "None") else _raw_voice
         voice_id = VOICE_MAPPING.get(str(voice_input).lower(), voice_input)
-        
+
         # Priority for Speed: ai_payload.voice_speed -> payload.voice_speed -> default 1.05
         voice_speed = ai_p.get("voice_speed") or payload.get("voice_speed") or 1
     else:
@@ -441,201 +673,380 @@ Follow these specific instructions:
             llm_engine = openai.LLM(
                 model="deepseek-v4-flash",
                 api_key=deepseek_key,
-                base_url="https://api.deepseek.com"
+                base_url="https://api.deepseek.com",
             )
     else:
         logger.info("Using OpenAI LLM")
         llm_engine = openai.LLM(model="gpt-4o-mini")
-    # Collect Cartesia API keys dynamically from environment variables, pairing each with its account-specific pronunciation dictionary
-    cartesia_configs = []
-    for key_env, dict_env in [
-        ("CARTESIA_API_KEY", "CARTESIA_PRONUNCIATION_DICT_ID"),
-        ("CARTESIA_API_KEY_2", "CARTESIA_PRONUNCIATION_DICT_ID_2"),
-        ("CARTESIA_API_KEY_3", "CARTESIA_PRONUNCIATION_DICT_ID_3")
-    ]:
-        key_val = os.getenv(key_env)
-        dict_val = os.getenv(dict_env)
-        if key_val:
-            if "," in key_val:
-                # If multiple keys are given in a comma-separated string, they share the same dict_id
-                cartesia_configs.extend([{"key": k.strip(), "dict_id": dict_val.strip() if dict_val else None} for k in key_val.split(",") if k.strip()])
-            else:
-                cartesia_configs.append({"key": key_val.strip(), "dict_id": dict_val.strip() if dict_val else None})
-    
-    # If no keys are specified in variables, let it default to standard CARTESIA_API_KEY logic
-    if not cartesia_configs:
-        cartesia_configs = [{"key": None, "dict_id": os.getenv("CARTESIA_PRONUNCIATION_DICT_ID")}]
-
+    # TTS via LiveKit Inference — no separate Cartesia API key needed.
+    # LiveKit Inference authenticates using LIVEKIT_API_KEY + LIVEKIT_API_SECRET.
+    # Voice UUIDs are unchanged — all standard Cartesia voices are supported.
     language = "en"
-        
+
     if language:
         language = str(language).lower()
 
-    # Diagnostic: log the resolved TTS language so we can verify in production
     logger.info(f"TTS Language resolved to: '{language}' (None means auto-detect)")
-    logger.info(f"TTS Pronunciation Dicts: {[cfg['dict_id'] for cfg in cartesia_configs]} ({len(cartesia_configs)} keys)")
+    logger.info("TTS Backend: LiveKit Inference (cartesia/sonic-3)")
+    logger.info(f"TTS Voice: {voice_id} | Speed: {voice_speed}")
 
-    # Setup Fallback TTS using the pool of keys to cycle on rate limits (429) / connection failures
-    tts_pool = [
-        cartesia.TTS(
-            model="sonic-3",
-            voice=voice_id,
-            speed=voice_speed,
-            language=language,
-            api_key=cfg["key"],
-            pronunciation_dict_id=None,
-        )
-        for cfg in cartesia_configs
-    ]
+    tts_engine = inference.TTS(
+        model="cartesia/sonic-3",
+        voice=voice_id,
+        language=language,
+        extra_kwargs={
+            "speed": voice_speed,
+            "emotion": ["calmness:high", "positivity:high"],
+        },
+    )
 
     session = AgentSession(
         turn_handling=TurnHandlingOptions(
             turn_detection=MultilingualModel(),
             endpointing={
                 "mode": "dynamic",
-                "min_delay": 0.3,
-                "max_delay": 1.5,
+                "min_delay": 0.1,
+                "max_delay": 0.35,
             },
             interruption={
                 "mode": "vad",
                 "resume_false_interruption": True,
-                "false_interruption_timeout": 0.8,
-                "min_words": 2,
+                "false_interruption_timeout": 0.5,
+                "min_words": 1,
             },
             preemptive_generation={
                 "preemptive_tts": True,
             },
         ),
         vad=silero.VAD.load(
-            min_speech_duration=0.1,
-            min_silence_duration=0.2,
+            min_speech_duration=0.08,
+            min_silence_duration=0.15,
         ),
         # Using Hindi STT as it's better at catching Hinglish/Indian English
-        stt=deepgram.STT(model="nova-3", language="hi", smart_format=True, numerals=True),
+        stt=deepgram.STT(
+            model="nova-3", language="hi", smart_format=True, numerals=True
+        ),
         llm=llm_engine,
-        # # Using Hindi-Multilingual TTS to support both languages natively
-        # tts=cartesia.TTS(
-        #     model="sonic-3",
-        #     voice=voice_id,
-        #     speed=voice_speed,
-        #     language="hi"
-        # ),
-
-        # Using FallbackAdapter to support multiple API keys
-        tts=FallbackAdapter(tts_pool),
+        tts=tts_engine,
     )
 
-    agent = Agent(
-        instructions=initial_instructions,
-        tools=[fnc_ctx.transfer_to_human]
-    )
+    agent = Agent(instructions=initial_instructions, tools=[fnc_ctx.end_call, fnc_ctx.search_knowledge_base, fnc_ctx.transfer_to_human])
     fnc_ctx.agent = agent
-    logger.info(f"Agent initialized with transfer_to_human tool: {fnc_ctx.transfer_to_human is not None}")
+    fnc_ctx.session = session
+
+    @session.on("agent_state_changed")
+    def on_agent_state(ev):
+        call_state["agent_state"] = ev.new_state
+        if getattr(ev, "old_state", None) == "speaking" and ev.new_state != "speaking":
+            call_state["last_activity"] = asyncio.get_event_loop().time()
+
+    @session.on("user_state_changed")
+    def on_user_state(ev):
+        if ev.new_state == "speaking":
+            call_state["last_activity"] = asyncio.get_event_loop().time()
+            call_state["prompted_inactivity"] = False
+
+    async def inactivity_monitor():
+        logger.info("Inactivity monitor started.")
+        while not call_state.get("user_joined"):
+            await asyncio.sleep(1.0)
+
+        call_state["last_activity"] = asyncio.get_event_loop().time()
+        call_state["prompted_inactivity"] = False
+
+        while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+            await asyncio.sleep(1.0)
+            now = asyncio.get_event_loop().time()
+            agent_state = call_state.get("agent_state", "initializing")
+            last_activity = call_state.get("last_activity", now)
+
+            time_since_activity = now - last_activity
+
+            if agent_state in ["listening", "idle"]:
+                if time_since_activity > 10.0:
+                    # logger.warning(f"{Fore.YELLOW}No response for 10s. Destroying room.{Style.RESET_ALL}")
+                    call_state["timeline"].append(
+                        {
+                            "event": "Inactivity Timeout Disconnect",
+                            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+                        }
+                    )
+                    create_bg_task(_force_disconnect_room(ctx))
+                    break
+                elif time_since_activity > 5.0 and not call_state.get(
+                    "prompted_inactivity", False
+                ):
+                    logger.info("No response for 5s. Prompting user...")
+                    call_state["prompted_inactivity"] = True
+                    try:
+                        session.generate_reply(
+                            user_input="[System: The user has been silent. Briefly ask if they are still there (e.g. 'Are you still there?' or 'Hello?'). Keep it extremely short.]"
+                        )
+                    except RuntimeError as e:
+                        logger.warning(
+                            f"Failed to generate inactivity reply (session may be closing): {e}"
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Unexpected error generating inactivity reply: {e}"
+                        )
+
+    # Safety net: if the LLM says goodbye but forgets to call end_call, force disconnect
+    FAREWELL_PHRASES = [
+        "goodbye",
+        "good bye",
+        "bye bye",
+        "take care",
+        "have a great day",
+        "have a good day",
+        "have a nice day",
+        "thanks for calling",
+        "thank you for calling",
+        "talk to you later",
+        "see you later",
+    ]
+
+    async def farewell_safety_net():
+        """Detect if the agent said goodbye without calling end_call, and force disconnect."""
+        await asyncio.sleep(10.0)  # Let the conversation warm up first
+        while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+            await asyncio.sleep(3.0)
+            if not (session and hasattr(session, "history") and session.history):
+                continue
+            try:
+                messages = list(session.history.messages())
+                if not messages:
+                    continue
+                # Check the last assistant message
+                last_msg = messages[-1]
+                role = getattr(last_msg, "role", "")
+                content = str(getattr(last_msg, "content", "")).lower()
+                if role == "assistant" and any(
+                    phrase in content for phrase in FAREWELL_PHRASES
+                ):
+                    logger.warning(
+                        "Safety net: Agent said goodbye but end_call was never invoked. Force disconnecting."
+                    )
+                    call_state["timeline"].append(
+                        {
+                            "event": "Farewell Safety Net Triggered",
+                            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+                        }
+                    )
+                    await asyncio.sleep(3.0)  # Give TTS time to finish speaking
+                    await _force_disconnect_room(ctx)
+                    break
+            except Exception as e:
+                logger.debug(f"Farewell safety net error: {e}")
 
     # Call duration limiter logic
     async def call_limiter():
         logger.info("Call limiter started — waiting for remote participant to join.")
         try:
-            # Wait for remote participant to join
+            # Wait for remote participant to join before starting the 2m/3m timers
             while not list(ctx.room.remote_participants.values()):
                 await asyncio.sleep(1.0)
 
-            logger.info("Remote participant detected in room. Starting polling loop.")
-            farewell_done = False
+            logger.info("Remote participant detected in room.")
+            elapsed = asyncio.get_event_loop().time() - entrypoint_start_time
+            logger.info(
+                f"Participant joined at t={elapsed:.2f}s. "
+                f"Setting limiter timers: "
+                f"Farewell reply in {max(0.0, 150.0 - elapsed):.2f}s, "
+                f"Hard kill in {max(0.0, 180.0 - elapsed):.2f}s."
+            )
 
-            while True:
-                elapsed = asyncio.get_event_loop().time() - entrypoint_start_time
+            # Event that lets us cancel the force-disconnect if the call ends naturally
+            _force_disconnect_cancelled = asyncio.Event()
 
-                # Check if participants still exist
-                if not ctx.room.remote_participants:
-                    logger.info("No remote participants left — call ended naturally.")
-                    return
-
-                # Determine limits based on handoff state
-                if fnc_ctx.handoff_triggered:
-                    max_duration = 600.0  # 10 minutes when handoff is active
+            async def force_disconnect_timer():
+                try:
+                    disconnect_delay = max(
+                        0.0,
+                        180.0
+                        - (asyncio.get_event_loop().time() - entrypoint_start_time),
+                    )
+                    logger.info(
+                        f"Force-disconnect timer armed: t+{disconnect_delay:.2f}s"
+                    )
+                    await asyncio.wait_for(
+                        _force_disconnect_cancelled.wait(), timeout=disconnect_delay
+                    )
+                except asyncio.TimeoutError:
+                    pass  # Timeout expired — proceed to disconnect
+                except asyncio.CancelledError:
+                    logger.info("Force-disconnect timer cancelled.")
+                    return  # Cancelled — exit cleanly
                 else:
-                    max_duration = 180.0  # 3 minutes normally
+                    logger.info(
+                        "Call ended naturally — force-disconnect timer exiting."
+                    )
+                    return  # Event was set — call ended naturally, exit cleanly
 
-                # Farewell stage: 2m 30s (only if no handoff)
-                if not farewell_done and not fnc_ctx.handoff_triggered and elapsed >= 150.0:
-                    logger.info(f"Farewell stage hit at t={elapsed:.2f}s")
-                    if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
-                        current_inst = agent.instructions
-                        if isinstance(current_inst, str):
-                            farewell_inst = (
-                                "IMPORTANT: The call time is ending now. "
-                                "On your next turn, say a quick, natural one-sentence goodbye "
-                                "and do not continue the conversation. Do not ask questions."
-                            )
-                            await agent.update_instructions(current_inst + "\n\n" + farewell_inst)
-                        logger.info("Farewell instructions set.")
-                    farewell_done = True
+                if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+                    logger.warning(
+                        "HARD DISCONNECT: 3m limit reached. Force disconnecting room."
+                    )
+                    call_state["timeline"].append(
+                        {
+                            "event": "Max Call Duration Reached",
+                            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+                        }
+                    )
+                    await _force_disconnect_room(ctx)
+                else:
+                    logger.info(
+                        "Room already disconnected — force-disconnect skipping."
+                    )
 
-                # Hard disconnect check
-                if elapsed >= max_duration:
-                    logger.warning(f"HARD DISCONNECT: {max_duration/60:.0f}m limit reached. Force disconnecting room.")
-                    if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
-                        await _force_disconnect_room(ctx)
-                    return
+            create_bg_task(force_disconnect_timer())
 
-                await asyncio.sleep(2.0)
+            # Stage 1: 2m 30s mark — update agent instructions for a natural farewell
+            # We do NOT call generate_reply() here, so the agent won't interrupt the user.
+            # The updated instructions are picked up on the agent's next natural turn.
+            stage1_delay = max(
+                0.0, 150.0 - (asyncio.get_event_loop().time() - entrypoint_start_time)
+            )
+            await asyncio.sleep(stage1_delay)
+            elapsed = asyncio.get_event_loop().time() - entrypoint_start_time
+            logger.info(f"Farewell stage hit at t={elapsed:.2f}s")
 
+            if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+                logger.info("Updating agent instructions for farewell.")
+                current_inst = agent.instructions
+                if isinstance(current_inst, str):
+                    farewell_inst = (
+                        "IMPORTANT: The call time is ending now. "
+                        "On your next turn, say a quick, natural one-sentence goodbye "
+                        "and do not continue the conversation. Do not ask questions."
+                    )
+                    await agent.update_instructions(
+                        current_inst + "\n\n" + farewell_inst
+                    )
+                logger.info("Farewell instructions set.")
+
+                try:
+                    logger.info("Waiting for session to become inactive (25s timeout).")
+                    await asyncio.wait_for(session.wait_for_inactive(), timeout=25.0)
+                    logger.info("Session became inactive naturally.")
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Session did not go inactive within 25s — force-disconnect at 3m will handle it."
+                    )
+            else:
+                logger.warning("Room already disconnected — skipping farewell.")
         except asyncio.CancelledError:
             logger.info("Call limiter cancelled (call ended naturally before limits).")
+            try:
+                _force_disconnect_cancelled.set()
+            except Exception:
+                pass
         except Exception as e:
             logger.error(f"Error in call limiter: {e}")
 
     try:
         await session.start(agent=agent, room=ctx.room)
         limiter_task = asyncio.create_task(call_limiter())
+        inactivity_task = asyncio.create_task(inactivity_monitor())
+        safety_net_task = asyncio.create_task(farewell_safety_net())
 
-        # Capture any already-published agent track
-        for pub in ctx.room.local_participant.track_publications.values():
-            if pub.track and pub.track.kind == rtc.TrackKind.KIND_AUDIO:
-                start_record_track(pub.track, "agent")
+        # Check if agent track was already published before we attached the listener
+        for publication in ctx.room.local_participant.track_publications.values():
+            if publication.track and publication.track.kind == rtc.TrackKind.KIND_AUDIO:
+                recorder.start_recording(publication.track, "agent")
+
+        # Check if remote tracks were already subscribed before we attached the listener
+        for participant in ctx.room.remote_participants.values():
+            for publication in participant.track_publications.values():
+                if (
+                    publication.track
+                    and publication.track.kind == rtc.TrackKind.KIND_AUDIO
+                ):
+                    recorder.start_recording(
+                        publication.track, f"participant_{participant.identity}"
+                    )
 
         if ctx.room.name.startswith("test_"):
-            logger.info("Test room detected. Skipping wait for remote participant to initialize synthesis.")
+            logger.info(
+                "Test room detected. Skipping wait for remote participant to initialize synthesis."
+            )
             call_state["user_joined"] = True
         else:
             logger.info("Waiting for remote participant to join...")
+            wait_start = asyncio.get_event_loop().time()
             while not list(ctx.room.remote_participants.values()):
                 await asyncio.sleep(0.5)
-                
+                if asyncio.get_event_loop().time() - wait_start > 60.0:
+                    logger.warning(
+                        "Remote participant did not join within 60 seconds (likely no answer). Disconnecting."
+                    )
+                    await _force_disconnect_room(ctx)
+                    return
+
             logger.info("Remote participant joined. Initializing conversation...")
             call_state["user_joined"] = True
+            call_state["timeline"].append(
+                {
+                    "event": "Remote Participant Joined",
+                    "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+                }
+            )
             await asyncio.sleep(0.5)
-        
-        logger.info(f"Generating greeting for {client_name} (inbound: {is_inbound})...")
-        if is_inbound:
-            session.generate_reply(instructions="Greet the caller warmly. Introduce yourself and ask how you can help them today.")
-        else:
-            session.generate_reply(instructions=f"Greet the user named {client_name} and follow the opening script in your instructions.")
-        logger.info("Greeting generation requested.")
-        
-        @session.on("close")
-        def on_session_close():
-            history_snapshot = list(session.history.messages()) if session.history else []
-            logger.info(f"Session closed — spawning finalize (history: {len(history_snapshot)} messages)")
-        
-        # Wait for the call_limiter to decide the call is done
-        # (participant leaves, timeout reached, or hard disconnect)
-        await limiter_task
-    
+
+        logger.info(f"Generating greeting for {client_name}...")
+        try:
+            session.generate_reply(
+                instructions=f"Greet the user named {client_name} and follow the opening script in your instructions."
+            )
+            logger.info("Greeting generation requested.")
+        except RuntimeError as e:
+            logger.warning(f"Could not generate greeting (session may be closed): {e}")
+
+        # Block until the room connection drops or the session closes
+        while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+            await asyncio.sleep(1.0)
+
     except asyncio.CancelledError:
         logger.info("Call entrypoint coroutine cancelled.")
     except Exception as e:
         logger.error(f"Error in entrypoint execution: {e}", exc_info=True)
+        context_data = {
+            "Room Name": getattr(ctx.room, "name", "N/A"),
+            "Job ID": getattr(ctx.job, "id", "N/A"),
+            "Process ID (PID)": os.getpid(),
+        }
+        try:
+            if ctx.job.metadata:
+                context_data["Job metadata"] = ctx.job.metadata
+        except:
+            pass
+        # Do not block main exception handling logic, the email function handles to_thread internally
+        try:
+            await send_crash_email(
+                service_name="Livekit Voice Agent worker",
+                error=e,
+                context_data=context_data,
+            )
+        except Exception as email_err:
+            logger.error(f"Failed to dispatch crash email: {email_err}")
     finally:
         logger.info("Entering entrypoint finally block (cleaning up and finalizing)...")
-        # 1. Cancel limiter task
-        if 'limiter_task' in locals() and not limiter_task.done():
-            limiter_task.cancel()
-            
+        # 1. Cancel background tasks
+        for task_name in [
+            "limiter_task",
+            "inactivity_task",
+            "goodbye_task",
+            "safety_net_task",
+        ]:
+            task = locals().get(task_name)
+            if task and not task.done():
+                task.cancel()
+
         # 2. Capture history snapshot immediately before session cleans up
-        history_snapshot = list(session.history.messages()) if (session and session.history) else []
-        
+        history_snapshot = (
+            list(session.history.messages()) if (session and session.history) else []
+        )
+
         # 3. Shielded finalization
         async def finalize():
             recording_url = ""
@@ -647,99 +1058,119 @@ Follow these specific instructions:
 
             try:
                 logger.info("Starting post-call processing...")
+                if "timeline" in call_state:
+                    call_state["timeline"].append(
+                        {
+                            "event": "Call Finalization Started",
+                            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+                        }
+                    )
 
                 # 1. Pre-load call metadata
                 try:
-                    call_payload = json.loads(ctx.job.metadata) if ctx.job.metadata else {}
+                    call_payload = (
+                        json.loads(ctx.job.metadata) if ctx.job.metadata else {}
+                    )
                 except Exception as e:
                     logger.error(f"Failed to parse metadata: {e}")
                     call_payload = {}
 
-                # 2. Determine session directory
-                call_id = call_payload.get("call_id") or call_payload.get("voice_id") or "unknown"
-                lead_id = call_payload.get("lead_id") or "unknown"
-                session_dir_name = f"session_{lead_id}_call_{call_id}"
-                session_dir = os.path.join("recordings", session_dir_name)
-                os.makedirs(session_dir, exist_ok=True)
+                # Determine call status based on whether the user joined and actually spoke
+                user_spoke = False
+                for msg in history_snapshot:
+                    role = msg.role.name if hasattr(msg.role, "name") else str(msg.role)
+                    if role.lower() == "user":
+                        user_spoke = True
+                        break
 
-                # 3. Mix and save recording locally
+                call_id = (
+                    call_payload.get("call_id")
+                    or call_payload.get("voice_id")
+                    or ctx.job.id
+                )
+
+                # Always check if there was a SIP-level error in Redis first
+                redis_status = None
                 try:
-                    if recording_tracks:
-                        raw_frames = {}
-                        for tid, track_info in recording_tracks.items():
-                            frames = track_info["frames"]
-                            if not frames:
-                                continue
-                            
-                            joined_bytes = b"".join(frames)
-                            first_time = track_info["first_frame_time"]
-                            if first_time is not None:
-                                offset = first_time - recording_start_time
-                                if offset > 0:
-                                    num_silent_samples = int(offset * 48000)
-                                    padding = b"\x00" * (num_silent_samples * 2)
-                                    joined_bytes = padding + joined_bytes
-                                    logger.info(f"Padded track '{track_info['label']}' with {offset:.2f}s of silence")
-                            
-                            raw_frames[tid] = joined_bytes
+                    redis_url = os.getenv("REDIS_URL")
+                    import redis.asyncio as redis
 
-                        if raw_frames:
-                            import numpy as np
-                            from pydub import AudioSegment
-                            from pydub.silence import detect_nonsilent
+                    r = redis.from_url(redis_url, decode_responses=True)
+                    redis_status = await r.get(f"sip_error_status:{call_id}")
+                    await r.aclose()
+                except Exception as redis_err:
+                    logger.error(
+                        f"Failed to fetch precise SIP status from Redis: {redis_err}"
+                    )
 
-                            arrays = [np.frombuffer(f, dtype=np.int16) for f in raw_frames.values()]
-                            max_len = max(len(a) for a in arrays)
-                            mixed = np.zeros(max_len, dtype=np.float32)
-                            for arr in arrays:
-                                if len(arr) < max_len:
-                                    arr = np.pad(arr, (0, max_len - len(arr)))
-                                mixed += arr.astype(np.float32)
-                            mixed = np.clip(mixed, -32768, 32767).astype(np.int16)
-
-                            audio = AudioSegment(mixed.tobytes(), frame_rate=48000, sample_width=2, channels=1)
-                            nonsilent = detect_nonsilent(audio, min_silence_len=200, silence_thresh=-40, seek_step=10)
-                            if nonsilent and nonsilent[0][0] > 0:
-                                audio = audio[nonsilent[0][0]:]
-
-                            recording_path = os.path.join(session_dir, "recording.mp3")
-                            audio.export(recording_path, format="mp3", bitrate="128k")
-                            recording_url = recording_path
-                            logger.info(f"Recording saved: {recording_path}")
-                        else:
-                            logger.info("No audio data captured")
+                if redis_status:
+                    # If UI server caught a SIP error (Busy/No Answer), trust it completely
+                    call_status = redis_status
+                elif not call_state["user_joined"]:
+                    # Fallback: if it waited less than 25s before terminating, it's Busy/Rejected.
+                    # If it waited more than 25s, it's a No Answer timeout.
+                    elapsed_time = (
+                        asyncio.get_event_loop().time() - entrypoint_start_time
+                    )
+                    if elapsed_time >= 25.0:
+                        call_status = "No Answer"
                     else:
-                        logger.info("No tracks recorded")
-                except Exception as e:
-                    logger.error(f"Recording failed: {e}", exc_info=True)
+                        call_status = "Busy"
+                elif not user_spoke:
+                    call_status = "No Answer"
+                else:
+                    call_status = "Completed"
 
-                # 4. Build transcript from captured history snapshot
+                # 2. Flush recording tasks and build recording
                 try:
-                    handoff_info = {"triggered": fnc_ctx.handoff_triggered}
-                    if fnc_ctx.handoff_triggered:
-                        handoff_info["reason"] = getattr(fnc_ctx, 'last_reason', "")
-                        handoff_info["department"] = getattr(fnc_ctx, 'last_department', "general")
-                    transcript_data = SessionRecorder.build_transcript(list(history_snapshot), handoff_info)
-                    transcript_path = os.path.join(session_dir, "transcript.txt")
-                    with open(transcript_path, "w") as f:
-                        f.write(transcript_data)
-                    logger.info(f"Transcript saved: {transcript_path} ({len(history_snapshot)} messages)")
+                    await recorder.stop_recording()
+                    if call_status == "Completed":
+                        mp3_bytes = recorder.get_combined_mp3_bytes()
+                        if mp3_bytes:
+                            call_id = (
+                                call_payload.get("call_id")
+                                or call_payload.get("voice_id")
+                                or ctx.job.id
+                            )
+                            s3_key = f"recordings/{call_id}.mp3"
+                            loop = asyncio.get_running_loop()
+                            recording_url = (
+                                await loop.run_in_executor(
+                                    None, upload_to_s3, mp3_bytes, s3_key
+                                )
+                                or ""
+                            )
+                            logger.info(
+                                f"S3 recording: {'uploaded' if recording_url else 'upload failed'}"
+                            )
+                        else:
+                            logger.info("No audio data captured for recording")
+                    else:
+                        logger.info(
+                            f"Skipping recording upload because call_status is {call_status}"
+                        )
+                except Exception as e:
+                    logger.error(f"Recording/S3 step failed: {e}", exc_info=True)
+
+                # 3. Build transcript from captured history snapshot
+                try:
+                    transcript_data = SessionRecorder.build_transcript(
+                        list(history_snapshot)
+                    )
+                    logger.info(f"Transcript built ({len(history_snapshot)} messages)")
                 except Exception as e:
                     logger.error(f"Transcript step failed: {e}", exc_info=True)
 
-                # 5. Calculate duration
-                duration = int((datetime.datetime.now() - call_start_time).total_seconds())
-
-                # Determine call status based on whether the user joined
-                if call_state["user_joined"]:
-                    call_status = "Completed"
+                # 4. Calculate duration
+                if hasattr(recorder, "recording_duration_seconds"):
+                    duration = int(recorder.recording_duration_seconds)
                 else:
-                    call_status = "Incomplete"
+                    duration = 0
 
-                # 6. Run unified analysis to generate summary, stage transition, and metadata
+                # 5. Run unified analysis to generate summary, stage transition, and metadata
                 current_stage_id = call_payload.get("stage_id")
                 stage_details = call_payload.get("stageDetails", [])
-                
+
                 summary_text = ""
                 new_stage_id = current_stage_id
                 next_call_on = None
@@ -747,47 +1178,73 @@ Follow these specific instructions:
                 if not isinstance(client_custom_fields, dict):
                     client_custom_fields = {}
 
-                try:
-                    if llm_engine and history_snapshot:
-                        analysis = await SessionRecorder.analyze_call(
-                            llm_engine=llm_engine,
-                            history=list(history_snapshot),
-                            current_stage_id=current_stage_id,
-                            stage_details=stage_details,
-                            duration=duration
+                if call_status in ["Busy", "Incomplete", "No Answer"]:
+                    logger.info(
+                        f"Call status is {call_status}. Skipping LLM analysis and applying 'Not Answering' logic."
+                    )
+                    summary_text = f"Call failed with status: {call_status}. The user did not speak or answer."
+                    duration = 0
+                    not_answering_id = current_stage_id
+                    for stage in stage_details:
+                        desc = stage.get("description", "").lower()
+                        if (
+                            "not answering" in desc
+                            or "failed" in desc
+                            or "incomplete" in desc
+                            or "busy" in desc
+                        ):
+                            not_answering_id = stage.get("stage_id")
+                            break
+                    new_stage_id = not_answering_id
+
+                    # Set next_call_on to 24 hours from now
+                    current_time = datetime.datetime.now()
+                    tomorrow = current_time + datetime.timedelta(hours=24)
+                    next_call_on = tomorrow.strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    try:
+                        if llm_engine and history_snapshot:
+                            analysis = await SessionRecorder.analyze_call(
+                                llm_engine=llm_engine,
+                                history=list(history_snapshot),
+                                current_stage_id=current_stage_id,
+                                stage_details=stage_details,
+                                duration=duration,
+                            )
+                            summary_text = analysis["summary"]
+                            new_stage_id = analysis["new_stage_id"]
+                            next_call_on = analysis["next_call_on"]
+
+                            if analysis.get("appointment_date_time"):
+                                client_custom_fields["appointment_date_time"] = (
+                                    analysis["appointment_date_time"]
+                                )
+                            if analysis.get("doctor"):
+                                client_custom_fields["doctor"] = analysis["doctor"]
+                            if analysis.get("hospital_location"):
+                                client_custom_fields["hospital_location"] = analysis[
+                                    "hospital_location"
+                                ]
+
+                            logger.info(
+                                f"Analysis completed. New Stage ID: {new_stage_id}, Next Call On: {next_call_on}"
+                            )
+                        else:
+                            logger.warning(
+                                "Skipping analysis: LLM or history unavailable after session close"
+                            )
+                    except Exception as e:
+                        logger.error(
+                            f"Analysis or summary generation failed: {e}", exc_info=True
                         )
-                        summary_text = analysis["summary"]
-                        new_stage_id = analysis["new_stage_id"]
-                        next_call_on = analysis["next_call_on"]
-                        
-                        if analysis.get("appointment_date_time"):
-                            client_custom_fields["appointment_date_time"] = analysis["appointment_date_time"]
-                        if analysis.get("doctor"):
-                            client_custom_fields["doctor"] = analysis["doctor"]
-                        if analysis.get("hospital_location"):
-                            client_custom_fields["hospital_location"] = analysis["hospital_location"]
-                        
-                        logger.info(f"Analysis completed. New Stage ID: {new_stage_id}, Next Call On: {next_call_on}")
 
-                        # Save summary locally
-                        try:
-                            summary_path = os.path.join(session_dir, "summary.txt")
-                            with open(summary_path, "w") as f:
-                                f.write(summary_text)
-                            logger.info(f"Summary saved: {summary_path}")
-                        except Exception as e:
-                            logger.error(f"Summary save failed: {e}")
-                    else:
-                        logger.warning("Skipping analysis: LLM or history unavailable after session close")
-                except Exception as e:
-                    logger.error(f"Analysis or summary generation failed: {e}", exc_info=True)
-
-                # 7. Build webhook payload
+                # 6. Build webhook payload
                 webhook_payload = {
                     "event": "CALL_DATA_UPDATE",
                     "data": {
                         "client_id": call_payload.get("lead_id"),
-                        "call_id": call_payload.get("call_id") or call_payload.get("voice_id"),
+                        "call_id": call_payload.get("call_id")
+                        or call_payload.get("voice_id"),
                         "call_status": call_status,
                         "status": call_status,
                         "call_transcript": transcript_data,
@@ -802,49 +1259,66 @@ Follow these specific instructions:
                         "notes": "",
                         "metadata": call_payload.get("metadata", {}),
                         "client_custom_fields": client_custom_fields,
-                        "call_custom_fields": call_payload.get("call_custom_fields", {}),
-                        "client_phone": call_payload.get("client_phone") or call_payload.get("phone"),
+                        "call_custom_fields": call_payload.get(
+                            "call_custom_fields", {}
+                        ),
+                        "client_phone": call_payload.get("client_phone")
+                        or call_payload.get("phone"),
                         "trunk_id": call_payload.get("trunk_id"),
-                        "url": ""
-                    }
+                        "url": "",
+                        "timeline": call_state.get("timeline", []),
+                    },
                 }
-
-                # 8. Save webhook payload locally
-                try:
-                    wh_path = os.path.join(session_dir, "webhook_payload.json")
-                    with open(wh_path, "w") as f:
-                        json.dump(webhook_payload, f, indent=2)
-                    logger.info(f"Webhook payload saved: {wh_path}")
-                except Exception as e:
-                    logger.error(f"Webhook payload save failed: {e}")
 
             except Exception as e:
                 logger.error(f"Pipeline error in finalize: {e}", exc_info=True)
 
-            # 7. Send to MantraAssist backend (skipped if no URL configured)
-            backend_url = os.getenv("MANTRAASSIST_BACKEND_URL", "")
-            if backend_url:
-                try:
-                    if webhook_payload is None:
-                        webhook_payload = {
-                            "event": "CALL_DATA_UPDATE",
-                            "data": {
-                                "ai_call_id": ctx.job.id,
-                                "call_status": "Error",
-                                "status": "Error",
-                                "notes": "Post-call pipeline encountered an error — minimal payload sent",
-                            }
-                        }
+            # 8. Send to MantraAssist backend and save to local DB
+            try:
+                if webhook_payload is None:
+                    webhook_payload = {
+                        "event": "CALL_DATA_UPDATE",
+                        "data": {
+                            "ai_call_id": ctx.job.id,
+                            "call_status": "Error",
+                            "status": "Error",
+                            "notes": "Post-call pipeline encountered an error — minimal payload sent",
+                        },
+                    }
 
-                    logger.info("Delivering post-call webhook to backend...")
-                    logger.info(f"Webhook Payload:\n{json.dumps(webhook_payload)}")
-                    delivered = await send_to_backend(webhook_payload)
-                except Exception as e:
-                    logger.error(f"Webhook delivery failed: {e}", exc_info=True)
-                    delivered = False
-            else:
-                logger.info("MANTRAASSIST_BACKEND_URL not set — skipped backend webhook")
+                # Save to local Postgres DB
+                try:
+                    c_id = webhook_payload.get("data", {}).get("call_id", ctx.job.id)
+                    await save_call_log_to_db(
+                        call_id=str(c_id),
+                        call_log=json.dumps(webhook_payload.get("data", {}), indent=2),
+                        status=call_status,
+                        recording_url=recording_url,
+                    )
+                except Exception as db_err:
+                    logger.error(f"Error calling save_call_log_to_db: {db_err}")
+
+                logger.info("Delivering post-call webhook to backend...")
+                logger.info(f"Webhook Payload:\n{json.dumps(webhook_payload)}")
+                delivered = await send_to_backend(webhook_payload)
+            except Exception as e:
+                logger.error(f"Webhook delivery failed: {e}", exc_info=True)
                 delivered = False
+
+            # 9. Free active call slot in Redis
+            try:
+                call_id = call_payload.get("call_id")
+                if call_id:
+                    redis_url = os.getenv("REDIS_URL")
+                    import redis.asyncio as redis
+
+                    r = redis.from_url(redis_url, decode_responses=True)
+                    await r.hdel("calls:active", call_id)
+                    await r.set(f"calls:status:{call_id}", "completed")
+                    await r.aclose()
+                    logger.info(f"Freed capacity slot for call {call_id} in Redis")
+            except Exception as e:
+                logger.error(f"Failed to free Redis capacity slot: {e}")
 
             logger.info(
                 f"Post-call processing complete | "
@@ -858,35 +1332,53 @@ Follow these specific instructions:
 
         await asyncio.shield(finalize())
 
+
 async def _force_disconnect_room(ctx: JobContext):
     """Delete the room via LiveKit API. Falls back to local disconnect."""
     try:
         lk_api = api.LiveKitAPI(
             url=os.getenv("LIVEKIT_URL"),
             api_key=os.getenv("LIVEKIT_API_KEY"),
-            api_secret=os.getenv("LIVEKIT_API_SECRET")
+            api_secret=os.getenv("LIVEKIT_API_SECRET"),
         )
         await lk_api.room.delete_room(api.DeleteRoomRequest(room=ctx.room.name))
         await lk_api.aclose()
-        logger.info(f"Room {ctx.room.name} deleted via API.")
+        # logger.info(f"{Fore.RED}➖ Room Destroyed via API: {ctx.room.name}{Style.RESET_ALL}")
     except Exception as e:
         logger.error(f"Failed to delete room via API: {e}")
         try:
             await ctx.room.disconnect()
-            logger.info(f"Room {ctx.room.name} disconnected locally.")
+            # logger.info(f"{Fore.RED}➖ Room Disconnected locally: {ctx.room.name}{Style.RESET_ALL}")
         except Exception as e2:
             logger.error(f"Local disconnect also failed: {e2}")
+
 
 def run_agent():
     _is_start_cmd = "start" in sys.argv
     if _is_start_cmd:
         logger.info("Mantra Agent Server is starting...")
-    
+
     try:
         cli.run_app(server)
     except Exception as e:
         logger.error(f"Failed to run agent server: {e}", exc_info=True)
+        try:
+            import asyncio
+
+            asyncio.run(
+                send_crash_email(
+                    service_name="Livekit Voice Agent Worker (Core/Startup)",
+                    error=e,
+                    context_data={
+                        "Status": "Crashloop / Process Death",
+                        "PID": os.getpid(),
+                    },
+                )
+            )
+        except Exception as email_err:
+            logger.error(f"Failed to dispatch core crash email: {email_err}")
         raise
+
 
 if __name__ == "__main__":
     run_agent()
