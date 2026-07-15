@@ -607,6 +607,7 @@ async def test_inbound_call(request: Request):
     })
 
 
+
 @app.post("/api/v1/sip/trunks/inbound")
 async def create_inbound_trunk(request: Request):
     """
