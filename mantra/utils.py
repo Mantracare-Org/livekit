@@ -17,6 +17,7 @@ from livekit import rtc
 from livekit.plugins import openai
 from livekit.agents import llm
 import boto3
+from colorama import Fore, Style
 
 logger = logging.getLogger("mantra.utils")
 
@@ -378,6 +379,7 @@ Provide ONLY the JSON object. Do not include markdown code block syntax or other
             response = await stream.collect()
             
             text = response.text.strip()
+            logger.info(f"{Fore.MAGENTA}=== LLM ANALYSIS RESPONSE ===\n{text}\n============================={Style.RESET_ALL}")
             if text.startswith("```"):
                 first_newline = text.find("\n")
                 if first_newline != -1:
@@ -464,7 +466,7 @@ Provide ONLY the JSON object. Do not include markdown code block syntax or other
 
 
 def normalize_to_iso8601(dt_str: Optional[str]) -> Optional[str]:
-    """Convert 'YYYY-MM-DD HH:MM:SS' to ISO-8601 'YYYY-MM-DDTHH:MM:SS.000Z'.
+    """Convert 'YYYY-MM-DD HH:MM:SS' to ISO-8601 in IST 'YYYY-MM-DDTHH:MM:SS+05:30'.
 
     Returns None if input is None/empty. Passes through unparseable strings unchanged.
     """
@@ -472,6 +474,6 @@ def normalize_to_iso8601(dt_str: Optional[str]) -> Optional[str]:
         return None
     try:
         dt = datetime.datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
-        return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        return dt.strftime("%Y-%m-%dT%H:%M:%S+05:30")
     except (ValueError, TypeError):
         return dt_str
