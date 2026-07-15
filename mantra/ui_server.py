@@ -19,8 +19,6 @@ import base64
 from urllib.parse import urlencode
 from fastapi import HTTPException, File, UploadFile, Form
 from prometheus_fastapi_instrumentator import Instrumentator
-import boto3
-from botocore.exceptions import NoCredentialsError, PartialCredentialsError
 from mantra.email_alerts import send_crash_email
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -382,98 +380,103 @@ async def api_kb_chat(request: Request):
 
 @app.post("/api/v1/kb/ingest")
 async def ingest_kb_data(
-    file: UploadFile = File(...),
     org_id: str = Form(...),
+    file: UploadFile = File(None),
+    text: str = Form(None),
     process_id: str = Form(None),
     stage_id: str = Form(None),
     tags_name: str = Form(None),
-    category_name: str = Form(None)
+    category_name: str = Form(None),
+    document_id: str = Form(None)
 ):
     """
     Ingest endpoint for MantraAssist KB data.
-    Receives a file and metadata, uploads the file to S3 (if credentials exist), 
-    and stores its content via Vectorless FTS in PostgreSQL.
-    
-    The `tags_name` parameter can accept a single tag or a comma-separated 
-    list of tags (e.g. "sales, support"). These are parsed into a JSONB array 
-    and appended to the chunk's `page_meta` for runtime filtering.
+    Receives either a file or text content, and stores it in PostgreSQL.
     """
-    from mantra.knowledge_base import PostgresKnowledgeBase, ingest_file
+    from mantra.knowledge_base import PostgresKnowledgeBase, ingest_file, ingest_text
+
+    if not file and not text:
+        return JSONResponse({"error": "Either file or text must be provided"}, status_code=400)
 
     dsn = (
         f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
         f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
     )
 
-    s3_bucket = os.getenv("AWS_BUCKET_NAME")
-    s3_access_key = os.getenv("AWS_ACCESS_KEY_ID")
-    s3_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
-    s3_region = os.getenv("AWS_REGION", "us-east-1")
-
-    # Upload to S3 if configured
     s3_url = None
-    if s3_bucket and s3_access_key and s3_secret_key:
-        try:
-            s3_client = boto3.client(
-                "s3",
-                aws_access_key_id=s3_access_key,
-                aws_secret_access_key=s3_secret_key,
-                region_name=s3_region
-            )
-            # Create a unique key using timestamp and org_id
-            s3_key = f"kb/{org_id}/{int(time.time())}_{file.filename}"
-            s3_client.upload_fileobj(file.file, s3_bucket, s3_key)
-            # Reset file pointer for the next step
-            await file.seek(0)
-            s3_url = f"https://{s3_bucket}.s3.{s3_region}.amazonaws.com/{s3_key}"
-            logger.info(f"Successfully uploaded {file.filename} to {s3_url}")
-        except (NoCredentialsError, PartialCredentialsError) as e:
-            logger.error(f"S3 credentials error: {e}")
-            return JSONResponse({"error": "S3 configuration error"}, status_code=500)
-        except Exception as e:
-            logger.error(f"S3 upload error: {e}")
-            return JSONResponse({"error": f"Failed to upload to S3: {str(e)}"}, status_code=500)
+    if file and file.filename:
+        s3_bucket = os.getenv("AWS_BUCKET_NAME")
+        s3_access_key = os.getenv("AWS_ACCESS_KEY_ID")
+        s3_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+        s3_region = os.getenv("AWS_REGION", "us-east-1")
+
+        if s3_bucket and s3_access_key and s3_secret_key:
+            try:
+                import boto3
+                import time
+                s3_client = boto3.client(
+                    "s3",
+                    aws_access_key_id=s3_access_key,
+                    aws_secret_access_key=s3_secret_key,
+                    region_name=s3_region
+                )
+                s3_key = f"kb/{org_id}/{int(time.time())}_{file.filename}"
+                s3_client.upload_fileobj(file.file, s3_bucket, s3_key)
+                await file.seek(0)
+                s3_url = f"https://{s3_bucket}.s3.{s3_region}.amazonaws.com/{s3_key}"
+                logger.info(f"Successfully uploaded {file.filename} to {s3_url}")
+            except Exception as e:
+                logger.error(f"S3 upload error: {e}")
+                return JSONResponse({"error": f"Failed to upload to S3: {str(e)}"}, status_code=500)
 
     try:
-        # Read the file contents for PostgreSQL ingestion
-        file_bytes = await file.read()
-        
-        # Parse tags_name into a list if it contains commas
-        parsed_tags = None
-        if tags_name:
-            parsed_tags = [t.strip() for t in tags_name.split(",")] if "," in tags_name else [tags_name.strip()]
+        def parse_list(val):
+            return [v.strip() for v in val.split(",")] if val else None
 
-        # Build the metadata dictionary
         page_meta = {
-            "process_id": process_id,
-            "stage_id": stage_id,
-            "tags_name": parsed_tags,
-            "category_name": category_name,
-            "s3_url": s3_url
+            "process_id": parse_list(process_id),
+            "stage_id": parse_list(stage_id),
+            "tags_name": parse_list(tags_name),
+            "category_name": parse_list(category_name),
+            "s3_url": s3_url,
+            "document_id": document_id
         }
-        # Filter out None values to keep JSONB clean
         page_meta = {k: v for k, v in page_meta.items() if v is not None}
 
-        # Initialize KB and ingest
         kb = PostgresKnowledgeBase(dsn)
-        result = await ingest_file(
-            kb=kb,
-            kb_id=org_id,
-            file_bytes=file_bytes,
-            filename=file.filename,
-            page_meta=page_meta
-        )
+        
+        if file and file.filename:
+            file_bytes = await file.read()
+            await ingest_file(
+                kb=kb,
+                kb_id=org_id,
+                file_bytes=file_bytes,
+                filename=file.filename,
+                page_meta=page_meta
+            )
+        elif text:
+            await ingest_text(
+                kb=kb,
+                kb_id=org_id,
+                content_in_text=text,
+                title=document_id or "Text Ingestion",
+                source_type="text",
+                page_meta=page_meta
+            )
+            
         await kb.close()
         
         return JSONResponse({
             "status": "success",
-            "message": "Data successfully ingested into Knowledge Base and S3.",
-            "details": result
+            "message": "Data successfully ingested.",
+            "document_id": document_id,
+            "org_id": org_id
         })
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
-        logger.error(f"KB ingest error: {e}\\n{traceback.format_exc()}")
+        import traceback
+        logger.error(f"KB ingest error: {e}\n{traceback.format_exc()}")
         return JSONResponse({"error": f"Failed to ingest to DB: {str(e)}"}, status_code=500)
 
 

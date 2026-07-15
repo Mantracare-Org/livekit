@@ -228,7 +228,7 @@ Supported fields: `name`, `metadata`, `attributes`, `trunk_ids`, `rule` (room_pr
 curl -X POST http://localhost:8081/api/v1/test/inbound-call \
   -H "Content-Type: application/json" \
   -d '{
-    "phone": "9711381850",
+    "phone": "1234567890",
     "country_code": "91",
     "trunk_id": "ST_38m9KdLjcPxW",
     "prompt": "You are a healthcare assistant at MantraCare. Greet the caller warmly and ask how you can help.",
