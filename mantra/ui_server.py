@@ -371,7 +371,7 @@ async def api_kb_chat(request: Request):
         ai_message = response.choices[0].message.content
 
         return JSONResponse(
-            {"status": "success", "reply": ai_message, "context": formatted_context}
+            {"status_code": 200, "status": "success", "reply": ai_message, "context": formatted_context}
         )
     except Exception as e:
         logger.error(f"KB Chat error: {e}\\n{traceback.format_exc()}")
@@ -467,6 +467,7 @@ async def ingest_kb_data(
         await kb.close()
         
         return JSONResponse({
+            "status_code": 200,
             "status": "success",
             "message": "Data successfully ingested.",
             "document_id": document_id,
