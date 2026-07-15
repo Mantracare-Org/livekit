@@ -17,7 +17,6 @@ from livekit import rtc
 from livekit.plugins import openai
 from livekit.agents import llm
 import boto3
-from colorama import Fore, Style
 
 logger = logging.getLogger("mantra.utils")
 
@@ -379,7 +378,7 @@ Provide ONLY the JSON object. Do not include markdown code block syntax or other
             response = await stream.collect()
             
             text = response.text.strip()
-            logger.info(f"{Fore.MAGENTA}=== LLM ANALYSIS RESPONSE ===\n{text}\n============================={Style.RESET_ALL}")
+            logger.info(f"=== LLM ANALYSIS RESPONSE ===\n{text}\n=============================")
             if text.startswith("```"):
                 first_newline = text.find("\n")
                 if first_newline != -1:
