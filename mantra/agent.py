@@ -3,6 +3,7 @@ import json
 import asyncio
 import os
 import datetime
+import aiohttp
 from mantra.email_alerts import send_crash_email
 import sys
 
@@ -149,6 +150,48 @@ def get_global_kb() -> PostgresKnowledgeBase:
         )
         _global_kb = PostgresKnowledgeBase(dsn)
     return _global_kb
+
+
+async def resolve_inbound_context(phone_number: str) -> dict | None:
+    """
+    Call MantraAssist backend to resolve inbound call context from the dialed phone number.
+    Returns org_id, kb_id, kb_tags, prompt, voice, model, process_id, transfer_numbers, client_name.
+    Returns None if the backend is unreachable or returns an error.
+    """
+    base_url = os.getenv("MANTRAASSIST_BACKEND_URL", "").rstrip("/")
+    if not base_url:
+        logger.error("MANTRAASSIST_BACKEND_URL not set — cannot resolve inbound call context")
+        return None
+
+    url = f"{base_url}/api/v1/telephony/resolve-inbound-call"
+    logger.info(f"Resolving inbound call context for phone_number={phone_number} via {url}")
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                json={"phone_number": phone_number},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    logger.info(
+                        f"Resolved inbound context: org_id={data.get('org_id')}, "
+                        f"kb_id={data.get('kb_id')}, kb_tags={data.get('kb_tags')}"
+                    )
+                    return data
+                else:
+                    resp_text = await resp.text()
+                    logger.error(
+                        f"MantraAssist resolve-inbound-call returned {resp.status}: {resp_text}"
+                    )
+                    return None
+    except asyncio.TimeoutError:
+        logger.error("MantraAssist resolve-inbound-call timed out (10s)")
+        return None
+    except Exception as e:
+        logger.error(f"Failed to resolve inbound call context: {e}")
+        return None
 
 
 class AssistantFunctions:
@@ -378,32 +421,72 @@ async def entrypoint(ctx: JobContext):
     logger.info(f"Job ID: {ctx.job.id}")
     logger.info(f"Metadata: {ctx.job.metadata}")
 
-    # Initialize function context for handoff
+    # ── Inbound Call Context Resolution ──────────────────────────────────
+    # For inbound calls, we must call MantraAssist to resolve the org context
+    # BEFORE extracting KB scope, so the agent knows which org's KB to search.
     kb_ids_list = []
     kb_tags_list = []
+    resolved_context = None
+
     if ctx.job.metadata:
         try:
             meta_payload = json.loads(ctx.job.metadata)
+
+            # Detect inbound call and resolve context from MantraAssist
+            if meta_payload.get("direction") == "inbound":
+                phone_number = meta_payload.get("phone_number", "")
+                if phone_number:
+                    resolved_context = await resolve_inbound_context(phone_number)
+
+                    if resolved_context is None:
+                        logger.error(
+                            f"Cannot resolve inbound call context for {phone_number}. "
+                            "Rejecting call — MantraAssist is unreachable."
+                        )
+                        try:
+                            await ctx.room.disconnect()
+                        except Exception:
+                            pass
+                        return
+
+                    # Merge resolved data into metadata so downstream code picks it up
+                    # (prompt, voice, model, process_id, client_name, transfer_numbers, org_id, etc.)
+                    meta_payload.update(resolved_context)
+                    logger.info(
+                        f"Merged inbound context into metadata for org_id={resolved_context.get('org_id')}"
+                    )
+                else:
+                    logger.warning("Inbound call has no phone_number in metadata — cannot resolve context")
+
+            # Extract KB scope from (potentially enriched) metadata
+            # org_id is always used as a kb_id (data is ingested with kb_id=org_id)
+            if meta_payload.get("org_id"):
+                kb_ids_list.append(meta_payload["org_id"])
+
+            # If a specific kb_id is also provided, add it for additional scope
             if "kb_id" in meta_payload and meta_payload["kb_id"]:
-                kb_ids_list.append(meta_payload["kb_id"])
+                if meta_payload["kb_id"] not in kb_ids_list:
+                    kb_ids_list.append(meta_payload["kb_id"])
             if "kb_ids" in meta_payload and isinstance(meta_payload["kb_ids"], list):
                 kb_ids_list.extend(meta_payload["kb_ids"])
-            
+
             if "kb_tags" in meta_payload and isinstance(meta_payload["kb_tags"], list):
                 kb_tags_list.extend(meta_payload["kb_tags"])
-                
+
             # Remove duplicates
             kb_ids_list = list(set(kb_ids_list))
             kb_tags_list = list(set(kb_tags_list))
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"Failed to parse/resolve metadata: {e}")
+
+    logger.info(f"KB scope: kb_ids={kb_ids_list}, kb_tags={kb_tags_list}")
 
     fnc_ctx = AssistantFunctions(
-        ctx.job.metadata, 
-        ctx.room.name, 
-        ctx=ctx, 
+        ctx.job.metadata,
+        ctx.room.name,
+        ctx=ctx,
         kb_ids=kb_ids_list,
-        kb_tags=kb_tags_list
+        kb_tags=kb_tags_list,
     )
     call_state = {
         "user_joined": False,
@@ -543,7 +626,11 @@ Follow these specific instructions:
     
     if ctx.job.metadata:
         try:
-            payload = json.loads(ctx.job.metadata)
+            # Use the enriched metadata if inbound context was resolved, otherwise parse fresh
+            if resolved_context is not None:
+                payload = dict(meta_payload)  # Already enriched with MantraAssist data
+            else:
+                payload = json.loads(ctx.job.metadata)
             
             if payload.get("direction") == "inbound":
                 is_inbound = True
