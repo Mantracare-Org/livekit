@@ -17,7 +17,7 @@
 - **Multilingual Turn Detector** — Turn detection
 
 ## Infrastructure
-- **PostgreSQL** — Call log storage
+- **PostgreSQL** — Call log storage + KB (Full-Text Search via `tsvector`)
 - **Redis >=8.0** — Queue, state, capacity
 - **AWS S3** — Recording storage
 - **LiveKit Cloud** — WebRTC + SIP

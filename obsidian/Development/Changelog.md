@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-07-16
+
+- **feat:** Added local inbound mappings fallback — `inbound_mappings.json` for testing KB + inbound call integration without the external MantraAssist backend
+  - `resolve_inbound_context()` now falls back to local JSON config when the backend is unreachable
+  - Set `LOCAL_INBOUND_MAPPINGS=1` env var to skip backend entirely and use local mappings only
+- **doc:** Synced Obsidian vault with actual codebase state after KB audit
+  - `Features/Knowledge Base.md` — Corrected from "pgvector + upfront prompt injection" to "PostgreSQL FTS + function tool RAG"; added known gaps, tag filtering docs, and accurate schema
+  - `Architecture/Components.md` — Fixed line counts (agent.py: 1513, ui_server.py: 2143), added KB module section
+  - `Architecture/Data Flow.md` — Added KB context resolution steps to inbound call flow
+  - `Context/Repository Map.md` — Fixed line counts, added `knowledge_base.py` and `retriever.py`
+  - `Context/Stack.md` — Updated PostgreSQL description to include KB FTS
+  - `Home.md` — Fixed stats (7 modules, 6,206 total lines)
+
 ## 2026-07-03
 
 - **feat:** Knowledge Base: Implemented absolute override 5-rule framework to force agent to answer factual questions directly (overriding strict prompt constraints like "never give advice")

@@ -6,6 +6,8 @@
 - [ ] Add automated tests (pytest for utils, integration test for call flow)
 - [ ] Add input validation to all webhook endpoints
 - [ ] Implement Redis Pub/Sub for dispatcher (replace 0.5s polling)
+- [ ] **KB: Implement vector/embedding search** — Add `pgvector` extension, OpenAI embedding generation, hybrid search fallback
+- [ ] **KB: Add upfront prompt injection mode** — For small KBs, inject content into system prompt for zero-latency access
 
 ## Medium Priority
 

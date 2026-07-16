@@ -1,8 +1,8 @@
 """
-Vector Knowledge Base for LKT Voice Agent.
+Knowledge Base for LKT Voice Agent.
 
-PostgreSQL + pgvector with OpenAI embeddings.
-Multi-KB isolation via kb_id column filtering.
+PostgreSQL Full-Text Search (tsvector) with multi-KB isolation via kb_id column filtering.
+Supports tag-based sub-scoping via JSONB tags_name in page_meta.
 """
 
 import json
@@ -92,7 +92,7 @@ class KnowledgeBase(ABC):
 
 
 class PostgresKnowledgeBase(KnowledgeBase):
-    """PostgreSQL implementation with pgvector."""
+    """PostgreSQL implementation with Full-Text Search (tsvector)."""
 
     def __init__(self, dsn: str):
         self.dsn = dsn
