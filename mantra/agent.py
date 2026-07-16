@@ -1243,12 +1243,15 @@ Follow these specific instructions:
                 else:
                     try:
                         if llm_engine and history_snapshot:
+                            client_country_code = call_payload.get("client_country_code") or call_payload.get("country_code", "")
+                            
                             analysis = await SessionRecorder.analyze_call(
                                 llm_engine=llm_engine,
                                 history=list(history_snapshot),
                                 current_stage_id=current_stage_id,
                                 stage_details=stage_details,
                                 duration=duration,
+                                client_country_code=client_country_code,
                             )
                             summary_text = analysis["summary"]
                             new_stage_id = analysis["new_stage_id"]

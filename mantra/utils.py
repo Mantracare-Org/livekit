@@ -325,6 +325,7 @@ class SessionRecorder:
         current_stage_id: Optional[int],
         stage_details: List[dict],
         duration: int,
+        client_country_code: str = "",
     ) -> dict:
         # Fallback values
         fallback_stage_id = current_stage_id
@@ -371,9 +372,10 @@ class SessionRecorder:
 You are an expert analyst for a care support and CRM system. Analyze the phone call transcript and metadata below.
 
 --- CALL METADATA ---
-Current Date and Time: {current_time_str}
+Current Date and Time (Server Time - IST): {current_time_str}
 Call Duration: {duration} seconds
 Current Stage ID: {current_stage_id}
+Client Country Code: {client_country_code}
 
 --- AVAILABLE CRM STAGES ---
 {json.dumps(stage_details, indent=2)}
@@ -395,8 +397,9 @@ Current Stage ID: {current_stage_id}
    - If the patient is not interested or declined, select the stage for "not interested" or the specific declining reason stage.
    - If none of the stages match or the call did not change the state, default to the current stage ID: {current_stage_id}.
 3. Extract additional metadata:
-   - `next_call_on`: If a follow-up or callback is scheduled/needed (especially if stage is "follow up or call later" or "not answering / failed call"), suggest a callback date and time (e.g., "2026-06-02 15:00:00"). If the stage description specifies adding 24 hours to the current time, calculate that date and time (current time is {current_time_str}). If no follow-up is needed, use null.
-   - `appointment_date_time`: If the patient booked/confirmed an appointment date/time, extract it (e.g., "2026-06-05 11:30 AM"). Otherwise, use null.
+   - CRITICAL TIMEZONE INSTRUCTION: If the client discusses times (e.g., 'tomorrow at 3 PM'), interpret them in the client's local timezone based on their Client Country Code '{client_country_code}'. HOWEVER, you MUST convert the final output times for `next_call_on` and `appointment_date_time` into Indian Standard Time (IST, UTC+5:30) in 'YYYY-MM-DD HH:MM:SS' format.
+   - `next_call_on`: If a follow-up or callback is scheduled/needed, calculate the exact date and time in IST (e.g., "2026-06-02 15:00:00"). If the stage description specifies adding 24 hours to the current time, add 24 hours to {current_time_str}. If no follow-up is needed, use null.
+   - `appointment_date_time`: If the patient booked/confirmed an appointment, extract the date/time and convert to IST (e.g., "2026-06-05 11:30:00"). Otherwise, use null.
    - `doctor`: Extract any mentioned doctor's name. Otherwise, use null.
    - `hospital_location`: Extract the preferred hospital location/center name. Otherwise, use null.
    - `sentiment_score`: Rate the user's sentiment from 0.0 (very negative/angry) to 1.0 (very positive/happy), with 0.5 as neutral.
