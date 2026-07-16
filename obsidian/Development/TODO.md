@@ -22,3 +22,11 @@
 - [ ] Create admin user management (currently single hashed user)
 - [ ] Add Prometheus metrics endpoint
 - [ ] Replace hardcoded `FAREWELL_PHRASES` with configurable list
+
+## Completed
+
+- [x] Remove colorama dependency (plain logging.Formatter) — 2026-07
+- [x] Migrate all timestamps to IST (+05:30) — 2026-07
+- [x] Add `previous_stage_id` to call state logging — 2026-07
+- [x] Null-safe stage tracking (None init + filter) — 2026-07
+- [x] Add DB connection timeout + dashboard error handling — 2026-07

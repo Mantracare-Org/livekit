@@ -1,9 +1,9 @@
 # Mantra Voice Agent — Knowledge Base
 
-> **Version:** 0.1.0  
+> **Version:** 0.2.0  
 > **Package:** `livekit-agent`  
 > **Repository:** `git@github.com:FardeenSK004/livekit.git` (fork of Mantracare-Org/livekit)  
-> **Last Updated:** 2026-06-30
+> **Last Updated:** 2026-07-16
 
 ---
 
@@ -43,14 +43,15 @@ Telephony Provider → Webhook → FastAPI → Redis Queue → Dispatcher → Li
 | Python modules | 6 (`mantra/`) |
 | Frontend files | 5 (`static/`) |
 | MCP server | 1 (`mcp/server.py`) |
-| Total source lines | ~4,724 |
-| Core agent file | `mantra/agent.py` — 995 lines |
-| API server file | `mantra/ui_server.py` — 933 lines |
+| Total source lines | ~4,644 |
+| Core agent file | `mantra/agent.py` — 1,032 lines |
+| API server file | `mantra/ui_server.py` — 991 lines |
 
 ---
 
 ## Recent Changelog
 
+- **2026-07-16:** Migrated timestamps to IST (+05:30), removed colorama dependency, added `previous_stage_id` to call state, DB connection timeout
 - **2026-06-30:** Cartesia TTS migrated to LiveKit Inference, removed redundant API key management, added env var fallbacks for MAX_CONCURRENCY
 - **2026-06:** Dynamic tone/style configurations for agent prompts, emotional tone optimization for Cartesia
 - **2026-05:** `end_call` tool with graceful disconnect, automated crash email notifications, webhook-based call log storage

@@ -8,9 +8,9 @@ Modular, asynchronous, multi-process architecture based on Python `asyncio`.
 
 | Process | File | Role |
 |---------|------|------|
-| Agent Worker | `mantra/agent.py` (995 lines) | Connects to LiveKit rooms, handles real-time STT→LLM→TTS voice pipeline |
+| Agent Worker | `mantra/agent.py` (1,032 lines) | Connects to LiveKit rooms, handles real-time STT→LLM→TTS voice pipeline |
 | Dispatcher | `mantra/dispatcher.py` (172 lines) | Background loop: pops Redis queue → checks capacity → dispatches to LiveKit |
-| UI/API Server | `mantra/ui_server.py` (933 lines) | FastAPI HTTP server: webhooks, SIP trunk management, static files, dashboard APIs |
+| UI/API Server | `mantra/ui_server.py` (991 lines) | FastAPI HTTP server: webhooks, SIP trunk management, static files, dashboard APIs |
 | MCP Server | `mcp/server.py` (177 lines) | Model Context Protocol server exposing PostgreSQL tools |
 
 ## System Diagram
