@@ -71,18 +71,6 @@ class KnowledgeBase(ABC):
         """Delete all pages for a specific document. Returns count."""
         pass
 
-    @abstractmethod
-
-    async def delete_by_document(self, kb_id: str, document_id: str) -> int:
-        pool = await self._get_pool()
-        async with pool.acquire() as conn:
-            result = await conn.execute(
-                "DELETE FROM kb_pages WHERE kb_id = $1 AND page_meta->>'document_id' = $2",
-                kb_id,
-                document_id,
-            )
-            return int(result.split()[-1]) if result.startswith("DELETE") else 0
-
     async def close(self):
         """Close connections."""
         pass
@@ -105,6 +93,24 @@ class PostgresKnowledgeBase(KnowledgeBase):
 
     async def add_page(self, page: KnowledgePage) -> str:
         pool = await self._get_pool()
+
+        # Clean null bytes from strings to prevent asyncpg.exceptions.CharacterNotInRepertoireError
+        def clean_val(val):
+            if isinstance(val, str):
+                return val.replace("\x00", "")
+            elif isinstance(val, dict):
+                return {k: clean_val(v) for k, v in val.items()}
+            elif isinstance(val, list):
+                return [clean_val(v) for v in val]
+            return val
+
+        kb_id = clean_val(page.kb_id)
+        title = clean_val(page.title)
+        content = clean_val(page.content)
+        source_type = clean_val(page.source_type)
+        content_in_text = clean_val(page.content_in_text)
+        page_meta = clean_val(page.page_meta)
+
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
@@ -113,12 +119,12 @@ class PostgresKnowledgeBase(KnowledgeBase):
                 RETURNING id
             """,
                 uuid.UUID(page.id),
-                page.kb_id,
-                page.title,
-                page.content,
-                page.source_type,
-                json.dumps(page.page_meta),
-                page.content_in_text,
+                kb_id,
+                title,
+                content,
+                source_type,
+                json.dumps(page_meta),
+                content_in_text,
             )
             return str(row["id"])
 
@@ -191,8 +197,8 @@ class PostgresKnowledgeBase(KnowledgeBase):
         async with pool.acquire() as conn:
             result = await conn.execute(
                 "DELETE FROM kb_pages WHERE kb_id = $1 AND page_meta->>'document_id' = $2",
-                kb_id,
-                document_id,
+                kb_id.replace("\x00", ""),
+                document_id.replace("\x00", ""),
             )
             return int(result.split()[-1]) if result.startswith("DELETE") else 0
 

@@ -393,10 +393,19 @@ async def ingest_kb_data(
     Ingest endpoint for MantraAssist KB data.
     Receives either a file or text content, and stores it in PostgreSQL.
     """
+    logger.info(
+        f"Received KB Ingest Request - org_id: '{org_id}', "
+        f"filename: '{file.filename if file else 'None'}', "
+        f"has_text: {text is not None}, "
+        f"text_preview: {repr(text[:100]) if text else 'None'}, "
+        f"process_id: '{process_id}', stage_id: '{stage_id}', "
+        f"tags_name: '{tags_name}', category_name: '{category_name}', "
+        f"document_id: '{document_id}'"
+    )
     from mantra.knowledge_base import PostgresKnowledgeBase, ingest_file, ingest_text
 
     if not file and not text:
-        return JSONResponse({"error": "Either file or text must be provided"}, status_code=400)
+        return JSONResponse({"status_code": 400, "status": "error", "error": "Either file or text must be provided"}, status_code=400)
 
     dsn = (
         f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
@@ -405,7 +414,7 @@ async def ingest_kb_data(
 
     s3_url = None
     if file and file.filename:
-        s3_bucket = os.getenv("AWS_BUCKET_NAME")
+        s3_bucket = os.getenv("AWS_S3_BUCKET_NAME") or os.getenv("AWS_BUCKET_NAME")
         s3_access_key = os.getenv("AWS_ACCESS_KEY_ID")
         s3_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
         s3_region = os.getenv("AWS_REGION", "us-east-1")
@@ -414,6 +423,8 @@ async def ingest_kb_data(
             try:
                 import boto3
                 import time
+                file_bytes_for_s3 = await file.read()
+                await file.seek(0)
                 s3_client = boto3.client(
                     "s3",
                     aws_access_key_id=s3_access_key,
@@ -421,13 +432,19 @@ async def ingest_kb_data(
                     region_name=s3_region
                 )
                 s3_key = f"kb/{org_id}/{int(time.time())}_{file.filename}"
-                s3_client.upload_fileobj(file.file, s3_bucket, s3_key)
-                await file.seek(0)
+                s3_client.put_object(
+                    Bucket=s3_bucket,
+                    Key=s3_key,
+                    Body=file_bytes_for_s3,
+                    ACL="public-read",
+                )
                 s3_url = f"https://{s3_bucket}.s3.{s3_region}.amazonaws.com/{s3_key}"
-                logger.info(f"Successfully uploaded {file.filename} to {s3_url}")
+                logger.info(f"Uploaded {file.filename} to S3: {s3_url}")
             except Exception as e:
                 logger.error(f"S3 upload error: {e}")
-                return JSONResponse({"error": f"Failed to upload to S3: {str(e)}"}, status_code=500)
+                return JSONResponse({"status_code": 500, "status": "error", "error": f"Failed to upload to S3: {str(e)}"}, status_code=500)
+        else:
+            logger.warning("S3 upload skipped — missing AWS_S3_BUCKET_NAME or credentials")
 
     try:
         def parse_list(val):
@@ -449,8 +466,7 @@ async def ingest_kb_data(
         if document_id:
             try:
                 deleted_count = await kb.delete_by_document(org_id, document_id)
-                if deleted_count > 0:
-                    logger.info(f"Deleted {deleted_count} old chunks for document {document_id}")
+                logger.info(f"Deleted {deleted_count} old chunks for document {document_id}")
             except Exception as e:
                 logger.error(f"Failed to delete old chunks for document {document_id}: {e}")
         
@@ -480,14 +496,15 @@ async def ingest_kb_data(
             "status": "success",
             "message": "Data successfully ingested.",
             "document_id": document_id,
-            "org_id": org_id
+            "org_id": org_id,
+            "s3_url": s3_url
         })
     except ValueError as e:
-        return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse({"status_code": 400, "status": "error", "error": str(e)}, status_code=400)
     except Exception as e:
         import traceback
         logger.error(f"KB ingest error: {e}\n{traceback.format_exc()}")
-        return JSONResponse({"error": f"Failed to ingest to DB: {str(e)}"}, status_code=500)
+        return JSONResponse({"status_code": 500, "status": "error", "error": f"Failed to ingest to DB: {str(e)}"}, status_code=500)
 
 
 @app.delete("/api/v1/kb/document")
@@ -497,7 +514,7 @@ async def delete_kb_document(
 ):
     """Delete all KB chunks associated with a specific document_id."""
     if not org_id or not document_id:
-        return JSONResponse({"error": "org_id and document_id are required"}, status_code=400)
+        return JSONResponse({"status_code": 400, "status": "error", "error": "org_id and document_id are required"}, status_code=400)
 
     from mantra.knowledge_base import PostgresKnowledgeBase
     dsn = (
@@ -521,7 +538,7 @@ async def delete_kb_document(
     except Exception as e:
         import traceback
         logger.error(f"KB document delete error: {e}\n{traceback.format_exc()}")
-        return JSONResponse({"error": f"Failed to delete document: {str(e)}"}, status_code=500)
+        return JSONResponse({"status_code": 500, "status": "error", "error": f"Failed to delete document: {str(e)}"}, status_code=500)
 
 @app.post("/dispatch-test")
 async def dispatch_test(request: Request):
@@ -730,7 +747,7 @@ async def delete_sip_inbound_trunk(trunk_id: str):
     Delete a SIP Inbound Trunk by its ID.
     """
     if not trunk_id:
-        return JSONResponse({"error": "Trunk ID is required"}, status_code=400)
+        return JSONResponse({"status_code": 400, "status": "error", "error": "Trunk ID is required"}, status_code=400)
     
     try:
         await lk_client.sip.delete_trunk(
@@ -739,12 +756,13 @@ async def delete_sip_inbound_trunk(trunk_id: str):
         logger.info(f"Successfully deleted SIP Inbound Trunk: {trunk_id}")
         
         return JSONResponse({
+            "status_code": 200,
             "status": "success",
             "message": f"SIP inbound trunk {trunk_id} deleted successfully"
         })
     except Exception as e:
         logger.error(f"Failed to delete SIP inbound trunk {trunk_id}: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"status_code": 500, "status": "error", "error": str(e)}, status_code=500)
 
 
 @app.post("/api/v1/sip/dispatch-rules")
@@ -845,7 +863,7 @@ async def delete_dispatch_rule(rule_id: str):
     Delete a SIP Dispatch Rule by its ID.
     """
     if not rule_id:
-        return JSONResponse({"error": "Rule ID is required"}, status_code=400)
+        return JSONResponse({"status_code": 400, "status": "error", "error": "Rule ID is required"}, status_code=400)
     
     try:
         await lk_client.sip.delete_dispatch_rule(
@@ -854,12 +872,13 @@ async def delete_dispatch_rule(rule_id: str):
         logger.info(f"Successfully deleted SIP Dispatch Rule: {rule_id}")
         
         return JSONResponse({
+            "status_code": 200,
             "status": "success",
             "message": f"SIP dispatch rule {rule_id} deleted successfully"
         })
     except Exception as e:
         logger.error(f"Failed to delete dispatch rule {rule_id}: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"status_code": 500, "status": "error", "error": str(e)}, status_code=500)
 
 
 
@@ -989,11 +1008,11 @@ async def setup_inbound_sip(request: Request):
     try:
         payload = await request.json()
     except Exception:
-        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
-        
+        return JSONResponse({"status_code": 400, "status": "error", "error": "Invalid JSON"}, status_code=400)
+    
     number = payload.get("number")
     if not number:
-        return JSONResponse({"error": "number is required"}, status_code=400)
+        return JSONResponse({"status_code": 400, "status": "error", "error": "number is required"}, status_code=400)
         
     name = payload.get("name", f"Inbound {number}")
     prompt = payload.get("prompt", "You are a helpful voice assistant.")
@@ -1003,75 +1022,132 @@ async def setup_inbound_sip(request: Request):
     logger.info(f"Starting end-to-end SIP setup for number: {number}")
     
     try:
-        # 1. Create Inbound Trunk
-        # Add both exact number and + stripped number so LiveKit definitely matches the To header
+        # 1. Check for existing inbound trunk with this number
         clean_number = number.replace("+", "")
-        trunk = await lk_client.sip.create_sip_inbound_trunk(
-            api.CreateSIPInboundTrunkRequest(
-                trunk=api.SIPInboundTrunkInfo(
-                    name=name,
-                    numbers=[number, clean_number],
-                )
-            )
-        )
-        trunk_id = trunk.sip_trunk_id
-        logger.info(f"Created LiveKit SIP Inbound Trunk: {trunk_id}")
-        
-        # 2. Create Dispatch Rule
-        # We inject direction=inbound and the given prompt/voice into metadata
-        room_prefix = f"inbound_{trunk_id[-6:]}"
-        metadata_dict = {
-            "direction": "inbound",
-            "prompt": prompt,
-            "voice": voice,
-            "model": model,
-            "phone_number": number
-        }
-        
-        rule_req = api.CreateSIPDispatchRuleRequest(
-            name=f"Rule for {name}",
-            metadata=json.dumps(metadata_dict),
-            rule=api.SIPDispatchRule(
-                dispatch_rule_individual=api.SIPDispatchRuleIndividual(
-                    room_prefix=room_prefix
-                )
-            ),
-            room_config=api.RoomConfiguration(
-                empty_timeout=300,
-                departure_timeout=60,
-                agents=[
-                    api.RoomAgentDispatch(
-                        agent_name="mantra-agent",
-                        metadata=json.dumps(metadata_dict)
+        existing_trunk_id = None
+        try:
+            response = await lk_client.sip.list_inbound_trunk(api.ListSIPInboundTrunkRequest())
+            for item in response.items:
+                trunk_numbers = list(item.numbers)
+                if number in trunk_numbers or clean_number in trunk_numbers:
+                    existing_trunk_id = item.sip_trunk_id
+                    logger.info(f"Found existing inbound trunk {existing_trunk_id} for number {number}")
+                    break
+        except Exception as e:
+            logger.warning(f"Could not list existing trunks: {e}")
+            
+            # Check for existing dispatch rule for this trunk
+            existing_rule_id = None
+            if existing_trunk_id:
+                try:
+                    rule_response = await lk_client.sip.list_dispatch_rule(api.ListSIPDispatchRuleRequest())
+                    for item in rule_response.items:
+                        if existing_trunk_id in list(item.trunk_ids):
+                            existing_rule_id = item.sip_dispatch_rule_id
+                            logger.info(f"Found existing dispatch rule {existing_rule_id} for trunk {existing_trunk_id}")
+                            break
+                except Exception as e:
+                    logger.warning(f"Could not list dispatch rules: {e}")
+            
+            # If number already fully configured, return clear error to MantraAssist
+            if existing_trunk_id and existing_rule_id:
+                return JSONResponse({
+                    "status_code": 409,
+                    "status": "error",
+                    "error": "number_already_configured",
+                    "message": f"Phone number {number} is already configured with trunk {existing_trunk_id} and dispatch rule {existing_rule_id}. Please use the existing configuration or delete it first.",
+                    "existing_trunk_id": existing_trunk_id,
+                    "existing_dispatch_rule_id": existing_rule_id
+                }, status_code=409)
+            
+            # 2. Create Inbound Trunk (or reuse existing)
+            if existing_trunk_id:
+                trunk_id = existing_trunk_id
+                logger.info(f"Reusing existing LiveKit SIP Inbound Trunk: {trunk_id}")
+            else:
+                trunk = await lk_client.sip.create_sip_inbound_trunk(
+                    api.CreateSIPInboundTrunkRequest(
+                        trunk=api.SIPInboundTrunkInfo(
+                            name=name,
+                            numbers=[number, clean_number],
+                        )
                     )
-                ]
-            ),
-            trunk_ids=[trunk_id]
-        )
-        
-        rule = await lk_client.sip.create_sip_dispatch_rule(rule_req)
-        rule_id = rule.sip_dispatch_rule_id
-        logger.info(f"Created LiveKit SIP Dispatch Rule: {rule_id}")
-        
-        # 3. Generate SIP URI
-        sip_domain = _get_sip_domain()
-        # Use the clean_number so that Zadarma sends the INVITE with To: <clean_number>@<sip_domain>
-        # This allows LiveKit to correctly match the inbound SIP trunk which has this number in its numbers array.
-        sip_uri = f"sip:{clean_number}@{sip_domain}"
-        
-        # 4. Update Zadarma
-        logger.info(f"Updating Zadarma SIP ID for {number} to {sip_uri}")
-        zadarma_response = await _update_zadarma_sip_forwarding(number, sip_uri)
-        
-        return JSONResponse({
-            "status": "success",
-            "name": name,
-            "sip_trunk_id": trunk_id,
-            "sip_dispatch_rule_id": rule_id,
-            "sip_uri": sip_uri,
-            "zadarma_response": zadarma_response
-        })
-        
+                )
+                trunk_id = trunk.sip_trunk_id
+                logger.info(f"Created LiveKit SIP Inbound Trunk: {trunk_id}")
+            
+            # 3. Create Dispatch Rule (or reuse if trunk existed but no rule)
+            if existing_rule_id:
+                rule_id = existing_rule_id
+                logger.info(f"Reusing existing LiveKit SIP Dispatch Rule: {rule_id}")
+            else:
+                # We inject direction=inbound and the given prompt/voice into metadata
+                room_prefix = f"inbound_{trunk_id[-6:]}"
+                metadata_dict = {
+                    "direction": "inbound",
+                    "prompt": prompt,
+                    "voice": voice,
+                    "model": model,
+                    "phone_number": number
+                }
+                
+                rule_req = api.CreateSIPDispatchRuleRequest(
+                    name=f"Rule for {name}",
+                    metadata=json.dumps(metadata_dict),
+                    rule=api.SIPDispatchRule(
+                        dispatch_rule_individual=api.SIPDispatchRuleIndividual(
+                            room_prefix=room_prefix
+                        )
+                    ),
+                    room_config=api.RoomConfiguration(
+                        empty_timeout=300,
+                        departure_timeout=60,
+                        agents=[
+                            api.RoomAgentDispatch(
+                                agent_name="mantra-agent",
+                                metadata=json.dumps(metadata_dict)
+                            )
+                        ]
+                    ),
+                    trunk_ids=[trunk_id]
+                )
+                
+                rule = await lk_client.sip.create_sip_dispatch_rule(rule_req)
+                rule_id = rule.sip_dispatch_rule_id
+                logger.info(f"Created LiveKit SIP Dispatch Rule: {rule_id}")
+            
+            # 4. Generate SIP URI
+            sip_domain = _get_sip_domain()
+            # Use the clean_number so that Zadarma sends the INVITE with To: <clean_number>@<sip_domain>
+            # This allows LiveKit to correctly match the inbound SIP trunk which has this number in its numbers array.
+            sip_uri = f"sip:{clean_number}@{sip_domain}"
+            
+            # 5. Update Zadarma
+            logger.info(f"Updating Zadarma SIP ID for {number} to {sip_uri}")
+            try:
+                zadarma_response = await _update_zadarma_sip_forwarding(number, sip_uri)
+            except Exception as e:
+                # If Zadarma fails (e.g., number not in Zadarma account), return clear error
+                return JSONResponse({
+                    "status_code": 400,
+                    "status": "error",
+                    "error": "zadarma_configuration_failed",
+                    "message": f"Failed to configure Zadarma for {number}: {str(e)}. Ensure the number exists in your Zadarma account.",
+                    "sip_trunk_id": trunk_id,
+                    "sip_dispatch_rule_id": rule_id,
+                    "sip_uri": sip_uri
+                }, status_code=400)
+            
+            return JSONResponse({
+                "status_code": 200,
+                "status": "success",
+                "name": name,
+                "sip_trunk_id": trunk_id,
+                "sip_dispatch_rule_id": rule_id,
+                "sip_uri": sip_uri,
+                "zadarma_response": zadarma_response
+            })
+            
     except Exception as e:
         logger.error(f"Error during SIP setup: {str(e)}")
         logger.error(traceback.format_exc())
@@ -1828,7 +1904,7 @@ async def dashboard_metrics(request: Request):
                         AVG(
                             CAST(NULLIF(call_log::json ->> 'call_duration_seconds', '') AS integer)
                         ) FILTER (
-                            WHERE call_log::json ->> 'call_duration_seconds' ~ '^\d+$'
+                            WHERE call_log::json ->> 'call_duration_seconds' ~ '^\\d+$'
                         )
                     )::int AS avg_duration_seconds
                 FROM call_logs
