@@ -152,7 +152,46 @@ def get_global_kb() -> PostgresKnowledgeBase:
     return _global_kb
 
 
-async def resolve_inbound_context(phone_number: str) -> dict | None:
+async def _resolve_from_db(phone_number: str) -> dict | None:
+    """
+    Look up inbound call context from the PostgreSQL org_configs table.
+    """
+    try:
+        clean_number = phone_number.replace("+", "")
+        kb = get_global_kb()
+        pool = await kb._get_pool()
+        
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM org_configs WHERE phone_number IN ($1, $2) AND is_active = true",
+                phone_number, clean_number
+            )
+            
+        if row:
+            result = dict(row)
+            if result.get('transfer_numbers') and isinstance(result['transfer_numbers'], str):
+                try: result['transfer_numbers'] = json.loads(result['transfer_numbers'])
+                except: pass
+            
+            # The agent expects a certain dictionary format, let's make sure it matches what the backend would return
+            return {
+                "org_id": result.get("org_id"),
+                "kb_id": result.get("org_id"), # In our design, kb_id is org_id
+                "kb_tags": result.get("kb_tags", []),
+                "prompt": result.get("prompt"),
+                "voice": result.get("voice"),
+                "model": result.get("model"),
+                "process_id": result.get("process_id"),
+                "transfer_numbers": result.get("transfer_numbers", {}),
+                "client_name": result.get("client_name")
+            }
+        return None
+    except Exception as e:
+        logger.error(f"Failed to query DB for phone number {phone_number}: {e}")
+        return None
+
+
+async def _resolve_from_mantra_backend(phone_number: str) -> dict | None:
     """
     Call MantraAssist backend to resolve inbound call context from the dialed phone number.
     Returns org_id, kb_id, kb_tags, prompt, voice, model, process_id, transfer_numbers, client_name.
@@ -192,6 +231,21 @@ async def resolve_inbound_context(phone_number: str) -> dict | None:
     except Exception as e:
         logger.error(f"Failed to resolve inbound call context: {e}")
         return None
+
+
+async def resolve_inbound_context(phone_number: str) -> dict | None:
+    """
+    Resolves inbound call context, checking DB first and falling back to MantraAssist backend.
+    """
+    # 1. Try DB first (fast path)
+    config = await _resolve_from_db(phone_number)
+    if config:
+        logger.info(f"Resolved inbound context from DB for {phone_number} (org_id: {config.get('org_id')})")
+        return config
+    
+    # 2. Fall back to MantraAssist API (supplementary path)
+    logger.info(f"DB miss — falling back to MantraAssist API for {phone_number}")
+    return await _resolve_from_mantra_backend(phone_number)
 
 
 class AssistantFunctions:

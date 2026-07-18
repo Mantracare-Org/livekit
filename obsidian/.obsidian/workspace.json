@@ -182,6 +182,8 @@
   },
   "active": "ba89d0ebd22c5ea3",
   "lastOpenFiles": [
+    "Untitled.canvas",
+    "Features/Dashboard.md",
     "Features/Crash Alerts.md",
     "Features/API Server.md",
     "Development/TODO.md",
@@ -205,8 +207,6 @@
     "Architecture/APIs.md",
     "Agents/QA Agent.md",
     "Agents/Master Agent.md",
-    "Agents/Frontend Agent.md",
-    "Agents/DevOps Agent.md",
-    "Agents/Backend Agent.md"
+    "Agents/Frontend Agent.md"
   ]
 }
