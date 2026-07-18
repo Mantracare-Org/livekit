@@ -23,9 +23,11 @@ from mantra.email_alerts import send_crash_email
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from livekit import api
-
+from colorama import Fore, Style, init as colorama_init
 from livekit.protocol import sip as proto_sip
 from dotenv import load_dotenv
+
+colorama_init(autoreset=True)
 
 
 # Load environment variables from .env.local
@@ -1008,6 +1010,40 @@ async def setup_inbound_sip(request: Request):
     try:
         payload = await request.json()
     except Exception:
+        payload = None
+
+    # Log received payload
+    if payload is not None:
+        logger.info(
+            f"=== [SIP INBOUND SETUP REQUEST] ===\n"
+            f"Payload: {json.dumps(payload, indent=2)}"
+        )
+    else:
+        logger.info(
+            f"=== [SIP INBOUND SETUP REQUEST] ===\n"
+            f"Invalid/Empty JSON Payload"
+        )
+
+    response = await _setup_inbound_sip_process(payload)
+
+    # Log sent payload (response)
+    status_code = response.status_code
+    try:
+        body = json.loads(response.body.decode('utf-8'))
+        body_str = json.dumps(body, indent=2)
+    except Exception:
+        body_str = str(response.body)
+
+    logger.info(
+        f"=== [SIP INBOUND SETUP RESPONSE] ===\n"
+        f"Status: {status_code}\n"
+        f"Payload: {body_str}"
+    )
+    return response
+
+
+async def _setup_inbound_sip_process(payload: dict | None) -> JSONResponse:
+    if payload is None:
         return JSONResponse({"status_code": 400, "status": "error", "error": "Invalid JSON"}, status_code=400)
     
     number = payload.get("number")
@@ -1036,117 +1072,117 @@ async def setup_inbound_sip(request: Request):
         except Exception as e:
             logger.warning(f"Could not list existing trunks: {e}")
             
-            # Check for existing dispatch rule for this trunk
-            existing_rule_id = None
-            if existing_trunk_id:
-                try:
-                    rule_response = await lk_client.sip.list_dispatch_rule(api.ListSIPDispatchRuleRequest())
-                    for item in rule_response.items:
-                        if existing_trunk_id in list(item.trunk_ids):
-                            existing_rule_id = item.sip_dispatch_rule_id
-                            logger.info(f"Found existing dispatch rule {existing_rule_id} for trunk {existing_trunk_id}")
-                            break
-                except Exception as e:
-                    logger.warning(f"Could not list dispatch rules: {e}")
-            
-            # If number already fully configured, return clear error to MantraAssist
-            if existing_trunk_id and existing_rule_id:
-                return JSONResponse({
-                    "status_code": 409,
-                    "status": "error",
-                    "error": "number_already_configured",
-                    "message": f"Phone number {number} is already configured with trunk {existing_trunk_id} and dispatch rule {existing_rule_id}. Please use the existing configuration or delete it first.",
-                    "existing_trunk_id": existing_trunk_id,
-                    "existing_dispatch_rule_id": existing_rule_id
-                }, status_code=409)
-            
-            # 2. Create Inbound Trunk (or reuse existing)
-            if existing_trunk_id:
-                trunk_id = existing_trunk_id
-                logger.info(f"Reusing existing LiveKit SIP Inbound Trunk: {trunk_id}")
-            else:
-                trunk = await lk_client.sip.create_sip_inbound_trunk(
-                    api.CreateSIPInboundTrunkRequest(
-                        trunk=api.SIPInboundTrunkInfo(
-                            name=name,
-                            numbers=[number, clean_number],
-                        )
+        # Check for existing dispatch rule for this trunk
+        existing_rule_id = None
+        if existing_trunk_id:
+            try:
+                rule_response = await lk_client.sip.list_dispatch_rule(api.ListSIPDispatchRuleRequest())
+                for item in rule_response.items:
+                    if existing_trunk_id in list(item.trunk_ids):
+                        existing_rule_id = item.sip_dispatch_rule_id
+                        logger.info(f"Found existing dispatch rule {existing_rule_id} for trunk {existing_trunk_id}")
+                        break
+            except Exception as e:
+                logger.warning(f"Could not list dispatch rules: {e}")
+        
+        # If number already fully configured, return clear error to MantraAssist
+        if existing_trunk_id and existing_rule_id:
+            return JSONResponse({
+                "status_code": 409,
+                "status": "error",
+                "error": "number_already_configured",
+                "message": f"Phone number {number} is already configured with trunk {existing_trunk_id} and dispatch rule {existing_rule_id}. Please use the existing configuration or delete it first.",
+                "existing_trunk_id": existing_trunk_id,
+                "existing_dispatch_rule_id": existing_rule_id
+            }, status_code=409)
+        
+        # 2. Create Inbound Trunk (or reuse existing)
+        if existing_trunk_id:
+            trunk_id = existing_trunk_id
+            logger.info(f"Reusing existing LiveKit SIP Inbound Trunk: {trunk_id}")
+        else:
+            trunk = await lk_client.sip.create_sip_inbound_trunk(
+                api.CreateSIPInboundTrunkRequest(
+                    trunk=api.SIPInboundTrunkInfo(
+                        name=name,
+                        numbers=[number, clean_number],
                     )
                 )
-                trunk_id = trunk.sip_trunk_id
-                logger.info(f"Created LiveKit SIP Inbound Trunk: {trunk_id}")
+            )
+            trunk_id = trunk.sip_trunk_id
+            logger.info(f"Created LiveKit SIP Inbound Trunk: {trunk_id}")
+        
+        # 3. Create Dispatch Rule (or reuse if trunk existed but no rule)
+        if existing_rule_id:
+            rule_id = existing_rule_id
+            logger.info(f"Reusing existing LiveKit SIP Dispatch Rule: {rule_id}")
+        else:
+            # We inject direction=inbound and the given prompt/voice into metadata
+            room_prefix = f"inbound_{trunk_id[-6:]}"
+            metadata_dict = {
+                "direction": "inbound",
+                "prompt": prompt,
+                "voice": voice,
+                "model": model,
+                "phone_number": number
+            }
             
-            # 3. Create Dispatch Rule (or reuse if trunk existed but no rule)
-            if existing_rule_id:
-                rule_id = existing_rule_id
-                logger.info(f"Reusing existing LiveKit SIP Dispatch Rule: {rule_id}")
-            else:
-                # We inject direction=inbound and the given prompt/voice into metadata
-                room_prefix = f"inbound_{trunk_id[-6:]}"
-                metadata_dict = {
-                    "direction": "inbound",
-                    "prompt": prompt,
-                    "voice": voice,
-                    "model": model,
-                    "phone_number": number
-                }
-                
-                rule_req = api.CreateSIPDispatchRuleRequest(
-                    name=f"Rule for {name}",
-                    metadata=json.dumps(metadata_dict),
-                    rule=api.SIPDispatchRule(
-                        dispatch_rule_individual=api.SIPDispatchRuleIndividual(
-                            room_prefix=room_prefix
+            rule_req = api.CreateSIPDispatchRuleRequest(
+                name=f"Rule for {name}",
+                metadata=json.dumps(metadata_dict),
+                rule=api.SIPDispatchRule(
+                    dispatch_rule_individual=api.SIPDispatchRuleIndividual(
+                        room_prefix=room_prefix
+                    )
+                ),
+                room_config=api.RoomConfiguration(
+                    empty_timeout=300,
+                    departure_timeout=60,
+                    agents=[
+                        api.RoomAgentDispatch(
+                            agent_name="mantra-agent",
+                            metadata=json.dumps(metadata_dict)
                         )
-                    ),
-                    room_config=api.RoomConfiguration(
-                        empty_timeout=300,
-                        departure_timeout=60,
-                        agents=[
-                            api.RoomAgentDispatch(
-                                agent_name="mantra-agent",
-                                metadata=json.dumps(metadata_dict)
-                            )
-                        ]
-                    ),
-                    trunk_ids=[trunk_id]
-                )
-                
-                rule = await lk_client.sip.create_sip_dispatch_rule(rule_req)
-                rule_id = rule.sip_dispatch_rule_id
-                logger.info(f"Created LiveKit SIP Dispatch Rule: {rule_id}")
+                    ]
+                ),
+                trunk_ids=[trunk_id]
+            )
             
-            # 4. Generate SIP URI
-            sip_domain = _get_sip_domain()
-            # Use the clean_number so that Zadarma sends the INVITE with To: <clean_number>@<sip_domain>
-            # This allows LiveKit to correctly match the inbound SIP trunk which has this number in its numbers array.
-            sip_uri = f"sip:{clean_number}@{sip_domain}"
-            
-            # 5. Update Zadarma
-            logger.info(f"Updating Zadarma SIP ID for {number} to {sip_uri}")
-            try:
-                zadarma_response = await _update_zadarma_sip_forwarding(number, sip_uri)
-            except Exception as e:
-                # If Zadarma fails (e.g., number not in Zadarma account), return clear error
-                return JSONResponse({
-                    "status_code": 400,
-                    "status": "error",
-                    "error": "zadarma_configuration_failed",
-                    "message": f"Failed to configure Zadarma for {number}: {str(e)}. Ensure the number exists in your Zadarma account.",
-                    "sip_trunk_id": trunk_id,
-                    "sip_dispatch_rule_id": rule_id,
-                    "sip_uri": sip_uri
-                }, status_code=400)
-            
+            rule = await lk_client.sip.create_sip_dispatch_rule(rule_req)
+            rule_id = rule.sip_dispatch_rule_id
+            logger.info(f"Created LiveKit SIP Dispatch Rule: {rule_id}")
+        
+        # 4. Generate SIP URI
+        sip_domain = _get_sip_domain()
+        # Use the clean_number so that Zadarma sends the INVITE with To: <clean_number>@<sip_domain>
+        # This allows LiveKit to correctly match the inbound SIP trunk which has this number in its numbers array.
+        sip_uri = f"sip:{clean_number}@{sip_domain}"
+        
+        # 5. Update Zadarma
+        logger.info(f"Updating Zadarma SIP ID for {number} to {sip_uri}")
+        try:
+            zadarma_response = await _update_zadarma_sip_forwarding(number, sip_uri)
+        except Exception as e:
+            # If Zadarma fails (e.g., number not in Zadarma account), return clear error
             return JSONResponse({
-                "status_code": 200,
-                "status": "success",
-                "name": name,
+                "status_code": 400,
+                "status": "error",
+                "error": "zadarma_configuration_failed",
+                "message": f"Failed to configure Zadarma for {number}: {str(e)}. Ensure the number exists in your Zadarma account.",
                 "sip_trunk_id": trunk_id,
                 "sip_dispatch_rule_id": rule_id,
-                "sip_uri": sip_uri,
-                "zadarma_response": zadarma_response
-            })
+                "sip_uri": sip_uri
+            }, status_code=400)
+        
+        return JSONResponse({
+            "status_code": 200,
+            "status": "success",
+            "name": name,
+            "sip_trunk_id": trunk_id,
+            "sip_dispatch_rule_id": rule_id,
+            "sip_uri": sip_uri,
+            "zadarma_response": zadarma_response
+        })
             
     except Exception as e:
         logger.error(f"Error during SIP setup: {str(e)}")
