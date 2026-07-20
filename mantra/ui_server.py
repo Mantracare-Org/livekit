@@ -890,6 +890,7 @@ async def plivo_xml(request: Request):
     """
     Returns XML for Plivo Application to route to the LiveKit SIP Trunk.
     Passes a dynamic X-Room-Name SIP header to guarantee a unique, non-empty room name.
+    Looks up the SIP trunk ID from the phone number mapping.
     """
     call_uuid = "unknown"
     to_number = "918031321203"
@@ -908,7 +909,26 @@ async def plivo_xml(request: Request):
         from_number = request.query_params.get("From", "unknown")
         
     logger.info(f"Plivo XML parameters - CallUUID: {call_uuid}, To: {to_number}, From: {from_number}")
-        
+    
+    # Look up SIP trunk ID for this number from Redis cache
+    # Format: +91XXXXXXXXXX or 91XXXXXXXXXX
+    clean_to = to_number.replace("+", "")
+    sip_trunk_id = None
+    
+    if redis_client:
+        try:
+            # Try with + prefix first, then without
+            sip_trunk_id = await redis_client.get(f"plivo:sip_trunk:{to_number}")
+            if not sip_trunk_id:
+                sip_trunk_id = await redis_client.get(f"plivo:sip_trunk:{clean_to}")
+        except Exception as e:
+            logger.warning(f"Redis lookup failed for Plivo SIP trunk: {e}")
+    
+    # Fallback to hardcoded if not found (backwards compatibility)
+    if not sip_trunk_id:
+        sip_trunk_id = "ST_9C476YUSTSfm"
+        logger.warning(f"No SIP trunk mapping found for {to_number}, using fallback: {sip_trunk_id}")
+    
     sip_domain = _get_sip_domain()
         
     # Build absolute action URL dynamically using headers for ngrok support
@@ -920,7 +940,61 @@ async def plivo_xml(request: Request):
     xml_content = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Dial action="{action_url}" method="POST">
-        <User>sip:ST_9C476YUSTSfm@{sip_domain};transport=tcp</User>
+        <User>sip:{sip_trunk_id}@{sip_domain};transport=tcp</User>
+    </Dial>
+</Response>'''
+    return Response(content=xml_content, media_type="application/xml")
+
+
+@app.get("/api/v1/sip/twilio-webhook")
+@app.post("/api/v1/sip/twilio-webhook")
+async def twilio_webhook(request: Request):
+    """
+    Returns TwiML for Twilio to route to the LiveKit SIP Trunk.
+    Looks up the SIP trunk ID from the phone number mapping.
+    """
+    call_sid = "unknown"
+    to_number = "918031321203"
+    from_number = "unknown"
+    
+    if request.method == "POST":
+        form_data = await request.form()
+        logger.info(f"Received Twilio webhook via POST: {dict(form_data)}")
+        call_sid = form_data.get("CallSid", "unknown")
+        to_number = form_data.get("To", "918031321203")
+        from_number = form_data.get("From", "unknown")
+    elif request.method == "GET":
+        logger.info(f"Received Twilio webhook via GET: {dict(request.query_params)}")
+        call_sid = request.query_params.get("CallSid", "unknown")
+        to_number = request.query_params.get("To", "918031321203")
+        from_number = request.query_params.get("From", "unknown")
+        
+    logger.info(f"Twilio webhook parameters - CallSid: {call_sid}, To: {to_number}, From: {from_number}")
+    
+    # Look up SIP trunk ID for this number from Redis cache
+    clean_to = to_number.replace("+", "")
+    sip_trunk_id = None
+    
+    if redis_client:
+        try:
+            # Try with + prefix first, then without
+            sip_trunk_id = await redis_client.get(f"twilio:sip_trunk:{to_number}")
+            if not sip_trunk_id:
+                sip_trunk_id = await redis_client.get(f"twilio:sip_trunk:{clean_to}")
+        except Exception as e:
+            logger.warning(f"Redis lookup failed for Twilio SIP trunk: {e}")
+    
+    # Fallback to hardcoded if not found
+    if not sip_trunk_id:
+        sip_trunk_id = "ST_9C476YUSTSfm"
+        logger.warning(f"No SIP trunk mapping found for {to_number}, using fallback: {sip_trunk_id}")
+    
+    sip_domain = _get_sip_domain()
+        
+    xml_content = f'''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Dial>
+        <Sip>sip:{sip_trunk_id}@{sip_domain};transport=tcp</Sip>
     </Dial>
 </Response>'''
     return Response(content=xml_content, media_type="application/xml")
@@ -999,13 +1073,172 @@ async def _update_zadarma_sip_forwarding(phone_number: str, sip_uri: str) -> dic
                 raise Exception(f"Zadarma API error: {text}")
 
 
+async def _update_twilio_sip_forwarding(phone_number: str, sip_uri: str) -> dict:
+    """
+    Updates the SIP URI forwarding in Twilio by updating the Incoming Phone Number's Voice URL.
+    Uses Twilio REST API to set the SIP trunk as the voice webhook destination.
+    """
+    twilio_account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    twilio_auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    
+    if not twilio_account_sid or not twilio_auth_token:
+        raise ValueError("Twilio API credentials not found in environment variables.")
+
+    # Normalize phone number (Twilio expects E.164 format with +)
+    number_clean = phone_number if phone_number.startswith("+") else f"+{phone_number}"
+    
+    # Twilio SIP URI format - remove sip: prefix for the Voice URL
+    # Twilio expects a webhook URL that returns TwiML, but for SIP trunking
+    # we use the SIP Domain approach. The SIP URI is used in the SIP Domain.
+    sip_uri_clean = sip_uri.replace("sip:", "")
+    
+    # Find the incoming phone number resource
+    import base64
+    auth = base64.b64encode(f"{twilio_account_sid}:{twilio_auth_token}".encode()).decode()
+    headers = {
+        'Authorization': f'Basic {auth}',
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    
+    async with aiohttp.ClientSession() as session:
+        # First, find the phone number SID
+        url = f"https://api.twilio.com/2010-04-01/Accounts/{twilio_account_sid}/IncomingPhoneNumbers.json"
+        params = {"PhoneNumber": number_clean}
+        async with session.get(url, headers=headers, params=params) as resp:
+            text = await resp.text()
+            if resp.status != 200:
+                logger.error(f"Twilio API error listing numbers {resp.status}: {text}")
+                raise Exception(f"Twilio API error: {text}")
+            
+            data = json.loads(text)
+            numbers = data.get("incoming_phone_numbers", [])
+            if not numbers:
+                raise Exception(f"Phone number {number_clean} not found in Twilio account")
+            
+            number_sid = numbers[0]["sid"]
+        
+        # Update the VoiceUrl to point to our SIP domain
+        # For SIP trunking, Twilio uses SIP Domain - we need to configure the SIP Domain
+        # to route to the LiveKit SIP URI. This is typically done via TwiML app or SIP Domain.
+        # Here we'll use the VoiceUrl with a TwiML that forwards to the SIP URI
+        voice_url = f"https://{os.getenv('LIVEKIT_URL', '').replace('wss://', '').replace('ws://', '').replace('https://', '').replace('http://', '')}/api/v1/sip/twilio-webhook"
+        
+        update_url = f"https://api.twilio.com/2010-04-01/Accounts/{twilio_account_sid}/IncomingPhoneNumbers/{number_sid}.json"
+        update_data = {"VoiceUrl": voice_url, "VoiceMethod": "POST"}
+        async with session.post(update_url, headers=headers, data=update_data) as resp:
+            text = await resp.text()
+            if resp.status == 200:
+                try:
+                    return json.loads(text)
+                except Exception:
+                    return {"status": "success", "response": text}
+            else:
+                logger.error(f"Twilio API error updating number {resp.status}: {text}")
+                raise Exception(f"Twilio API error: {text}")
+
+
+async def _update_plivo_sip_forwarding(phone_number: str, sip_uri: str) -> dict:
+    """
+    Updates the SIP URI forwarding in Plivo by updating the Endpoint/Application.
+    Uses Plivo REST API to configure the SIP URI as the answer_url for the number.
+    """
+    plivo_auth_id = os.getenv("PLIVO_AUTH_ID")
+    plivo_auth_token = os.getenv("PLIVO_AUTH_TOKEN")
+    
+    if not plivo_auth_id or not plivo_auth_token:
+        raise ValueError("Plivo API credentials not found in environment variables.")
+
+    # Normalize phone number (Plivo expects E.164 format)
+    number_clean = phone_number if phone_number.startswith("+") else f"+{phone_number}"
+    
+    # Plivo SIP URI format
+    sip_uri_clean = sip_uri.replace("sip:", "")
+    
+    import base64
+    auth = base64.b64encode(f"{plivo_auth_id}:{plivo_auth_token}".encode()).decode()
+    headers = {
+        'Authorization': f'Basic {auth}',
+        'Content-Type': 'application/json'
+    }
+    
+    async with aiohttp.ClientSession() as session:
+        # Find the number in Plivo
+        url = f"https://api.plivo.com/v1/Account/{plivo_auth_id}/Number/"
+        async with session.get(url, headers=headers) as resp:
+            text = await resp.text()
+            if resp.status != 200:
+                logger.error(f"Plivo API error listing numbers {resp.status}: {text}")
+                raise Exception(f"Plivo API error: {text}")
+            
+            data = json.loads(text)
+            numbers = data.get("objects", [])
+            target_number = None
+            for num in numbers:
+                if num.get("number") == number_clean or num.get("number") == number_clean.replace("+", ""):
+                    target_number = num
+                    break
+            
+            if not target_number:
+                raise Exception(f"Phone number {number_clean} not found in Plivo account")
+            
+            number_uuid = target_number.get("number_uuid")
+        
+        # Update the number's answer_url to point to our SIP endpoint
+        # Plivo uses XML response for call handling. We'll set the answer_url to a webhook
+        # that returns XML to forward to the SIP URI
+        webhook_url = f"https://{os.getenv('LIVEKIT_URL', '').replace('wss://', '').replace('ws://', '').replace('https://', '').replace('http://', '')}/api/v1/sip/plivo-xml"
+        
+        update_url = f"https://api.plivo.com/v1/Account/{plivo_auth_id}/Number/{number_uuid}/"
+        update_data = {"answer_url": webhook_url, "answer_method": "POST"}
+        async with session.post(update_url, headers=headers, json=update_data) as resp:
+            text = await resp.text()
+            if resp.status == 200:
+                try:
+                    return json.loads(text)
+                except Exception:
+                    return {"status": "success", "response": text}
+            else:
+                logger.error(f"Plivo API error updating number {resp.status}: {text}")
+                raise Exception(f"Plivo API error: {text}")
+
+
+async def _update_provider_sip_forwarding(provider: str, phone_number: str, sip_uri: str) -> dict:
+    """
+    Routes to the appropriate provider-specific SIP forwarding function.
+    Supported providers: zadarma, twilio, plivo
+    """
+    provider = provider.lower().strip()
+    
+    if provider == "zadarma":
+        return await _update_zadarma_sip_forwarding(phone_number, sip_uri)
+    elif provider == "twilio":
+        return await _update_twilio_sip_forwarding(phone_number, sip_uri)
+    elif provider == "plivo":
+        return await _update_plivo_sip_forwarding(phone_number, sip_uri)
+    else:
+        raise ValueError(f"Unsupported provider: {provider}. Supported providers: zadarma, twilio, plivo")
+
+
 @app.post("/api/v1/sip/inbound/setup")
 async def setup_inbound_sip(request: Request):
     """
     End-to-end inbound SIP setup:
     1. Creates LiveKit Inbound Trunk
     2. Creates LiveKit Dispatch Rule
-    3. Triggers Zadarma API to update the forwarding URI
+    3. Triggers provider API (Zadarma/Twilio/Plivo) to update the forwarding URI
+    
+    Payload:
+    - number (required): Phone number in E.164 format (e.g., +918031321203)
+    - org_id (required): Organization ID
+    - provider (optional): SIP provider - "zadarma", "twilio", or "plivo" (default: "zadarma")
+    - name (optional): Trunk name
+    - prompt (optional): Agent prompt
+    - voice (optional): Agent voice
+    - model (optional): Agent model
+    - kb_tags (optional): Knowledge base tags
+    - transfer_numbers (optional): Transfer numbers config
+    - client_name (optional): Client name
+    - process_id (optional): Process ID
     """
     try:
         payload = await request.json()
@@ -1054,6 +1287,7 @@ async def _setup_inbound_sip_process(payload: dict | None) -> JSONResponse:
     prompt = payload.get("prompt", "You are a helpful voice assistant.")
     voice = payload.get("voice", "arushi")
     model = payload.get("model", "deepseek")
+    provider = payload.get("provider", "zadarma").lower().strip()  # Default to Zadarma for backwards compatibility
     
     # New fields for org configuration
     org_id = payload.get("org_id")
@@ -1064,35 +1298,50 @@ async def _setup_inbound_sip_process(payload: dict | None) -> JSONResponse:
     client_name = payload.get("client_name", "User")
     process_id = payload.get("process_id")
     
-    logger.info(f"Starting end-to-end SIP setup for number: {number}, org_id: {org_id}")
+    logger.info(f"Starting end-to-end SIP setup for number: {number}, org_id: {org_id}, provider: {provider}")
     
     try:
-        # 1. Check for existing inbound trunk with this number
+        # 1. Check for existing inbound trunk with this number (skip if force_new=true)
         clean_number = number.replace("+", "")
         existing_trunk_id = None
-        try:
-            response = await lk_client.sip.list_inbound_trunk(api.ListSIPInboundTrunkRequest())
-            for item in response.items:
-                trunk_numbers = list(item.numbers)
-                if number in trunk_numbers or clean_number in trunk_numbers:
-                    existing_trunk_id = item.sip_trunk_id
-                    logger.info(f"Found existing inbound trunk {existing_trunk_id} for number {number}")
-                    break
-        except Exception as e:
-            logger.warning(f"Could not list existing trunks: {e}")
-            
-        # Check for existing dispatch rule for this trunk
         existing_rule_id = None
-        if existing_trunk_id:
-            try:
-                rule_response = await lk_client.sip.list_dispatch_rule(api.ListSIPDispatchRuleRequest())
-                for item in rule_response.items:
-                    if existing_trunk_id in list(item.trunk_ids):
-                        existing_rule_id = item.sip_dispatch_rule_id
-                        logger.info(f"Found existing dispatch rule {existing_rule_id} for trunk {existing_trunk_id}")
-                        break
-            except Exception as e:
-                logger.warning(f"Could not list dispatch rules: {e}")
+        
+        force_new = payload.get("force_new", False)
+        
+        if not force_new:
+            # Run trunk listing and rule listing in parallel
+            async def _find_existing_trunk():
+                try:
+                    response = await lk_client.sip.list_inbound_trunk(api.ListSIPInboundTrunkRequest())
+                    for item in response.items:
+                        trunk_numbers = list(item.numbers)
+                        if number in trunk_numbers or clean_number in trunk_numbers:
+                            return item.sip_trunk_id
+                except Exception as e:
+                    logger.warning(f"Could not list existing trunks: {e}")
+                return None
+            
+            async def _find_existing_rule(trunk_id):
+                if not trunk_id:
+                    return None
+                try:
+                    rule_response = await lk_client.sip.list_dispatch_rule(api.ListSIPDispatchRuleRequest())
+                    for item in rule_response.items:
+                        if trunk_id in list(item.trunk_ids):
+                            return item.sip_dispatch_rule_id
+                except Exception as e:
+                    logger.warning(f"Could not list dispatch rules: {e}")
+                return None
+            
+            # First find trunk, then find rule (rule depends on trunk)
+            existing_trunk_id = await _find_existing_trunk()
+            if existing_trunk_id:
+                logger.info(f"Found existing inbound trunk {existing_trunk_id} for number {number}")
+                existing_rule_id = await _find_existing_rule(existing_trunk_id)
+                if existing_rule_id:
+                    logger.info(f"Found existing dispatch rule {existing_rule_id} for trunk {existing_trunk_id}")
+        else:
+            logger.info(f"force_new=true: Skipping existing trunk/rule checks for {number}")
         
         # If number already fully configured, return clear error to MantraAssist
         if existing_trunk_id and existing_rule_id:
@@ -1100,7 +1349,7 @@ async def _setup_inbound_sip_process(payload: dict | None) -> JSONResponse:
                 "status_code": 409,
                 "status": "error",
                 "error": "number_already_configured",
-                "message": f"Phone number {number} is already configured with trunk {existing_trunk_id} and dispatch rule {existing_rule_id}. Please use the existing configuration or delete it first.",
+                "message": f"Phone number {number} is already configured",
                 "existing_trunk_id": existing_trunk_id,
                 "existing_dispatch_rule_id": existing_rule_id
             }, status_code=409)
@@ -1121,6 +1370,17 @@ async def _setup_inbound_sip_process(payload: dict | None) -> JSONResponse:
             trunk_id = trunk.sip_trunk_id
             logger.info(f"Created LiveKit SIP Inbound Trunk: {trunk_id}")
         
+        # Store SIP trunk mapping in Redis for webhooks lookup
+        # This allows the provider webhooks (Twilio/Plivo) to find the correct SIP trunk ID for incoming calls
+        if redis_client and provider in ["plivo", "twilio"]:
+            try:
+                # Store with both +prefix and without for flexible lookup
+                await redis_client.set(f"{provider}:sip_trunk:{number}", trunk_id, ex=86400*30)  # 30 days TTL
+                await redis_client.set(f"{provider}:sip_trunk:{clean_number}", trunk_id, ex=86400*30)
+                logger.info(f"Stored {provider} SIP trunk mapping: {number} -> {trunk_id}")
+            except Exception as e:
+                logger.warning(f"Failed to store {provider} SIP trunk mapping in Redis: {e}")
+        
         # 3. Create Dispatch Rule (or reuse if trunk existed but no rule)
         if existing_rule_id:
             rule_id = existing_rule_id
@@ -1133,7 +1393,8 @@ async def _setup_inbound_sip_process(payload: dict | None) -> JSONResponse:
                 "prompt": prompt,
                 "voice": voice,
                 "model": model,
-                "phone_number": number
+                "phone_number": number,
+                "provider": provider
             }
             
             rule_req = api.CreateSIPDispatchRuleRequest(
@@ -1203,21 +1464,21 @@ async def _setup_inbound_sip_process(payload: dict | None) -> JSONResponse:
         
         # 4. Generate SIP URI
         sip_domain = _get_sip_domain()
-        # Use the clean_number so that Zadarma sends the INVITE with To: <clean_number>@<sip_domain>
+        # Use the clean_number so that provider sends the INVITE with To: <clean_number>@<sip_domain>
         # This allows LiveKit to correctly match the inbound SIP trunk which has this number in its numbers array.
         sip_uri = f"sip:{clean_number}@{sip_domain}"
         
-        # 5. Update Zadarma
-        logger.info(f"Updating Zadarma SIP ID for {number} to {sip_uri}")
+        # 5. Update provider SIP forwarding
+        logger.info(f"Updating {provider} SIP ID for {number} to {sip_uri}")
         try:
-            zadarma_response = await _update_zadarma_sip_forwarding(number, sip_uri)
+            provider_response = await _update_provider_sip_forwarding(provider, number, sip_uri)
         except Exception as e:
-            # If Zadarma fails (e.g., number not in Zadarma account), return clear error
+            # If provider fails (e.g., number not in provider account), return clear error
             return JSONResponse({
                 "status_code": 400,
                 "status": "error",
-                "error": "zadarma_configuration_failed",
-                "message": f"Failed to configure Zadarma for {number}: {str(e)}. Ensure the number exists in your Zadarma account.",
+                "error": f"{provider}_configuration_failed",
+                "message": f"Failed to configure {provider} for {number}: {str(e)}. Ensure the number exists in your {provider} account.",
                 "sip_trunk_id": trunk_id,
                 "sip_dispatch_rule_id": rule_id,
                 "sip_uri": sip_uri
@@ -1232,7 +1493,8 @@ async def _setup_inbound_sip_process(payload: dict | None) -> JSONResponse:
             "sip_trunk_id": trunk_id,
             "sip_dispatch_rule_id": rule_id,
             "sip_uri": sip_uri,
-            "zadarma_response": zadarma_response
+            "provider": provider,
+            "provider_response": provider_response
         })
             
     except Exception as e:
