@@ -17,6 +17,7 @@ from fastapi import FastAPI, Request, Response
 import hmac
 import base64
 from urllib.parse import urlencode
+from xml.sax.saxutils import escape
 from fastapi import HTTPException, File, UploadFile, Form
 from prometheus_fastapi_instrumentator import Instrumentator
 from mantra.email_alerts import send_crash_email
@@ -890,6 +891,19 @@ async def delete_dispatch_rule(rule_id: str):
 
 
 
+def _build_plivo_xml(clean_to: str, sip_domain: str, action_url: str) -> str:
+    """Build a Plivo XML document that dials the LiveKit SIP endpoint correctly."""
+    clean_to = escape(clean_to)
+    sip_domain = escape(sip_domain)
+    action_url = escape(action_url)
+    return f'''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Dial action="{action_url}" method="POST" timeout="20">
+        <User>sip:{clean_to}@{sip_domain};transport=tcp</User>
+    </Dial>
+</Response>'''
+
+
 @app.get("/api/v1/sip/plivo-xml")
 @app.post("/api/v1/sip/plivo-xml")
 async def plivo_xml(request: Request):
@@ -943,12 +957,11 @@ async def plivo_xml(request: Request):
     action_url = f"{req_scheme}://{req_host}/api/v1/sip/plivo-dial-status"
 
     
-    xml_content = f'''<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Dial action="{action_url}" method="POST">
-        <Sip>sip:{clean_to}@{sip_domain};transport=tcp</Sip>
-    </Dial>
-</Response>'''
+    xml_content = _build_plivo_xml(
+        clean_to=clean_to,
+        sip_domain=sip_domain,
+        action_url=action_url,
+    )
     return Response(content=xml_content, media_type="application/xml")
 
 
