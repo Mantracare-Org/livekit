@@ -132,27 +132,42 @@ async def call_logs(log_data: dict) -> str:
     if not conn:
         return "Error: Could not connect to database"
 
+    call_id = log_data.get("call_id", "")
+    if not call_id:
+        if conn:
+            await conn.close()
+        return "Error: call_id is required in log_data"
+
     try:
-        values = []
-        for val in log_data.values():
-            if isinstance(val, str):
-                try:
-                    if len(val) >= 10 and (val[4] == "-" and val[7] == "-"):
-                        values.append(
-                            datetime.datetime.fromisoformat(val.replace("Z", "+00:00"))
-                        )
-                    elif (
-                        val.strip().strip("*-• ").lower()
-                        in ["none", "null", "n/a", "na", ""]
-                        or "none" in val.lower()
-                    ):
-                        values.append(None)
-                    else:
-                        values.append(val)
-                except (ValueError, TypeError):
-                    values.append(None)
-            else:
-                values.append(val)
+        call_log_val = log_data.get("call_log")
+        if isinstance(call_log_val, (dict, list)):
+            call_log_val = json.dumps(call_log_val)
+
+        status_val = log_data.get("status", "")
+        recording_url_val = log_data.get("recording_url", "")
+
+        row = await conn.fetchrow(
+            """
+            INSERT INTO call_logs (call_id, call_log, status, recording_url)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (call_id) DO UPDATE 
+            SET call_log = EXCLUDED.call_log,
+                status = EXCLUDED.status,
+                recording_url = EXCLUDED.recording_url
+            RETURNING id
+            """,
+            call_id,
+            call_log_val,
+            status_val,
+            recording_url_val,
+        )
+
+        await conn.close()
+
+        if row:
+            return f"Successfully processed call log with ID: {row['id']}"
+        else:
+            return f"Successfully processed call log for call_id: {call_id}"
 
     except Exception as e:
         if conn:

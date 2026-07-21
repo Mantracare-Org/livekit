@@ -618,6 +618,9 @@ async def test_inbound_call(request: Request):
     # Force the direction to inbound so the agent handles it correctly
     payload["direction"] = "inbound"
     payload["call_id"] = call_id
+    # Ensure phone_number is set (agent looks for this, not 'phone')
+    if "phone" in payload and "phone_number" not in payload:
+        payload["phone_number"] = payload["phone"]
     
     # 1. Trigger agent dispatch
     try:
@@ -787,6 +790,9 @@ async def create_dispatch_rule(request: Request):
     
     # Enforce inbound direction for agent payload
     payload["direction"] = "inbound"
+    # If phone_number not set but phone is, normalize it
+    if "phone" in payload and "phone_number" not in payload:
+        payload["phone_number"] = payload["phone"]
     
     try:
         req = api.CreateSIPDispatchRuleRequest(

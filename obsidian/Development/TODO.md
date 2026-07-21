@@ -3,7 +3,7 @@
 ## High Priority
 
 - [ ] Extract LLM prompts from `agent.py` into separate config/prompts module
-- [ ] Add automated tests (pytest for utils, integration test for call flow)
+- [ ] Add integration test for actual call flow (end-to-end with mocked LiveKit)
 - [ ] Add input validation to all webhook endpoints
 - [ ] Implement Redis Pub/Sub for dispatcher (replace 0.5s polling)
 - [ ] **KB: Implement vector/embedding search** — Add `pgvector` extension, OpenAI embedding generation, hybrid search fallback

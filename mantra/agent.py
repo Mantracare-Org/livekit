@@ -467,6 +467,9 @@ async def entrypoint(ctx: JobContext):
     # Plain log to verify entrypoint is reached
     logger.info(f"Entrypoint reached for room: {ctx.room.name}")
 
+    # Will be populated with the effective (enriched) metadata for use in finalize()
+    _effective_call_metadata: dict = {}
+
     await ctx.connect()
 
     # logger.info(f"{Fore.GREEN}➕ Room Created / Connected: {ctx.room.name}{Style.RESET_ALL}")
@@ -560,6 +563,7 @@ async def entrypoint(ctx: JobContext):
     if ctx.job.metadata:
         try:
             payload = json.loads(ctx.job.metadata)
+            _effective_call_metadata = dict(payload)
             call_id = payload.get("call_id") or payload.get("voice_id") or ctx.job.id
         except:
             pass
@@ -685,6 +689,7 @@ Follow these specific instructions:
                 payload = dict(meta_payload)  # Already enriched with MantraAssist data
             else:
                 payload = json.loads(ctx.job.metadata)
+            _effective_call_metadata = dict(payload)  # keep for finalize()
             
             if payload.get("direction") == "inbound":
                 is_inbound = True
@@ -1248,11 +1253,16 @@ Follow these specific instructions:
 
                 # 1. Pre-load call metadata
                 try:
-                    call_payload = (
-                        json.loads(ctx.job.metadata) if ctx.job.metadata else {}
-                    )
+                    # Use _effective_call_metadata (which includes resolved inbound context)
+                    # as the primary source, fall back to re-parsing raw job metadata
+                    if _effective_call_metadata:
+                        call_payload = dict(_effective_call_metadata)
+                    else:
+                        call_payload = (
+                            json.loads(ctx.job.metadata) if ctx.job.metadata else {}
+                        )
                 except Exception as e:
-                    logger.error(f"Failed to parse metadata: {e}")
+                    logger.error(f"Failed to parse call metadata: {e}")
                     call_payload = {}
 
                 # Determine call status based on whether the user joined and actually spoke
@@ -1422,6 +1432,11 @@ Follow these specific instructions:
                         )
 
                 # 6. Build webhook payload
+                direction = call_payload.get("direction", "outbound")
+                logger.info(
+                    f"Building webhook payload: direction={direction}, "
+                    f"call_status={call_status}, call_id={call_payload.get('call_id')}"
+                )
                 webhook_payload = {
                     "event": "CALL_DATA_UPDATE",
                     "data": {
@@ -1430,6 +1445,7 @@ Follow these specific instructions:
                         or call_payload.get("voice_id"),
                         "call_status": call_status,
                         "status": call_status,
+                        "direction": direction,
                         "call_transcript": transcript_data,
                         "ai_summary": summary_text,
                         "summary": summary_text,
@@ -1452,6 +1468,31 @@ Follow these specific instructions:
                         "timeline": call_state.get("timeline", []),
                     },
                 }
+
+                # For inbound calls, include resolution context so backend can correlate
+                if direction == "inbound":
+                    try:
+                        inbound_context = {
+                            "org_id": call_payload.get("org_id"),
+                            "kb_id": call_payload.get("kb_id"),
+                            "phone_number": call_payload.get("phone_number"),
+                            "provider": call_payload.get("provider"),
+                        }
+                        inbound_context = {k: v for k, v in inbound_context.items() if v is not None}
+                        if inbound_context:
+                            webhook_payload["data"]["inbound_context"] = inbound_context
+                            webhook_payload["data"].update(inbound_context)
+                            logger.info(
+                                f"Inbound webhook: added inbound_context={inbound_context} "
+                                f"(direction={direction}, call_id={call_payload.get('call_id')})"
+                            )
+                        else:
+                            logger.info(
+                                f"Inbound webhook: no inbound context to add "
+                                f"(direction={direction}, call_id={call_payload.get('call_id')})"
+                            )
+                    except Exception as ctx_err:
+                        logger.error(f"Failed to add inbound_context to webhook (non-fatal): {ctx_err}")
 
             except Exception as e:
                 logger.error(f"Pipeline error in finalize: {e}", exc_info=True)
