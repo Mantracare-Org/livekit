@@ -109,7 +109,7 @@ load_dotenv(
 )  # Load .env.local (LiveKit, etc.) and override if needed
 
 
-server = AgentServer()
+server = AgentServer(num_idle_processes=1)
 
 # --- Transfer/Handoff Configuration ---
 TRANSFER_NUMBERS = {}

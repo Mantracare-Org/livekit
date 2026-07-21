@@ -946,7 +946,7 @@ async def plivo_xml(request: Request):
     xml_content = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Dial action="{action_url}" method="POST">
-        <User>sip:{sip_trunk_id}@{sip_domain};transport=tcp</User>
+        <Sip>sip:{clean_to}@{sip_domain};transport=tcp</Sip>
     </Dial>
 </Response>'''
     return Response(content=xml_content, media_type="application/xml")
@@ -1017,13 +1017,19 @@ def _get_sip_domain() -> str:
     return "4mp2ouvchg3.india.sip.livekit.cloud"
 
 
+def _get_zadarma_credentials() -> tuple[str, str]:
+    """Resolve Zadarma credentials from either the current or legacy env var names."""
+    zadarma_key = os.getenv("ZADARMA_API_KEY") or os.getenv("ZADARMA_KEY")
+    zadarma_secret = os.getenv("ZADARMA_API_SECRET") or os.getenv("ZADARMA_SECRET")
+    return zadarma_key or "", zadarma_secret or ""
+
+
 async def _update_zadarma_sip_forwarding(phone_number: str, sip_uri: str) -> dict:
     """
     Updates the SIP URI forwarding in Zadarma using their REST API.
     Handles the HMAC-SHA1 + MD5 signature required by Zadarma.
     """
-    zadarma_key = os.getenv("ZADARMA_API_KEY")
-    zadarma_secret = os.getenv("ZADARMA_API_SECRET")
+    zadarma_key, zadarma_secret = _get_zadarma_credentials()
     
     if not zadarma_key or not zadarma_secret:
         raise ValueError("Zadarma API credentials not found in environment variables.")
@@ -1180,25 +1186,28 @@ async def _update_plivo_sip_forwarding(phone_number: str, sip_uri: str) -> dict:
             numbers = data.get("objects", [])
             target_number = None
             for num in numbers:
-                if num.get("number") == number_clean or num.get("number") == number_clean.replace("+", ""):
+                plivo_number = num.get("number", "").replace(" ", "")
+                if plivo_number == number_clean or plivo_number == number_clean.replace("+", ""):
                     target_number = num
                     break
             
             if not target_number:
                 raise Exception(f"Phone number {number_clean} not found in Plivo account")
-            
-            number_uuid = target_number.get("number_uuid")
+        
+        # Use the actual phone number (without +) as the API resource identifier.
+        # Plivo's Number API uses the phone number, not the UUID, in the URL path.
+        plivo_number_for_url = number_clean.replace("+", "").replace(" ", "")
         
         # Update the number's answer_url to point to our SIP endpoint
         # Plivo uses XML response for call handling. We'll set the answer_url to a webhook
         # that returns XML to forward to the SIP URI
         webhook_url = f"https://{os.getenv('LIVEKIT_URL', '').replace('wss://', '').replace('ws://', '').replace('https://', '').replace('http://', '')}/api/v1/sip/plivo-xml"
         
-        update_url = f"https://api.plivo.com/v1/Account/{plivo_auth_id}/Number/{number_uuid}/"
+        update_url = f"https://api.plivo.com/v1/Account/{plivo_auth_id}/Number/{plivo_number_for_url}/"
         update_data = {"answer_url": webhook_url, "answer_method": "POST"}
         async with session.post(update_url, headers=headers, json=update_data) as resp:
             text = await resp.text()
-            if resp.status == 200:
+            if resp.status in (200, 202):
                 try:
                     return json.loads(text)
                 except Exception:
@@ -1457,7 +1466,7 @@ async def _setup_inbound_sip_process(payload: dict | None) -> JSONResponse:
                     updated_at = NOW()
                 RETURNING id;
             """, 
-            org_id, clean_number, name, prompt, voice, model, 
+            str(org_id), clean_number, name, prompt, voice, model, 
             kb_tags, json.dumps(transfer_numbers), client_name, process_id, 
             trunk_id, rule_id)
             await conn.close()
