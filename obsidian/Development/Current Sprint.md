@@ -14,7 +14,6 @@
 
 ## Recently Completed
 
-- [x] **2026-07-21** — 51 automated tests added (pytest): webhook payload, MCP tools, UI server endpoints, utils
 - [x] **2026-07-21** — Fixed inbound call webhook payload: now includes `direction` and `inbound_context` (org_id, kb_id, phone_number, provider) for backend correlation
 - [x] **2026-07-21** — Fixed MCP `call_logs` tool: was dead code (no SQL), now properly upserts into call_logs table
 - [x] **2026-07-21** — Fixed `test_inbound_call` and `create_dispatch_rule` phone_number normalization

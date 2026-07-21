@@ -6,7 +6,6 @@
 - **fix:** Resolved inbound context (org_id, kb_id, etc.) now flows through to `finalize()` via `_effective_call_metadata` closure variable instead of being lost during metadata re-parse
 - **fix:** MCP `call_logs` tool was broken (no SQL executed) — rewritten to properly upsert into `call_logs`
 - **fix:** `test_inbound_call` and `create_dispatch_rule` endpoints now normalize `phone` → `phone_number` so agent can resolve inbound context
-- **test:** Added 51 automated tests (webhook payload, MCP tools, UI server endpoints, utils) — all passing
 - **safety:** All new code paths wrapped in try/except with `non-fatal` logging; direction defaults to `"outbound"` so outbound system is completely unaffected
 - **logging:** Added structured logging for webhook payload construction (direction, call_status, call_id) and inbound context addition
 
