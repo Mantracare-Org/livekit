@@ -891,6 +891,63 @@ async def delete_dispatch_rule(rule_id: str):
 
 
 
+def _normalize_phone_number(number: str) -> str:
+    return str(number or "").replace(" ", "").replace("+", "")
+
+
+async def _resolve_plivo_sip_trunk_id(to_number: str) -> str | None:
+    """Resolve the LiveKit inbound SIP trunk for a Plivo dial target."""
+    clean_to = _normalize_phone_number(to_number)
+    candidate_numbers = [to_number, clean_to]
+    if to_number and not to_number.startswith("+") and clean_to:
+        candidate_numbers.append(f"+{clean_to}")
+
+    if redis_client:
+        for candidate in candidate_numbers:
+            try:
+                trunk_id = await redis_client.get(f"plivo:sip_trunk:{candidate}")
+                if trunk_id:
+                    logger.info(f"Resolved Plivo SIP trunk from Redis for {to_number}: {trunk_id}")
+                    return trunk_id
+            except Exception as e:
+                logger.warning(f"Redis lookup failed for Plivo SIP trunk {candidate}: {e}")
+
+    try:
+        conn = await get_db_connection()
+        row = await conn.fetchrow(
+            "SELECT sip_trunk_id FROM org_configs WHERE phone_number IN ($1, $2)",
+            to_number,
+            clean_to,
+        )
+        await conn.close()
+        if row and row["sip_trunk_id"]:
+            trunk_id = row["sip_trunk_id"]
+            logger.info(f"Resolved Plivo SIP trunk from DB for {to_number}: {trunk_id}")
+            if redis_client:
+                await redis_client.set(f"plivo:sip_trunk:{to_number}", trunk_id, ex=86400 * 30)
+            return trunk_id
+    except Exception as e:
+        logger.warning(f"DB lookup failed for Plivo SIP trunk: {e}")
+
+    if lk_client:
+        try:
+            resp = await lk_client.sip.list_inbound_trunk(api.ListSIPInboundTrunkRequest())
+            for item in getattr(resp, "items", []) or []:
+                numbers = [str(n).strip() for n in getattr(item, "numbers", []) or []]
+                normalized_numbers = {_normalize_phone_number(n) for n in numbers}
+                if clean_to in normalized_numbers or (to_number and _normalize_phone_number(to_number) in normalized_numbers):
+                    trunk_id = getattr(item, "sip_trunk_id", None)
+                    if trunk_id:
+                        logger.info(f"Resolved Plivo SIP trunk from LiveKit inbound trunks for {to_number}: {trunk_id}")
+                        if redis_client:
+                            await redis_client.set(f"plivo:sip_trunk:{to_number}", trunk_id, ex=86400 * 30)
+                        return trunk_id
+        except Exception as e:
+            logger.warning(f"LiveKit inbound trunk lookup failed for Plivo: {e}")
+
+    return None
+
+
 def _build_plivo_xml(sip_trunk_id: str, sip_domain: str, action_url: str) -> str:
     """Build a Plivo XML document that dials the LiveKit SIP trunk endpoint correctly."""
     sip_trunk_id = escape(sip_trunk_id)
@@ -930,38 +987,8 @@ async def plivo_xml(request: Request):
         
     logger.info(f"Plivo XML parameters - CallUUID: {call_uuid}, To: {to_number}, From: {from_number}")
     
-    # Look up SIP trunk ID for this number from Redis cache
-    # Format: +91XXXXXXXXXX or 91XXXXXXXXXX
-    clean_to = to_number.replace("+", "")
-    sip_trunk_id = None
-    
-    if redis_client:
-        try:
-            # Try with + prefix first, then without
-            sip_trunk_id = await redis_client.get(f"plivo:sip_trunk:{to_number}")
-            if not sip_trunk_id:
-                sip_trunk_id = await redis_client.get(f"plivo:sip_trunk:{clean_to}")
-        except Exception as e:
-            logger.warning(f"Redis lookup failed for Plivo SIP trunk: {e}")
-    
-    # Fallback to DB if not found in Redis
-    if not sip_trunk_id:
-        try:
-            conn = await get_db_connection()
-            row = await conn.fetchrow(
-                "SELECT sip_trunk_id FROM org_configs WHERE phone_number IN ($1, $2)",
-                to_number, clean_to
-            )
-            await conn.close()
-            if row and row['sip_trunk_id']:
-                sip_trunk_id = row['sip_trunk_id']
-                logger.info(f"Found Plivo SIP trunk mapping in DB for {to_number}: {sip_trunk_id}")
-                if redis_client:
-                    await redis_client.set(f"plivo:sip_trunk:{to_number}", sip_trunk_id, ex=86400*30)
-        except Exception as e:
-            logger.warning(f"DB lookup failed for Plivo SIP trunk: {e}")
-            
-    # Fallback to env var if not found
+    sip_trunk_id = await _resolve_plivo_sip_trunk_id(to_number)
+
     if not sip_trunk_id:
         sip_trunk_id = os.getenv("SIP_TRUNK_ID")
         if sip_trunk_id:
@@ -1062,14 +1089,17 @@ async def twilio_webhook(request: Request):
 
 
 def _get_sip_domain() -> str:
+    configured_domain = os.getenv("LIVEKIT_SIP_DOMAIN") or os.getenv("SIP_DOMAIN")
+    if configured_domain:
+        return configured_domain
+
     lk_url = os.getenv("LIVEKIT_URL", "")
-    host_lk = lk_url.replace("wss://", "").replace("ws://", "")
-    if "mantraassist-0ek43ife" in host_lk:
-        return "4mp2ouvchg3.india.sip.livekit.cloud"
-    elif "livekit.cloud" in host_lk:
+    host_lk = lk_url.replace("wss://", "").replace("ws://", "").replace("https://", "").replace("http://", "")
+    if "livekit.cloud" in host_lk:
         subdomain = host_lk.split(".")[0]
-        return f"{subdomain}.sip.livekit.cloud"
-    return "4mp2ouvchg3.india.sip.livekit.cloud"
+        if subdomain and subdomain != "www":
+            return f"{subdomain}.sip.livekit.cloud"
+    return "sip.livekit.cloud"
 
 
 def _get_zadarma_credentials() -> tuple[str, str]:
