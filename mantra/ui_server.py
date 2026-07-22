@@ -891,15 +891,15 @@ async def delete_dispatch_rule(rule_id: str):
 
 
 
-def _build_plivo_xml(clean_to: str, sip_domain: str, action_url: str) -> str:
-    """Build a Plivo XML document that dials the LiveKit SIP endpoint correctly."""
-    clean_to = escape(clean_to)
+def _build_plivo_xml(sip_trunk_id: str, sip_domain: str, action_url: str) -> str:
+    """Build a Plivo XML document that dials the LiveKit SIP trunk endpoint correctly."""
+    sip_trunk_id = escape(sip_trunk_id)
     sip_domain = escape(sip_domain)
     action_url = escape(action_url)
     return f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Dial action="{action_url}" method="POST" timeout="20">
-        <User>sip:{clean_to}@{sip_domain};transport=tcp</User>
+        <User>sip:{sip_trunk_id}@{sip_domain};transport=tcp</User>
     </Dial>
 </Response>'''
 
@@ -979,7 +979,7 @@ async def plivo_xml(request: Request):
 
     
     xml_content = _build_plivo_xml(
-        clean_to=clean_to,
+        sip_trunk_id=sip_trunk_id,
         sip_domain=sip_domain,
         action_url=action_url,
     )
