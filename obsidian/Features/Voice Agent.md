@@ -57,6 +57,21 @@ The core real-time voice AI agent. Connects to LiveKit rooms, handles the full S
 }
 ```
 
+## Handoff to Human (`transfer_to_human`)
+
+**File:** `mantra/agent.py:279-378`
+
+An LLM-registered function tool. When the agent cannot resolve an issue or the user requests a human:
+
+1. **Guard** — `handoff_triggered` flag prevents duplicate calls
+2. **Resolve target** — Looks up `TRANSFER_NUMBERS` dict by department (`refund`/`support`/`billing`/`general`), falls back to `TRANSFER_DEFAULT_NUMBER`
+3. **Create SIP participant** — Dial the human agent into the **same LiveKit room** so AI + human + caller are all present
+4. **Webhook** — Sends `HANDOFF_REQUESTED` event to `MANTRAASSIST_BACKEND_URL/webhooks/n8n`
+5. **Silence enforcement** — `agent.update_instructions("You are SILENT...")` + `session.interrupt()` to stop TTS
+6. **Returns** `"TRANSFER_COMPLETE. Do not speak."`
+
+**Known issue:** Race condition between tool return and silence instructions — the LLM may produce a brief residual utterance (`"..."`) that fails TTS. See TODO.
+
 ## Post-Call Processing
 
 See [[Post-Call Processing.md]].

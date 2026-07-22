@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-07-22
+
+- **analysis:** Inbound call + KB prod-readiness review on live Plivo call (org 66)
+- **bug:** MCP server fails at startup — `module 'livekit.agents.llm.mcp' has no attribute 'CstdioServerParameters'` — DB tool unavailable to agent
+- **bug:** KB retriever returned zero results for org 66 across 5 queries — likely empty `kb_pages` table, not a code issue
+- **bug:** Post-call webhook to n8n returns 404 — ngrok endpoint lacks `/webhooks/n8n` route
+- **bug:** Handoff TTS glitch — residual `"..."` utterance causes `APIError` traceback after `transfer_to_human` (race between tool return and silence instructions)
+- **ops:** `AWS_S3_BUCKET_NAME` not set — recordings skipped
+- **doc:** Confirmed `transfer_to_human` is fully implemented (not commented out as TODO claimed)
+- **doc:** Updated Obsidian vault: Current Sprint, TODO, Components, Voice Agent, Architecture Overview
+
 ## 2026-07-21
 
 - **fix:** Inbound call webhook payload now includes `direction`, `inbound_context` (org_id, kb_id, phone_number, provider) so MantraAssist backend can correlate inbound call results

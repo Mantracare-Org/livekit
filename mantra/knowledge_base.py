@@ -19,6 +19,25 @@ import asyncio
 
 logger = logging.getLogger("mantra.knowledge_base")
 
+
+def build_search_query(use_generated_column: bool = True) -> str:
+    """Build the KB search SQL using either the generated text_search column or a direct expression."""
+    vector_expr = "text_search" if use_generated_column else "to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(content_in_text, ''))"
+    return f"""
+        SELECT id, kb_id, title, content, source_type, page_meta, content_in_text, created_at,
+               ts_rank({vector_expr}, websearch_to_tsquery('simple', $2)) as similarity
+        FROM kb_pages
+        WHERE kb_id = ANY($1::text[])
+          AND {vector_expr} @@ websearch_to_tsquery('simple', $2)
+          AND ($4::text[] IS NULL OR 
+              (jsonb_typeof(page_meta->'tags_name') = 'array' AND page_meta->'tags_name' ?| $4::text[]) OR
+              (jsonb_typeof(page_meta->'tags_name') = 'string' AND page_meta->>'tags_name' = ANY($4::text[]))
+          )
+        ORDER BY similarity DESC
+        LIMIT $3
+    """
+
+
 # ---- Models ----
 
 
@@ -85,6 +104,7 @@ class PostgresKnowledgeBase(KnowledgeBase):
     def __init__(self, dsn: str):
         self.dsn = dsn
         self._pool: Optional[asyncpg.Pool] = None
+        self._use_generated_text_search: Optional[bool] = None
 
     async def _get_pool(self) -> asyncpg.Pool:
         if self._pool is None:
@@ -128,6 +148,22 @@ class PostgresKnowledgeBase(KnowledgeBase):
             )
             return str(row["id"])
 
+    async def _supports_generated_text_search(self, conn: asyncpg.Connection) -> bool:
+        if self._use_generated_text_search is not None:
+            return self._use_generated_text_search
+
+        row = await conn.fetchrow(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = 'kb_pages' AND column_name = 'text_search'
+            ) AS has_column
+            """
+        )
+        self._use_generated_text_search = bool(row["has_column"]) if row else False
+        return self._use_generated_text_search
+
     async def search(
         self,
         kb_ids: list[str],
@@ -136,27 +172,16 @@ class PostgresKnowledgeBase(KnowledgeBase):
         tags: Optional[list[str]] = None,
     ) -> list[KnowledgePage]:
         """
-        Executes a Vectorless Full-Text Search (FTS) query against kb_pages.
-        Filters by kb_id and optionally by tags. 
-        The tags filter uses the JSONB ?| operator to natively check for overlaps 
+        Executes a Full-Text Search (FTS) query against kb_pages.
+        Filters by kb_id and optionally by tags.
+        The tags filter uses the JSONB ?| operator to natively check for overlaps
         between the requested tags and the stored 'tags_name' JSONB array in page_meta.
         """
         pool = await self._get_pool()
         async with pool.acquire() as conn:
+            use_generated_column = await self._supports_generated_text_search(conn)
             rows = await conn.fetch(
-                """
-                SELECT id, kb_id, title, content, source_type, page_meta, content_in_text, created_at,
-                       ts_rank(text_search, websearch_to_tsquery('simple', $2)) as similarity
-                FROM kb_pages
-                WHERE kb_id = ANY($1::text[])
-                  AND text_search @@ websearch_to_tsquery('simple', $2)
-                  AND ($4::text[] IS NULL OR 
-                      (jsonb_typeof(page_meta->'tags_name') = 'array' AND page_meta->'tags_name' ?| $4::text[]) OR
-                      (jsonb_typeof(page_meta->'tags_name') = 'string' AND page_meta->>'tags_name' = ANY($4::text[]))
-                  )
-                ORDER BY similarity DESC
-                LIMIT $3
-            """,
+                build_search_query(use_generated_column=use_generated_column),
                 kb_ids,
                 query,
                 top_k,

@@ -913,19 +913,19 @@ async def plivo_xml(request: Request):
     Looks up the SIP trunk ID from the phone number mapping.
     """
     call_uuid = "unknown"
-    to_number = "918031321203"
+    to_number = "unknown"
     from_number = "unknown"
     
     if request.method == "POST":
         form_data = await request.form()
         logger.info(f"Received Plivo XML request via POST: {dict(form_data)}")
         call_uuid = form_data.get("CallUUID", "unknown")
-        to_number = form_data.get("To", "918031321203")
+        to_number = form_data.get("To", "unknown")
         from_number = form_data.get("From", "unknown")
     elif request.method == "GET":
         logger.info(f"Received Plivo XML request via GET: {dict(request.query_params)}")
         call_uuid = request.query_params.get("CallUUID", "unknown")
-        to_number = request.query_params.get("To", "918031321203")
+        to_number = request.query_params.get("To", "unknown")
         from_number = request.query_params.get("From", "unknown")
         
     logger.info(f"Plivo XML parameters - CallUUID: {call_uuid}, To: {to_number}, From: {from_number}")
@@ -944,10 +944,31 @@ async def plivo_xml(request: Request):
         except Exception as e:
             logger.warning(f"Redis lookup failed for Plivo SIP trunk: {e}")
     
-    # Fallback to hardcoded if not found (backwards compatibility)
+    # Fallback to DB if not found in Redis
     if not sip_trunk_id:
-        sip_trunk_id = "ST_9C476YUSTSfm"
-        logger.warning(f"No SIP trunk mapping found for {to_number}, using fallback: {sip_trunk_id}")
+        try:
+            conn = await get_db_connection()
+            row = await conn.fetchrow(
+                "SELECT sip_trunk_id FROM org_configs WHERE phone_number IN ($1, $2)",
+                to_number, clean_to
+            )
+            await conn.close()
+            if row and row['sip_trunk_id']:
+                sip_trunk_id = row['sip_trunk_id']
+                logger.info(f"Found Plivo SIP trunk mapping in DB for {to_number}: {sip_trunk_id}")
+                if redis_client:
+                    await redis_client.set(f"plivo:sip_trunk:{to_number}", sip_trunk_id, ex=86400*30)
+        except Exception as e:
+            logger.warning(f"DB lookup failed for Plivo SIP trunk: {e}")
+            
+    # Fallback to env var if not found
+    if not sip_trunk_id:
+        sip_trunk_id = os.getenv("SIP_TRUNK_ID")
+        if sip_trunk_id:
+            logger.warning(f"No SIP trunk mapping found for {to_number}, using fallback from env: {sip_trunk_id}")
+        else:
+            logger.error(f"No SIP trunk mapping found for {to_number} and no SIP_TRUNK_ID in env")
+            return Response(content='<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>', media_type="application/xml")
     
     sip_domain = _get_sip_domain()
         
@@ -973,19 +994,19 @@ async def twilio_webhook(request: Request):
     Looks up the SIP trunk ID from the phone number mapping.
     """
     call_sid = "unknown"
-    to_number = "918031321203"
+    to_number = "unknown"
     from_number = "unknown"
     
     if request.method == "POST":
         form_data = await request.form()
         logger.info(f"Received Twilio webhook via POST: {dict(form_data)}")
         call_sid = form_data.get("CallSid", "unknown")
-        to_number = form_data.get("To", "918031321203")
+        to_number = form_data.get("To", "unknown")
         from_number = form_data.get("From", "unknown")
     elif request.method == "GET":
         logger.info(f"Received Twilio webhook via GET: {dict(request.query_params)}")
         call_sid = request.query_params.get("CallSid", "unknown")
-        to_number = request.query_params.get("To", "918031321203")
+        to_number = request.query_params.get("To", "unknown")
         from_number = request.query_params.get("From", "unknown")
         
     logger.info(f"Twilio webhook parameters - CallSid: {call_sid}, To: {to_number}, From: {from_number}")
@@ -1003,10 +1024,31 @@ async def twilio_webhook(request: Request):
         except Exception as e:
             logger.warning(f"Redis lookup failed for Twilio SIP trunk: {e}")
     
-    # Fallback to hardcoded if not found
+    # Fallback to DB if not found in Redis
     if not sip_trunk_id:
-        sip_trunk_id = "ST_9C476YUSTSfm"
-        logger.warning(f"No SIP trunk mapping found for {to_number}, using fallback: {sip_trunk_id}")
+        try:
+            conn = await get_db_connection()
+            row = await conn.fetchrow(
+                "SELECT sip_trunk_id FROM org_configs WHERE phone_number IN ($1, $2)",
+                to_number, clean_to
+            )
+            await conn.close()
+            if row and row['sip_trunk_id']:
+                sip_trunk_id = row['sip_trunk_id']
+                logger.info(f"Found Twilio SIP trunk mapping in DB for {to_number}: {sip_trunk_id}")
+                if redis_client:
+                    await redis_client.set(f"twilio:sip_trunk:{to_number}", sip_trunk_id, ex=86400*30)
+        except Exception as e:
+            logger.warning(f"DB lookup failed for Twilio SIP trunk: {e}")
+
+    # Fallback to env var if not found
+    if not sip_trunk_id:
+        sip_trunk_id = os.getenv("SIP_TRUNK_ID")
+        if sip_trunk_id:
+            logger.warning(f"No SIP trunk mapping found for {to_number}, using fallback from env: {sip_trunk_id}")
+        else:
+            logger.error(f"No SIP trunk mapping found for {to_number} and no SIP_TRUNK_ID in env")
+            return Response(content='<?xml version="1.0" encoding="UTF-8"?><Response><Reject/></Response>', media_type="application/xml")
     
     sip_domain = _get_sip_domain()
         

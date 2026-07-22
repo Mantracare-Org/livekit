@@ -2,11 +2,11 @@
 
 ## 1. Voice Agent (`mantra/agent.py`)
 
-The core real-time voice AI agent. ~1513 lines.
+The core real-time voice AI agent. ~995 lines.
 
 **Responsibilities:**
 - Connect to LiveKit rooms via `AgentServer`
-- Orchestrate STT (Deepgram Nova-3) → LLM (OpenAI/Gemini/DeepSeek) → TTS (Cartesia Sonic-3)
+- Orchestrate STT (Deepgram Nova-3) → LLM (OpenAI/Gemini/DeepSeek) → TTS (Cartesia Sonic-3 via LiveKit Inference)
 - Bilingual English/Hindi support (detected from user speech)
 - Dynamic voice selection from `VOICE_MAPPING` dict (8 voices)
 - Call lifecycle: join → converse → goodbye → disconnect
@@ -15,6 +15,7 @@ The core real-time voice AI agent. ~1513 lines.
 - Call duration limiter (3-minute hard kill)
 - Inbound call KB context resolution (`resolve_inbound_context`)
 - `search_knowledge_base` function tool for RAG access
+- `transfer_to_human` function tool for handoff to human agent via SIP
 - Post-call: recording → S3 → webhook → DB
 
 **LLM Options:**

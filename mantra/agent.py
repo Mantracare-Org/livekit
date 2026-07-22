@@ -747,6 +747,10 @@ Follow these specific instructions:
             for key, value in payload.items():
                 if key == "prompt":
                     continue
+                
+                # For inbound calls, if the client name is just "User" or missing, don't inject it to avoid "Am I speaking with User?"
+                if is_inbound and key == "client_name" and (value == "User" or not value):
+                    continue
 
                 readable_key = key.replace("_", " ").title()
 
@@ -1180,9 +1184,14 @@ Follow these specific instructions:
 
         logger.info(f"Generating greeting for {client_name}...")
         try:
-            session.generate_reply(
-                instructions=f"Greet the user named {client_name} and follow the opening script in your instructions."
-            )
+            if is_inbound:
+                session.generate_reply(
+                    instructions="Initiate the conversation according to your system prompt. Introduce yourself and ask how you can help."
+                )
+            else:
+                session.generate_reply(
+                    instructions=f"Greet the user named {client_name} and follow the opening script in your instructions."
+                )
             logger.info("Greeting generation requested.")
         except RuntimeError as e:
             logger.warning(f"Could not generate greeting (session may be closed): {e}")

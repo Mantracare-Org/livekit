@@ -1,16 +1,32 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)  
-> **Last Updated:** 2026-07-18  
-> **Status:** Active maintenance + incremental features
+> **Last Updated:** 2026-07-22  
+> **Status:** Pre-prod hardening — 6 issues found in call review
 
 ## In Progress
 
+- [ ] **BLOCKER:** Fix MCP server — `CstdioServerParameters` attribute missing in `livekit.agents.llm.mcp` (upstream API changed)
+- [ ] **BLOCKER:** Ingest KB data for org 66 — `kb_pages` table has zero rows for this org
+- [ ] Fix post-call webhook 404 — n8n endpoint missing on ngrok backend
+- [ ] Fix handoff TTS glitch — silence instructions race with tool return producing `"..."` utterance
+- [ ] Set `AWS_S3_BUCKET_NAME` or suppress recording errors
 - [ ] Migrate remaining `mantra/agent.py` tool callbacks to separate module
-- [ ] KB audit findings to address:
-  - [ ] Implement vector/embedding search (pgvector + OpenAI embeddings) to replace FTS
-  - [ ] Remove misleading docstring in `knowledge_base.py` claiming pgvector
-  - [ ] Consider upfront KB injection for small KBs (hybrid approach)
+
+## Inbound Call Review (2026-07-22)
+
+Live Plivo call vetted end-to-end. **Inbound flow is solid.** Issues found are in periphery:
+
+| Area | Verdict | Issue |
+|------|---------|-------|
+| Inbound webhook (Plivo → FastAPI) | ✅ | Works |
+| Inbound context resolution (DB) | ✅ | Resolved org 66 from phone number |
+| Agent deployment (LiveKit) | ✅ | Room created, agent answered |
+| STT / LLM / TTS pipeline | ✅ | Full conversation cycled |
+| KB search | ❌ | No data for org 66 |
+| Handoff (`transfer_to_human`) | ✅ (w/ glitch) | SIP participant added, but `"..."` TTS error |
+| Post-call webhook | ❌ | 404 to n8n |
+| Recordings | ❌ | S3 not configured |
 
 ## Recently Completed
 
