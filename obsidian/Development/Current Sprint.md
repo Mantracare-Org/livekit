@@ -1,7 +1,7 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)  
-> **Last Updated:** 2026-07-22  
+> **Last Updated:** 2026-07-23  
 > **Status:** Pre-prod hardening — 6 issues found in call review
 
 ## In Progress
@@ -30,6 +30,7 @@ Live Plivo call vetted end-to-end. **Inbound flow is solid.** Issues found are i
 
 ## Recently Completed
 
+- [x] **2026-07-23** — Fixed Plivo inbound call failure (`UNALLOCATED_NUMBER`): changed `<User>` → `<Sip>` in Plivo XML (`_build_plivo_xml` at `ui_server.py:959`). Plivo's `<User>` does local SIP user lookup — `<Sip>` correctly forwards to external LiveKit SIP endpoint.
 - [x] **2026-07-21** — Fixed inbound call webhook payload: now includes `direction` and `inbound_context` (org_id, kb_id, phone_number, provider) for backend correlation
 - [x] **2026-07-21** — Fixed MCP `call_logs` tool: was dead code (no SQL), now properly upserts into call_logs table
 - [x] **2026-07-21** — Fixed `test_inbound_call` and `create_dispatch_rule` phone_number normalization
@@ -44,6 +45,6 @@ Live Plivo call vetted end-to-end. **Inbound flow is solid.** Issues found are i
 - [x] Automated crash email notifications — 2026-05
 - [x] Webhook-based call log storage — 2026-05
 
-## Blocked
+## Resolved (was blocked)
 
-- Plivo proxy routing stability (India infra) — awaiting provider feedback
+- ~~Plivo proxy routing stability (India infra) — awaiting provider feedback~~ → **Root cause found and fixed**: Not a proxy issue. Plivo XML used `<User>` instead of `<Sip>`, causing Plivo to do internal SIP user lookup instead of forwarding to external LiveKit SIP endpoint. `PLIVO_PROXY` is only for API calls, not SIP signaling — proxy was never involved.

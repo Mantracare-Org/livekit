@@ -956,7 +956,7 @@ def _build_plivo_xml(sip_trunk_id: str, sip_domain: str, action_url: str) -> str
     return f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Dial action="{action_url}" method="POST" timeout="20">
-        <User>sip:{sip_trunk_id}@{sip_domain};transport=tcp</User>
+        <Sip>sip:{sip_trunk_id}@{sip_domain};transport=tcp</Sip>
     </Dial>
 </Response>'''
 

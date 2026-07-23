@@ -22,7 +22,7 @@
 - [ ] Add graceful shutdown handler for agent.py
 - [ ] Rate limit dispatch-test endpoint
 - [ ] Add request ID tracing across webhook → dispatch → agent
-- [ ] Improve Plivo proxy error handling (retry with backoff)
+- [ ] Improve Plivo proxy error handling (retry with backoff) — note: proxy only covers API calls, not SIP signaling
 
 - [ ] Migrate frontend to a framework (React/Vue) for maintainability
 - [ ] Add WebSocket logging stream for real-time agent transcript

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-07-23
+
+- **fix:** Plivo inbound call routing — `_build_plivo_xml` used `<User>` (Plivo internal SIP user lookup) instead of `<Sip>` (external SIP forward). Caused `UNALLOCATED_NUMBER` on every inbound call. Fixed at `mantra/ui_server.py:959`.
+- **doc:** Updated Obsidian vault: Current Sprint, Changelog — closed the "Plivo proxy routing stability" blocker with root cause
+
 ## 2026-07-22
 
 - **analysis:** Inbound call + KB prod-readiness review on live Plivo call (org 66)
