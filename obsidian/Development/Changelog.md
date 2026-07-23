@@ -2,8 +2,8 @@
 
 ## 2026-07-23
 
-- **fix:** Plivo inbound call routing — final fix: `<User>` with clean numeric SIP URI (`918031321203@domain`), no `;transport=tcp`, no `+` prefix. Four iterations: (1) trunk ID → `UNALLOCATED_NUMBER`, (2) `<Sip>` → `Invalid Answer XML`, (3) `<User>` with `+` → `End Of XML Instructions`, (4) `<User>` with clean number → expected success.
-- **doc:** Updated Obsidian vault: Current Sprint, Changelog — closed the "Plivo proxy routing stability" blocker with root cause
+- **fix:** Plivo inbound call — migrated from Plivo Application XML to Plivo Zentrunk SIP trunking. `_update_plivo_sip_forwarding` now creates Zentrunk origination URI → inbound trunk → links number via Plivo API. Deprecated `_build_plivo_xml`, `/api/v1/sip/plivo-xml`, `/api/v1/sip/plivo-dial-status`. Root cause: Plivo `<User>` Dial sends SIP INVITE that LiveKit rejects (UNALLOCATED_NUMBER); Zentrunk sends authenticated INVITE directly to LiveKit's SIP domain, matching the inbound trunk's numbers array.
+- **doc:** Updated Obsidian vault: Current Sprint, Changelog
 
 ## 2026-07-22
 

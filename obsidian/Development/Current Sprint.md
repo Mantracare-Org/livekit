@@ -1,8 +1,8 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)  
-> **Last Updated:** 2026-07-23  
-> **Status:** Pre-prod hardening — 6 issues found in call review
+ > **Last Updated:** 2026-07-23  
+ > **Status:** Plivo inbound call fix — migrated from Application XML to Zentrunk SIP trunking
 
 ## In Progress
 
@@ -30,11 +30,12 @@ Live Plivo call vetted end-to-end. **Inbound flow is solid.** Issues found are i
 
 ## Recently Completed
 
-- [x] **2026-07-23** — Fixed Plivo inbound call failure: four-iteration fix cycle.
-  1. `<User>` + trunk ID + `;transport=tcp` → Plivo attempted SIP call, LiveKit `UNALLOCATED_NUMBER` (trunk ID not a phone number)
-  2. `<Sip>` + trunk ID + `;transport=tcp` → Plivo `Invalid Answer XML` (Plivo rejects `<Sip>` entirely)
-  3. `<User>` + `+918031321203` + `;transport=tcp` → Plivo skipped Dial (`End Of XML Instructions`) — `+` prefix confuses Plivo's `<User>` parser into local extension lookup
-  4. **`<User>` + `918031321203` + no `;transport=tcp`** — clean numeric SIP URI avoids `+` ambiguity; Plivo executes Dial; LiveKit matches `918031321203` against trunk numbers `[+918031321203, 918031321203]`.
+- [x] **2026-07-23** — Fixed Plivo inbound call: migrated from Plivo Application XML → Plivo Zentrunk SIP trunking
+   1. `<User>` + trunk ID + `;transport=tcp` → `UNALLOCATED_NUMBER`
+   2. `<Sip>` + trunk ID + `;transport=tcp` → `Invalid Answer XML`
+   3. `<User>` + `+918031321203` + `;transport=tcp` → `End Of XML Instructions` (`+` confuses Plivo's `<User>` parser)
+   4. `<User>` + `918031321203` → Plivo executes Dial but LiveKit returns `UNALLOCATED_NUMBER` (Plivo Application approach fundamentally incompatible)
+   5. **Zentrunk migration**: `_update_plivo_sip_forwarding` now creates Zentrunk origination URI → inbound trunk → links number directly via Plivo API. Plivo sends SIP INVITE directly to LiveKit's SIP domain without XML intermediary. Deprecated `_build_plivo_xml`, `/api/v1/sip/plivo-xml`, `/api/v1/sip/plivo-dial-status`.
 - [x] **2026-07-21** — Fixed inbound call webhook payload: now includes `direction` and `inbound_context` (org_id, kb_id, phone_number, provider) for backend correlation
 - [x] **2026-07-21** — Fixed MCP `call_logs` tool: was dead code (no SQL), now properly upserts into call_logs table
 - [x] **2026-07-21** — Fixed `test_inbound_call` and `create_dispatch_rule` phone_number normalization

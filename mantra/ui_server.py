@@ -949,11 +949,9 @@ async def _resolve_plivo_sip_trunk_id(to_number: str) -> str | None:
 
 
 def _build_plivo_xml(sip_trunk_id: str, sip_domain: str, action_url: str, phone_number: str = "") -> str:
-    """Build a Plivo XML document that dials the LiveKit SIP trunk endpoint correctly.
-
-    Uses <User> with the phone number (no + prefix) as the SIP URI username so
-    LiveKit can match the INVITE's To header against the trunk's numbers array.
-    Falls back to trunk ID if phone_number is empty.
+    """
+    DEPRECATED: Plivo Application XML approach is replaced by Zentrunk SIP trunking.
+    Kept for backward compatibility; new setups should use Zentrunk.
     """
     sip_username = escape(phone_number or sip_trunk_id)
     sip_domain = escape(sip_domain)
@@ -970,10 +968,10 @@ def _build_plivo_xml(sip_trunk_id: str, sip_domain: str, action_url: str, phone_
 @app.post("/api/v1/sip/plivo-xml")
 async def plivo_xml(request: Request):
     """
-    Returns XML for Plivo Application to route to the LiveKit SIP Trunk.
-    Passes a dynamic X-Room-Name SIP header to guarantee a unique, non-empty room name.
-    Looks up the SIP trunk ID from the phone number mapping.
+    DEPRECATED: Replaced by Plivo Zentrunk SIP trunking.
+    Kept for backward compatibility with numbers still using Plivo Application.
     """
+    logger.warning("plivo_xml endpoint called (DEPRECATED - migrating to Zentrunk)")
     call_uuid = "unknown"
     to_number = "unknown"
     from_number = "unknown"
@@ -1002,9 +1000,9 @@ async def plivo_xml(request: Request):
             logger.error(f"No SIP trunk mapping found for {to_number} and no SIP_TRUNK_ID in env")
             return Response(content='<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>', media_type="application/xml")
     
-    # Normalize the called number to clean format (no + prefix) for SIP URI
-    # LiveKit's trunk has both +918031321203 and 918031321203 in its numbers.
-    # Using clean (no +) avoids Plivo misinterpreting the + as a local extension prefix.
+    # Use clean number (no + prefix) for the SIP URI username.
+    # Plivo's <User> element treats + prefix as a local extension lookup,
+    # causing silent skip. LiveKit's trunk has both formats in its numbers array.
     clean_to = _normalize_phone_number(to_number) if to_number != "unknown" else ""
     
     sip_domain = _get_sip_domain()
@@ -1248,8 +1246,11 @@ async def _update_twilio_sip_forwarding(phone_number: str, sip_uri: str) -> dict
 
 async def _update_plivo_sip_forwarding(phone_number: str, sip_uri: str) -> dict:
     """
-    Updates the SIP URI forwarding in Plivo by updating the Endpoint/Application.
-    Uses Plivo REST API to configure the SIP URI as the answer_url for the number.
+    Configures Plivo Zentrunk SIP trunking for inbound calls.
+    Creates a Zentrunk origination URI pointing to LiveKit's SIP domain,
+    a Zentrunk inbound trunk, and links the phone number to the trunk.
+    This replaces the Plivo Application XML webhook approach with
+    direct SIP trunking as documented by LiveKit.
     """
     plivo_auth_id = os.getenv("PLIVO_AUTH_ID")
     plivo_auth_token = os.getenv("PLIVO_AUTH_TOKEN")
@@ -1257,11 +1258,7 @@ async def _update_plivo_sip_forwarding(phone_number: str, sip_uri: str) -> dict:
     if not plivo_auth_id or not plivo_auth_token:
         raise ValueError("Plivo API credentials not found in environment variables.")
 
-    # Normalize phone number (Plivo expects E.164 format)
-    number_clean = phone_number if phone_number.startswith("+") else f"+{phone_number}"
-    
-    # Plivo SIP URI format
-    sip_uri_clean = sip_uri.replace("sip:", "")
+    number_clean = phone_number.replace("+", "").replace(" ", "")
     
     import base64
     auth = base64.b64encode(f"{plivo_auth_id}:{plivo_auth_token}".encode()).decode()
@@ -1270,47 +1267,81 @@ async def _update_plivo_sip_forwarding(phone_number: str, sip_uri: str) -> dict:
         'Content-Type': 'application/json'
     }
     
+    sip_domain = _get_sip_domain()
+    origination_host = f"{sip_domain};transport=tcp"
+    base_url = f"https://api.plivo.com/v1/Account/{plivo_auth_id}"
+    trunk_label = f"LiveKit ({sip_domain.split('.')[0]})"
+    
     async with aiohttp.ClientSession() as session:
-        # Find the number in Plivo
-        url = f"https://api.plivo.com/v1/Account/{plivo_auth_id}/Number/"
-        async with session.get(url, headers=headers) as resp:
-            text = await resp.text()
+        # 1. Create or find existing Zentrunk origination URI for this SIP domain
+        async with session.get(f"{base_url}/Zentrunk/URI/", headers=headers) as resp:
+            uri_list = json.loads(await resp.text()) if resp.status == 200 else {"objects": []}
+        
+        uri_uuid = None
+        for uri_obj in uri_list.get("objects", []):
+            if sip_domain in uri_obj.get("uri", "") and "transport=tcp" in uri_obj.get("uri", ""):
+                uri_uuid = uri_obj.get("uri_uuid")
+                logger.info(f"Found existing Zentrunk origination URI {uri_uuid}: {uri_obj.get('uri')}")
+                break
+        
+        if not uri_uuid:
+            uri_data = {"uri": origination_host}
+            async with session.post(f"{base_url}/Zentrunk/URI/", headers=headers, json=uri_data) as resp:
+                result_text = await resp.text()
+                result = json.loads(result_text) if result_text else {}
+                if resp.status in (200, 201, 202):
+                    uri_uuid = result.get("uri_uuid")
+                    logger.info(f"Created Zentrunk origination URI {uri_uuid}: {origination_host}")
+                else:
+                    raise Exception(f"Failed to create Zentrunk URI: {result}")
+        
+        # 2. Create or find existing Zentrunk inbound trunk using this URI
+        async with session.get(f"{base_url}/Zentrunk/Trunk/", headers=headers) as resp:
+            trunk_list = json.loads(await resp.text()) if resp.status == 200 else {"objects": []}
+        
+        trunk_id = None
+        for trunk_obj in trunk_list.get("objects", []):
+            if trunk_obj.get("primary_uri_uuid") == uri_uuid:
+                trunk_id = trunk_obj.get("trunk_id")
+                logger.info(f"Found existing Zentrunk inbound trunk {trunk_id}: {trunk_obj.get('name')}")
+                break
+        
+        if not trunk_id:
+            trunk_data = {
+                "name": f"Inbound via {trunk_label}",
+                "trunk_direction": "inbound",
+                "primary_uri_uuid": uri_uuid
+            }
+            async with session.post(f"{base_url}/Zentrunk/Trunk/", headers=headers, json=trunk_data) as resp:
+                result_text = await resp.text()
+                result = json.loads(result_text) if result_text else {}
+                if resp.status in (200, 201, 202):
+                    trunk_id = result.get("trunk_id")
+                    logger.info(f"Created Zentrunk inbound trunk {trunk_id}")
+                else:
+                    raise Exception(f"Failed to create Zentrunk trunk: {result}")
+        
+        # 3. Verify the number exists in Plivo
+        async with session.get(f"{base_url}/Number/{number_clean}/", headers=headers) as resp:
             if resp.status != 200:
-                logger.error(f"Plivo API error listing numbers {resp.status}: {text}")
-                raise Exception(f"Plivo API error: {text}")
-            
-            data = json.loads(text)
-            numbers = data.get("objects", [])
-            target_number = None
-            for num in numbers:
-                plivo_number = num.get("number", "").replace(" ", "")
-                if plivo_number == number_clean or plivo_number == number_clean.replace("+", ""):
-                    target_number = num
-                    break
-            
-            if not target_number:
-                raise Exception(f"Phone number {number_clean} not found in Plivo account")
+                raise Exception(f"Phone number +{number_clean} not found in Plivo account")
         
-        # Use the actual phone number (without +) as the API resource identifier.
-        # Plivo's Number API uses the phone number, not the UUID, in the URL path.
-        plivo_number_for_url = number_clean.replace("+", "").replace(" ", "")
-        
-        # Update the number's answer_url to point to our SIP endpoint
-        # Plivo uses XML response for call handling. We'll set the answer_url to a webhook
-        # that returns XML to forward to the SIP URI
-        webhook_url = f"https://{os.getenv('LIVEKIT_URL', '').replace('wss://', '').replace('ws://', '').replace('https://', '').replace('http://', '')}/api/v1/sip/plivo-xml"
-        
-        update_url = f"https://api.plivo.com/v1/Account/{plivo_auth_id}/Number/{plivo_number_for_url}/"
-        update_data = {"answer_url": webhook_url, "answer_method": "POST"}
-        async with session.post(update_url, headers=headers, json=update_data) as resp:
+        # 4. Link the phone number to the Zentrunk trunk (replaces any existing Application)
+        update_data = {"app_id": trunk_id}
+        async with session.post(f"{base_url}/Number/{number_clean}/", headers=headers, json=update_data) as resp:
             text = await resp.text()
             if resp.status in (200, 202):
                 try:
-                    return json.loads(text)
+                    result = json.loads(text)
                 except Exception:
-                    return {"status": "success", "response": text}
+                    result = {"status": "success", "response": text}
+                result["zentrunk_trunk_id"] = trunk_id
+                result["zentrunk_uri_uuid"] = uri_uuid
+                result["zentrunk_sip_domain"] = sip_domain
+                logger.info(f"Linked number +{number_clean} to Zentrunk trunk {trunk_id}")
+                return result
             else:
-                logger.error(f"Plivo API error updating number {resp.status}: {text}")
+                logger.error(f"Plivo API error linking number to Zentrunk trunk {resp.status}: {text}")
                 raise Exception(f"Plivo API error: {text}")
 
 
@@ -1619,8 +1650,10 @@ async def _setup_inbound_sip_process(payload: dict | None) -> JSONResponse:
 @app.post("/api/v1/sip/plivo-dial-status")
 async def plivo_dial_status(request: Request):
     """
-    Callback from Plivo when the Dial attempt completes.
+    DEPRECATED: Replaced by Plivo Zentrunk SIP trunking.
+    Kept for backward compatibility with numbers still using Plivo Application.
     """
+    logger.warning("plivo_dial_status endpoint called (DEPRECATED - migrating to Zentrunk)")
     form_data = await request.form()
     logger.info(f"Received Plivo Dial Status callback: {dict(form_data)}")
     
