@@ -1268,7 +1268,7 @@ async def _update_plivo_sip_forwarding(phone_number: str, sip_uri: str) -> dict:
     }
     
     sip_domain = _get_sip_domain()
-    origination_host = f"{sip_domain};transport=tcp"
+    origination_host = f"{sip_domain}:5061;transport=tls"
     base_url = f"https://api.plivo.com/v1/Account/{plivo_auth_id}"
     trunk_label = f"LiveKit ({sip_domain.split('.')[0]})"
     
@@ -1279,7 +1279,7 @@ async def _update_plivo_sip_forwarding(phone_number: str, sip_uri: str) -> dict:
         
         uri_uuid = None
         for uri_obj in uri_list.get("objects", []):
-            if sip_domain in uri_obj.get("uri", "") and "transport=tcp" in uri_obj.get("uri", ""):
+            if sip_domain in uri_obj.get("uri", "") and "transport=tls" in uri_obj.get("uri", ""):
                 uri_uuid = uri_obj.get("uri_uuid")
                 logger.info(f"Found existing Zentrunk origination URI {uri_uuid}: {uri_obj.get('uri')}")
                 break
