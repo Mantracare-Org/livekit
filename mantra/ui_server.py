@@ -951,9 +951,9 @@ async def _resolve_plivo_sip_trunk_id(to_number: str) -> str | None:
 def _build_plivo_xml(sip_trunk_id: str, sip_domain: str, action_url: str, phone_number: str = "") -> str:
     """Build a Plivo XML document that dials the LiveKit SIP trunk endpoint correctly.
 
-    Uses <Sip> with the E.164 phone number as the SIP URI username so LiveKit can
-    match the INVITE to the correct inbound trunk via its numbers array.
-    Falls back to trunk ID (as sip_username) if phone_number is empty.
+    Uses <User> with the phone number (no + prefix) as the SIP URI username so
+    LiveKit can match the INVITE's To header against the trunk's numbers array.
+    Falls back to trunk ID if phone_number is empty.
     """
     sip_username = escape(phone_number or sip_trunk_id)
     sip_domain = escape(sip_domain)
@@ -961,7 +961,7 @@ def _build_plivo_xml(sip_trunk_id: str, sip_domain: str, action_url: str, phone_
     return f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Dial action="{action_url}" method="POST" timeout="20">
-        <Sip>sip:{sip_username}@{sip_domain}</Sip>
+        <User>sip:{sip_username}@{sip_domain}</User>
     </Dial>
 </Response>'''
 
@@ -1002,10 +1002,10 @@ async def plivo_xml(request: Request):
             logger.error(f"No SIP trunk mapping found for {to_number} and no SIP_TRUNK_ID in env")
             return Response(content='<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>', media_type="application/xml")
     
-    # Normalize the called number to E.164 (+ prefix) for SIP URI matching
-    # LiveKit matches inbound SIP INVITEs against trunk numbers, so the SIP URI
-    # username must match the number format in the trunk's numbers array.
-    e164_to = to_number if to_number.startswith("+") else f"+{to_number}" if to_number != "unknown" else ""
+    # Normalize the called number to clean format (no + prefix) for SIP URI
+    # LiveKit's trunk has both +918031321203 and 918031321203 in its numbers.
+    # Using clean (no +) avoids Plivo misinterpreting the + as a local extension prefix.
+    clean_to = _normalize_phone_number(to_number) if to_number != "unknown" else ""
     
     sip_domain = _get_sip_domain()
         
@@ -1019,7 +1019,7 @@ async def plivo_xml(request: Request):
         sip_trunk_id=sip_trunk_id,
         sip_domain=sip_domain,
         action_url=action_url,
-        phone_number=e164_to,
+        phone_number=clean_to,
     )
     logger.info(f"Returning Plivo XML for {call_uuid}: {xml_content}")
     return Response(content=xml_content, media_type="application/xml")
