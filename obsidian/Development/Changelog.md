@@ -2,8 +2,7 @@
 
 ## 2026-07-23
 
-- **fix:** Plivo inbound call routing — reused `<User>` (correct Plivo element) but changed SIP URI username from trunk ID (`ST_ReVsrLzNdcAi`) to E.164 phone number (`+918031321203`) so LiveKit can match the INVITE to the inbound trunk via its numbers array. Root cause: LiveKit matches inbound trunks by called number, not trunk ID.
-- **fix:** Reverted `<Sip>` attempt — Plivo returned `Invalid Answer XML` (code 8011), confirming `<User>` is the correct element for Plivo → LiveKit SIP forwarding.
+- **fix:** Plivo inbound call routing — final fix uses `<Sip>` with E.164 phone number as SIP URI username (no `;transport=tcp`). Plivo `<User>` is for local SIP user lookup; `<Sip>` correctly forwards to external LiveKit SIP endpoint. LiveKit matches by called number in trunk `numbers` array, not trunk ID. Three failed iterations preceded the fix: trunk ID (`UNALLOCATED_NUMBER`), `<Sip>` with transport (`Invalid Answer XML`), `<User>` with phone number (`End Of XML Instructions`).
 - **doc:** Updated Obsidian vault: Current Sprint, Changelog — closed the "Plivo proxy routing stability" blocker with root cause
 
 ## 2026-07-22

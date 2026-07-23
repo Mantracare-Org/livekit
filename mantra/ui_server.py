@@ -950,10 +950,10 @@ async def _resolve_plivo_sip_trunk_id(to_number: str) -> str | None:
 
 def _build_plivo_xml(sip_trunk_id: str, sip_domain: str, action_url: str, phone_number: str = "") -> str:
     """Build a Plivo XML document that dials the LiveKit SIP trunk endpoint correctly.
-    
-    Uses the phone number (E.164) as the SIP URI username so LiveKit can match
-    the INVITE to the correct inbound trunk via its numbers array.
-    Falls back to trunk ID if phone_number is empty.
+
+    Uses <Sip> with the E.164 phone number as the SIP URI username so LiveKit can
+    match the INVITE to the correct inbound trunk via its numbers array.
+    Falls back to trunk ID (as sip_username) if phone_number is empty.
     """
     sip_username = escape(phone_number or sip_trunk_id)
     sip_domain = escape(sip_domain)
@@ -961,7 +961,7 @@ def _build_plivo_xml(sip_trunk_id: str, sip_domain: str, action_url: str, phone_
     return f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Dial action="{action_url}" method="POST" timeout="20">
-        <User>sip:{sip_username}@{sip_domain};transport=tcp</User>
+        <Sip>sip:{sip_username}@{sip_domain}</Sip>
     </Dial>
 </Response>'''
 
@@ -1021,6 +1021,7 @@ async def plivo_xml(request: Request):
         action_url=action_url,
         phone_number=e164_to,
     )
+    logger.info(f"Returning Plivo XML for {call_uuid}: {xml_content}")
     return Response(content=xml_content, media_type="application/xml")
 
 

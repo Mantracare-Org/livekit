@@ -30,7 +30,11 @@ Live Plivo call vetted end-to-end. **Inbound flow is solid.** Issues found are i
 
 ## Recently Completed
 
-- [x] **2026-07-23** — Fixed Plivo inbound call failure (`UNALLOCATED_NUMBER`): SIP URI now uses E.164 phone number (not trunk ID) as username so LiveKit can match the INVITE to the correct inbound trunk. `<Sip>` reverted to `<User>` after `Invalid Answer XML` error — `<User>` is the correct element for Plivo. Root cause was misaligned SIP URI username vs trunk numbers array matching.
+- [x] **2026-07-23** — Fixed Plivo inbound call failure: three-iteration fix cycle.
+  1. `<User>` with trunk ID → Plivo attempted SIP call but LiveKit returned `UNALLOCATED_NUMBER` (can't match trunk ID as phone number)
+  2. `<Sip>` with trunk ID + `;transport=tcp` → Plivo `Invalid Answer XML` (bad `<Sip>` format)
+  3. `<User>` with phone number → Plivo skipped Dial silently (`End Of XML Instructions`)
+  4. **Final: `<Sip>` with E.164 phone number, no `;transport=tcp`** — `<Sip>` for external SIP forwarding, phone number as username so LiveKit matches against trunk `numbers` array.
 - [x] **2026-07-21** — Fixed inbound call webhook payload: now includes `direction` and `inbound_context` (org_id, kb_id, phone_number, provider) for backend correlation
 - [x] **2026-07-21** — Fixed MCP `call_logs` tool: was dead code (no SQL), now properly upserts into call_logs table
 - [x] **2026-07-21** — Fixed `test_inbound_call` and `create_dispatch_rule` phone_number normalization
