@@ -2,7 +2,8 @@
 
 ## 2026-07-23
 
-- **fix:** Plivo inbound call routing — `_build_plivo_xml` used `<User>` (Plivo internal SIP user lookup) instead of `<Sip>` (external SIP forward). Caused `UNALLOCATED_NUMBER` on every inbound call. Fixed at `mantra/ui_server.py:959`.
+- **fix:** Plivo inbound call routing — reused `<User>` (correct Plivo element) but changed SIP URI username from trunk ID (`ST_ReVsrLzNdcAi`) to E.164 phone number (`+918031321203`) so LiveKit can match the INVITE to the inbound trunk via its numbers array. Root cause: LiveKit matches inbound trunks by called number, not trunk ID.
+- **fix:** Reverted `<Sip>` attempt — Plivo returned `Invalid Answer XML` (code 8011), confirming `<User>` is the correct element for Plivo → LiveKit SIP forwarding.
 - **doc:** Updated Obsidian vault: Current Sprint, Changelog — closed the "Plivo proxy routing stability" blocker with root cause
 
 ## 2026-07-22
