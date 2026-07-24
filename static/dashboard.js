@@ -28,22 +28,14 @@ document.getElementById('logout-btn').addEventListener('click', () => {
 });
 
 // ── Metrics Bar ──────────────────────────────────────────────────────────
-let isFetchingMetrics = false;
-
 async function loadMetrics() {
-    if (isFetchingMetrics) return;
-    isFetchingMetrics = true;
-    try {
-        const data = await apiFetch('/api/v1/dashboard/metrics');
-        if (data.error) return;
+    const data = await apiFetch('/api/v1/dashboard/metrics');
+    if (data.error) return;
 
-        document.getElementById('metric-total').textContent = data.total_calls;
-        document.getElementById('metric-answer-rate').textContent = `${data.answer_rate}%`;
-        document.getElementById('metric-avg-duration').textContent =
-            data.avg_duration_seconds ? `${Math.floor(data.avg_duration_seconds / 60)}m ${data.avg_duration_seconds % 60}s` : '—';
-    } finally {
-        isFetchingMetrics = false;
-    }
+    document.getElementById('metric-total').textContent = data.total_calls;
+    document.getElementById('metric-answer-rate').textContent = `${data.answer_rate}%`;
+    document.getElementById('metric-avg-duration').textContent =
+        data.avg_duration_seconds ? `${Math.floor(data.avg_duration_seconds / 60)}m ${data.avg_duration_seconds % 60}s` : '—';
 }
 
 // ── Active Calls + Queue ─────────────────────────────────────────────────
