@@ -29,9 +29,8 @@ logger = logging.getLogger("mantra.ui_server")
 logger.setLevel(logging.INFO)
 _handler = logging.StreamHandler(sys.stdout)
 _handler.setFormatter(logging.Formatter("%(asctime)s INFO %(name)s: %(message)s"))
-if not logger.handlers:
-    logger.addHandler(_handler)
-logger.propagate = True
+logger.addHandler(_handler)
+logger.propagate = False
 
 # Persistent LiveKit API clients
 lk_client: api.LiveKitAPI = None           # Direct — used for Twilio, Zadarma, and general operations
@@ -338,17 +337,6 @@ async def handle_outbound_call_webhook(request: Request):
     # Use call_id or voice_id from payload if available, otherwise use timestamp
     call_id = payload.get("call_id") or payload.get("voice_id") or payload.get("event_id") or int(time.time())
     room_name = f"call_{call_id}"
-    
-    # Check Redis deduplication lock to prevent concurrent duplicate webhooks for the same call_id
-    if redis_client:
-        lock_acquired = await redis_client.set(f"lock:call:{call_id}", "1", nx=True, ex=30)
-        if not lock_acquired:
-            logger.warning(f"Duplicate telephony webhook hit ignored for call_id: {call_id}")
-            return JSONResponse({
-                "status": "ignored",
-                "message": f"Duplicate request for call_id {call_id} already processing",
-                "room": room_name
-            }, status_code=200)
     
     # Construct phone number in E.164 format
     country_code = payload.get("client_country_code", "").strip("+")
@@ -680,17 +668,6 @@ async def create_and_call_plivo(request: Request):
         # 3. Trigger Agent Dispatch — use direct client (no proxy needed for LiveKit Cloud)
         call_id = payload.get("call_id") or payload.get("voice_id") or int(time.time())
         room_name = f"call_{call_id}"
-        
-        # Check Redis deduplication lock to prevent concurrent duplicate calls for the same call_id
-        if redis_client:
-            lock_acquired = await redis_client.set(f"lock:call:{call_id}", "1", nx=True, ex=30)
-            if not lock_acquired:
-                logger.warning(f"Duplicate Plivo call request ignored for call_id: {call_id}")
-                return JSONResponse({
-                    "status": "ignored",
-                    "message": f"Duplicate request for call_id {call_id} already processing",
-                    "room": room_name
-                }, status_code=200)
 
         logger.info(f"Dispatching agent to room {room_name}")
         await lk_client.agent_dispatch.create_dispatch(
