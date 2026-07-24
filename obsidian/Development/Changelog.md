@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-07-24
+
+- **fix:** Three-layer race condition hardening for outbound call webhooks
+  - Increased Redis dedup lock TTL 30s → 600s to prevent late duplicates from passing through
+  - Added room participant check in `trigger_sip` exception handler — skips cleanup if SIP participant already in room (duplicate guard)
+  - Fixed agent `call_status` logic: only trust Redis SIP error if `user_joined` is False — prevents stale duplicate error from overriding real "Completed" status
+  - Files: `mantra/ui_server.py` (lock TTL, room check), `mantra/agent.py` (Redis trust gate)
+
 ## 2026-06-30
 
 - **doc:** Created `obsidian/` — comprehensive Obsidian knowledge base (48 files)

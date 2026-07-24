@@ -811,8 +811,10 @@ Follow these specific instructions:
                 except Exception as redis_err:
                     logger.error(f"Failed to fetch precise SIP status from Redis: {redis_err}")
                 
-                if redis_status:
-                    # If UI server caught a SIP error (Busy/No Answer), trust it completely
+                if redis_status and not call_state["user_joined"]:
+                    # Only trust Redis SIP error if the user never joined.
+                    # If the user joined and spoke, the call connected — ignore stale Redis status
+                    # left by a duplicate webhook's trigger_sip exception handler.
                     call_status = redis_status
                 elif not call_state["user_joined"]:
                     # Fallback: if it waited less than 25s before terminating, it's Busy/Rejected.

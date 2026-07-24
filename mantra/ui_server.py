@@ -29,8 +29,9 @@ logger = logging.getLogger("mantra.ui_server")
 logger.setLevel(logging.INFO)
 _handler = logging.StreamHandler(sys.stdout)
 _handler.setFormatter(logging.Formatter("%(asctime)s INFO %(name)s: %(message)s"))
-logger.addHandler(_handler)
-logger.propagate = False
+if not logger.handlers:
+    logger.addHandler(_handler)
+logger.propagate = True
 
 # Persistent LiveKit API clients
 lk_client: api.LiveKitAPI = None           # Direct — used for Twilio, Zadarma, and general operations
@@ -338,6 +339,17 @@ async def handle_outbound_call_webhook(request: Request):
     call_id = payload.get("call_id") or payload.get("voice_id") or payload.get("event_id") or int(time.time())
     room_name = f"call_{call_id}"
     
+    # Check Redis deduplication lock to prevent concurrent duplicate webhooks for the same call_id
+    if redis_client:
+        lock_acquired = await redis_client.set(f"lock:call:{call_id}", "1", nx=True, ex=600)
+        if not lock_acquired:
+            logger.warning(f"Duplicate telephony webhook hit ignored for call_id: {call_id}")
+            return JSONResponse({
+                "status": "ignored",
+                "message": f"Duplicate request for call_id {call_id} already processing",
+                "room": room_name
+            }, status_code=200)
+    
     # Construct phone number in E.164 format
     country_code = payload.get("client_country_code", "").strip("+")
     client_phone = payload.get("client_phone", "").strip()
@@ -402,7 +414,28 @@ async def handle_outbound_call_webhook(request: Request):
             logger.info(f"SIP Participant created: {sip_part.participant_identity}")
         except Exception as e:
             logger.error(f"SIP Call trigger failed for {room_name}: {e}\n{traceback.format_exc()}")
-            
+
+            # Before any cleanup, check if the call already connected (room has the SIP participant).
+            # This can happen when a duplicate webhook passes through after the lock expires.
+            call_already_connected = False
+            try:
+                participants = await lk_client.room.list_participants(
+                    api.ListParticipantsRequest(room=room_name)
+                )
+                for p in participants.participants:
+                    if p.identity == f"sip_{call_id}":
+                        call_already_connected = True
+                        logger.info(
+                            f"SIP participant {p.identity} already in room {room_name} — "
+                            f"this is a duplicate trigger_sip, skipping cleanup"
+                        )
+                        break
+            except Exception as check_err:
+                logger.warning(f"Could not check room participants for {room_name}: {check_err}")
+
+            if call_already_connected:
+                return
+
             # Store exact SIP failure reason in Redis for the agent to read
             if redis_client:
                 err_str = str(e).lower()
@@ -668,6 +701,17 @@ async def create_and_call_plivo(request: Request):
         # 3. Trigger Agent Dispatch — use direct client (no proxy needed for LiveKit Cloud)
         call_id = payload.get("call_id") or payload.get("voice_id") or int(time.time())
         room_name = f"call_{call_id}"
+        
+        # Check Redis deduplication lock to prevent concurrent duplicate calls for the same call_id
+        if redis_client:
+            lock_acquired = await redis_client.set(f"lock:call:{call_id}", "1", nx=True, ex=600)
+            if not lock_acquired:
+                logger.warning(f"Duplicate Plivo call request ignored for call_id: {call_id}")
+                return JSONResponse({
+                    "status": "ignored",
+                    "message": f"Duplicate request for call_id {call_id} already processing",
+                    "room": room_name
+                }, status_code=200)
 
         logger.info(f"Dispatching agent to room {room_name}")
         await lk_client.agent_dispatch.create_dispatch(
