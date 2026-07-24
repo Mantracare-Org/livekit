@@ -16,32 +16,12 @@ os.environ.pop("HTTPS_PROXY", None)
 os.environ.pop("HTTP_PROXY", None)
 os.environ.pop("https_proxy", None)
 os.environ.pop("http_proxy", None)
-
-# ── Colorama for cross-platform colored terminal logs ──────────────────
-from colorama import Fore, Back, Style, init as colorama_init
-colorama_init(autoreset=True)
-
-class ColorFormatter(logging.Formatter):
-    LEVEL_COLORS = {
-        logging.DEBUG: Fore.CYAN,
-        logging.INFO: Fore.GREEN,
-        logging.WARNING: Fore.YELLOW,
-        logging.ERROR: Fore.RED,
-        logging.CRITICAL: Fore.RED + Back.WHITE,
-    }
-
-    def format(self, record):
-        record.raw_msg = record.getMessage()
-        color = self.LEVEL_COLORS.get(record.levelno, Fore.WHITE)
-        record.msg = f"{color}{record.msg}{Style.RESET_ALL}"
-        return super().format(record)
-
 # LLM Selection Logic
 _is_inference = os.getenv("LIVEKIT_AGENTS_INFERENCE") == "1"
 _proc_type = "Inference Subprocess" if _is_inference else "Main Worker"
 
 _handler = logging.StreamHandler(sys.stdout)
-_handler.setFormatter(ColorFormatter(
+_handler.setFormatter(logging.Formatter(
     f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s"
 ))
 
@@ -249,7 +229,7 @@ async def entrypoint(ctx: JobContext):
     
     await ctx.connect()
 
-    # logger.info(f"{Fore.GREEN}➕ Room Created / Connected: {ctx.room.name}{Style.RESET_ALL}")
+    # logger.info(f"➕ Room Created / Connected: {ctx.room.name}")
     logger.info(f"--- Starting agent session ---")
     logger.info(f"Room: {ctx.room.name}")
     logger.info(f"Job ID: {ctx.job.id}")
@@ -259,7 +239,7 @@ async def entrypoint(ctx: JobContext):
     fnc_ctx = AssistantFunctions(ctx.job.metadata, ctx.room.name, ctx=ctx)
     call_state = {
         "user_joined": False,
-        "timeline": [{"event": "Agent Session Started", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"}]
+        "timeline": [{"event": "Agent Session Started", "timestamp": datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).isoformat()}]
     }
 
     # Session ID for S3 key naming
@@ -311,7 +291,7 @@ async def entrypoint(ctx: JobContext):
 
     @ctx.room.on("participant_disconnected")
     def on_participant_disconnected(participant: rtc.RemoteParticipant):
-        call_state["timeline"].append({"event": "Remote Participant Disconnected", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
+        call_state["timeline"].append({"event": "Remote Participant Disconnected", "timestamp": datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).isoformat()})
         logger.info(f"Participant {participant.identity} disconnected. Force-ending call.")
         create_bg_task(_force_disconnect_room(ctx))
 
@@ -566,8 +546,8 @@ Follow these specific instructions:
             
             if agent_state in ["listening", "idle"]:
                 if time_since_activity > 10.0:
-                    # logger.warning(f"{Fore.YELLOW}No response for 10s. Destroying room.{Style.RESET_ALL}")
-                    call_state["timeline"].append({"event": "Inactivity Timeout Disconnect", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
+                    # logger.warning(f"No response for 10s. Destroying room.")
+                    call_state["timeline"].append({"event": "Inactivity Timeout Disconnect", "timestamp": datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).isoformat()})
                     create_bg_task(_force_disconnect_room(ctx))
                     break
                 elif time_since_activity > 5.0 and not call_state.get("prompted_inactivity", False):
@@ -606,7 +586,7 @@ Follow these specific instructions:
                 content = str(getattr(last_msg, "content", "")).lower()
                 if role == "assistant" and any(phrase in content for phrase in FAREWELL_PHRASES):
                     logger.warning(f"Safety net: Agent said goodbye but end_call was never invoked. Force disconnecting.")
-                    call_state["timeline"].append({"event": "Farewell Safety Net Triggered", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
+                    call_state["timeline"].append({"event": "Farewell Safety Net Triggered", "timestamp": datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).isoformat()})
                     await asyncio.sleep(3.0)  # Give TTS time to finish speaking
                     await _force_disconnect_room(ctx)
                     break
@@ -649,7 +629,7 @@ Follow these specific instructions:
 
                 if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
                     logger.warning("HARD DISCONNECT: 3m limit reached. Force disconnecting room.")
-                    call_state["timeline"].append({"event": "Max Call Duration Reached", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
+                    call_state["timeline"].append({"event": "Max Call Duration Reached", "timestamp": datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).isoformat()})
                     await _force_disconnect_room(ctx)
                 else:
                     logger.info("Room already disconnected — force-disconnect skipping.")
@@ -725,7 +705,7 @@ Follow these specific instructions:
                 
             logger.info("Remote participant joined. Initializing conversation...")
             call_state["user_joined"] = True
-            call_state["timeline"].append({"event": "Remote Participant Joined", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
+            call_state["timeline"].append({"event": "Remote Participant Joined", "timestamp": datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).isoformat()})
             await asyncio.sleep(0.5)
         
         logger.info(f"Generating greeting for {client_name}...")
@@ -781,7 +761,7 @@ Follow these specific instructions:
             try:
                 logger.info("Starting post-call processing...")
                 if "timeline" in call_state:
-                    call_state["timeline"].append({"event": "Call Finalization Started", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
+                    call_state["timeline"].append({"event": "Call Finalization Started", "timestamp": datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).isoformat()})
 
                 # 1. Pre-load call metadata
                 try:
@@ -1019,12 +999,12 @@ async def _force_disconnect_room(ctx: JobContext):
         )
         await lk_api.room.delete_room(api.DeleteRoomRequest(room=ctx.room.name))
         await lk_api.aclose()
-        # logger.info(f"{Fore.RED}➖ Room Destroyed via API: {ctx.room.name}{Style.RESET_ALL}")
+        # logger.info(f"➖ Room Destroyed via API: {ctx.room.name}")
     except Exception as e:
         logger.error(f"Failed to delete room via API: {e}")
         try:
             await ctx.room.disconnect()
-            # logger.info(f"{Fore.RED}➖ Room Disconnected locally: {ctx.room.name}{Style.RESET_ALL}")
+            # logger.info(f"➖ Room Disconnected locally: {ctx.room.name}")
         except Exception as e2:
             logger.error(f"Local disconnect also failed: {e2}")
 

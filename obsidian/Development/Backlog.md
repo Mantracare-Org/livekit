@@ -4,7 +4,7 @@
 
 | Item | Priority | Notes |
 |------|----------|-------|
-| `agent.py` is 995 lines, monolithic | High | Extract tools, prompts, config |
+| `agent.py` is 1,032 lines, monolithic | High | Extract tools, prompts, config |
 | No automated tests | High | Regression risk on refactors |
 | Dispatcher uses 0.5s polling | Medium | Replace with Redis Pub/Sub |
 | Post-call webhook reliability | Medium | No retry after 3 attempts |

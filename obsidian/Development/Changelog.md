@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-07-16
+
+- **refactor:** Removed colorama dependency and `ColorFormatter` — switched to plain `logging.Formatter` for cross-platform logging
+- **refactor:** Migrated all timeline timestamps from UTC (`Z`) to IST (`+05:30`) — `normalize_to_iso8601` now returns `+05:30` format
+- **feat:** Added `previous_stage_id` to call state logging payload for better stage transition tracking
+- **fix:** Initialized stage tracking variables (`not_answering_id`, etc.) to `None` — filtered `target_stage_ids` prevents erroneous next-call scheduling
+- **fix:** Added connection timeout to database client and improved error reporting in dashboard metrics
+- **ops:** Updated agent ID in `livekit.toml` configuration
+- **chore:** Removed test files
+
 ## 2026-06-30
 
 - **doc:** Created `obsidian/` — comprehensive Obsidian knowledge base (48 files)

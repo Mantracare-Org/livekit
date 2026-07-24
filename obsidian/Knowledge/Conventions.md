@@ -3,9 +3,15 @@
 ## Code Style
 
 - **Asynchronous:** All I/O is async via `asyncio`
-- **Logging:** Each module defines its own logger
+- **Logging:** Each module defines its own logger; plain `logging.Formatter` (no colorama)
 - **Env Loading:** `load_dotenv(".env.local")` in entrypoints
 - **Error Handling:** `try/except Exception as e:` at network boundaries, log with traceback
+
+## Timestamps
+
+- All timeline events and `normalize_to_iso8601` use **IST (+05:30)** — never UTC
+- `datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30)))` is the standard pattern
+- ISO-8601 output format: `YYYY-MM-DDTHH:MM:SS+05:30`
 
 ## Architectural Patterns
 
@@ -13,6 +19,7 @@
 - **Capacity Management:** Explicit limits enforced before dispatch
 - **Zombie Cleanup:** Periodic reconciliation between Redis state and LiveKit rooms
 - **Two LiveKit clients:** Direct + Proxied (Plivo India)
+- **Null-safe stage tracking:** Stage ID variables initialized to `None`; filtered with list comprehension before comparison
 
 ## Naming
 
