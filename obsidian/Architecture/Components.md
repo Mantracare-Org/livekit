@@ -6,13 +6,16 @@ The core real-time voice AI agent. ~995 lines.
 
 **Responsibilities:**
 - Connect to LiveKit rooms via `AgentServer`
-- Orchestrate STT (Deepgram Nova-3) → LLM (OpenAI/Gemini/DeepSeek) → TTS (Cartesia Sonic-3)
+- Orchestrate STT (Deepgram Nova-3) → LLM (OpenAI/Gemini/DeepSeek) → TTS (Cartesia Sonic-3 via LiveKit Inference)
 - Bilingual English/Hindi support (detected from user speech)
 - Dynamic voice selection from `VOICE_MAPPING` dict (8 voices)
 - Call lifecycle: join → converse → goodbye → disconnect
 - Inactivity monitoring (10s timeout)
 - Farewell safety net (auto-disconnect on goodbye without `end_call`)
 - Call duration limiter (3-minute hard kill)
+- Inbound call KB context resolution (`resolve_inbound_context`)
+- `search_knowledge_base` function tool for RAG access
+- `transfer_to_human` function tool for handoff to human agent via SIP
 - Post-call: recording → S3 → webhook → DB
 
 **LLM Options:**
@@ -24,7 +27,7 @@ The core real-time voice AI agent. ~995 lines.
 
 ## 2. API/UI Server (`mantra/ui_server.py`)
 
-FastAPI-based HTTP server. ~933 lines.
+FastAPI-based HTTP server. ~2143 lines.
 
 **Endpoints:**
 - `POST /api/v1/auth/login` — JWT authentication
@@ -49,7 +52,7 @@ FastAPI-based HTTP server. ~933 lines.
 
 ## 3. Dispatcher (`mantra/dispatcher.py`)
 
-Background queue consumer. ~172 lines.
+Background queue consumer. ~203 lines.
 
 **Flow:**
 1. Connect to Redis + LiveKit API
@@ -61,9 +64,28 @@ Background queue consumer. ~172 lines.
 
 ---
 
-## 4. MCP Server (`mcp/server.py`)
+## 4. Knowledge Base (`mantra/knowledge_base.py` + `mantra/retriever.py`)
 
-Model Context Protocol server for PostgreSQL. ~177 lines.
+Vectorless KB with PostgreSQL Full-Text Search. ~511 lines total.
+
+**Components:**
+- `PostgresKnowledgeBase` — FTS search, CRUD on `kb_pages` table
+- `KnowledgeRetriever` — Session-cached wrapper that formats results for LLM
+- `adaptive_chunk()` + strategies — Heading, paragraph, sliding-window chunking
+- Ingestion pipeline — PDF, URL, and raw text ingestion
+
+**Endpoints (via `ui_server.py`):**
+- `POST /api/v1/kb/ingest` — File/text/URL ingestion
+- `POST /api/v1/kb/chat` — Test chat against KB
+- `DELETE /api/v1/kb/document` — Delete by document_id
+
+See [[../Features/Knowledge Base.md|Knowledge Base feature doc]] for full details.
+
+---
+
+## 5. MCP Server (`mcp/server.py`)
+
+Model Context Protocol server for PostgreSQL. ~1058 lines.
 
 **Tools:**
 - `list_tables` — List all public schema tables
@@ -73,7 +95,7 @@ Model Context Protocol server for PostgreSQL. ~177 lines.
 
 ---
 
-## 5. Frontend (`static/`)
+## 6. Frontend (`static/`)
 
 | File | Lines | Purpose |
 |------|-------|---------|

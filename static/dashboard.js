@@ -191,6 +191,268 @@ async function loadCallHistory() {
     }).join('');
 }
 
+// ── Knowledge Base ─────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    // KB tab switching
+    document.querySelectorAll('.kb-tab').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.kb-tab').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.kb-pane').forEach(p => p.classList.remove('active'));
+            
+            btn.classList.add('active');
+            document.getElementById(`kb-${btn.dataset.tab}`).classList.add('active');
+            
+            hideKbResult();
+        });
+    });
+
+    // Upload file
+    const btnKbUpload = document.getElementById('btn-kb-upload');
+    const handleKbUpload = async () => {
+        const kbId = document.getElementById('kb-id-upload').value.trim();
+        const file = document.getElementById('kb-file').files[0];
+        
+        if (!kbId || !file) return showKbResult('KB ID and file are required', 'error');
+        
+        showKbResult('Uploading and indexing...', 'info');
+        setBtnLoading('btn-kb-upload', true);
+        
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            const res = await fetch(`/api/v1/knowledge/upload?kb_id=${encodeURIComponent(kbId)}`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${TOKEN}` },
+                body: formData
+            });
+            
+            const data = await res.json();
+            if (res.ok) {
+                showKbResult(`Success! ${data.chunks_created} chunks created (${data.strategy_used})`, 'success');
+            } else {
+                showKbResult(data.error || 'Upload failed', 'error');
+            }
+        } catch (e) {
+            showKbResult(e.message, 'error');
+        } finally {
+            setBtnLoading('btn-kb-upload', false);
+        }
+    };
+    btnKbUpload.addEventListener('click', handleKbUpload);
+    document.getElementById('kb-id-upload').addEventListener('keypress', (e) => { if (e.key === 'Enter') handleKbUpload(); });
+
+    // Index text
+    const btnKbText = document.getElementById('btn-kb-text');
+    const handleKbText = async () => {
+        const kbId = document.getElementById('kb-id-text').value.trim();
+        const content = document.getElementById('kb-content').value.trim();
+        const title = document.getElementById('kb-title').value.trim();
+        
+        if (!kbId || !content) return showKbResult('KB ID and content are required', 'error');
+        
+        showKbResult('Indexing...', 'info');
+        setBtnLoading('btn-kb-text', true);
+        
+        try {
+            const res = await fetch('/api/v1/knowledge/text', {
+                method: 'POST',
+                headers: { ...apiHeaders() },
+                body: JSON.stringify({ kb_id: kbId, content, title: title || undefined })
+            });
+            
+            const data = await res.json();
+            if (res.ok) {
+                showKbResult(`Success! ${data.chunks_created} chunks created (${data.strategy_used})`, 'success');
+            } else {
+                showKbResult(data.error || 'Indexing failed', 'error');
+            }
+        } catch (e) {
+            showKbResult(e.message, 'error');
+        } finally {
+            setBtnLoading('btn-kb-text', false);
+        }
+    };
+    btnKbText.addEventListener('click', handleKbText);
+    document.getElementById('kb-id-text').addEventListener('keypress', (e) => { if (e.key === 'Enter') handleKbText(); });
+    document.getElementById('kb-title').addEventListener('keypress', (e) => { if (e.key === 'Enter') handleKbText(); });
+
+    // Fetch URL
+    const btnKbUrl = document.getElementById('btn-kb-url');
+    const handleKbUrl = async () => {
+        const kbId = document.getElementById('kb-id-url').value.trim();
+        const url = document.getElementById('kb-url-input').value.trim();
+        
+        if (!kbId || !url) return showKbResult('KB ID and URL are required', 'error');
+        
+        showKbResult('Fetching and indexing...', 'info');
+        setBtnLoading('btn-kb-url', true);
+        
+        try {
+            const res = await fetch('/api/v1/knowledge/url', {
+                method: 'POST',
+                headers: { ...apiHeaders() },
+                body: JSON.stringify({ kb_id: kbId, url })
+            });
+            
+            const data = await res.json();
+            if (res.ok) {
+                showKbResult(`Success! ${data.chunks_created} chunks created (${data.strategy_used})`, 'success');
+            } else {
+                showKbResult(data.error || 'URL indexing failed', 'error');
+            }
+        } catch (e) {
+            showKbResult(e.message, 'error');
+        } finally {
+            setBtnLoading('btn-kb-url', false);
+        }
+    };
+    btnKbUrl.addEventListener('click', handleKbUrl);
+    document.getElementById('kb-id-url').addEventListener('keypress', (e) => { if (e.key === 'Enter') handleKbUrl(); });
+    document.getElementById('kb-url-input').addEventListener('keypress', (e) => { if (e.key === 'Enter') handleKbUrl(); });
+
+    // Test Chat
+    let chatHistory = [];
+    const chatInput = document.getElementById('chat-input');
+    const btnKbChat = document.getElementById('btn-kb-chat');
+    const chatArea = document.getElementById('chat-area');
+    const kbIdChatSelect = document.getElementById('kb-id-chat');
+
+    async function loadKbIdsForDashboard() {
+        if (!kbIdChatSelect) return;
+        try {
+            const res = await fetch('/api/v1/knowledge/list', { headers: apiHeaders() });
+            const data = await res.json();
+            kbIdChatSelect.innerHTML = '';
+            if (data.status === 'success' && data.kbs.length > 0) {
+                data.kbs.forEach(kb => {
+                    const opt = document.createElement('option');
+                    opt.value = kb;
+                    opt.textContent = kb;
+                    kbIdChatSelect.appendChild(opt);
+                });
+            } else {
+                kbIdChatSelect.innerHTML = '<option value="">No KBs found</option>';
+            }
+        } catch (e) {
+            kbIdChatSelect.innerHTML = '<option value="">Error loading</option>';
+        }
+    }
+    loadKbIdsForDashboard();
+
+    function appendChatMessage(text, isUser, context = null) {
+        const msgDiv = document.createElement('div');
+        msgDiv.style.maxWidth = '85%';
+        msgDiv.style.padding = '10px 14px';
+        msgDiv.style.borderRadius = '8px';
+        msgDiv.style.fontSize = 'var(--text-sm)';
+        msgDiv.style.lineHeight = '1.4';
+        
+        let contentHtml = '';
+        
+        if (isUser) {
+            msgDiv.style.background = 'var(--accent-primary)';
+            msgDiv.style.color = 'white';
+            msgDiv.style.alignSelf = 'flex-end';
+            msgDiv.style.borderBottomRightRadius = '2px';
+            // Basic escape for user input
+            const safeText = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            contentHtml = `<div>${safeText}</div>`;
+        } else {
+            msgDiv.style.background = 'var(--bg-surface)';
+            msgDiv.style.border = '1px solid var(--border-default)';
+            msgDiv.style.alignSelf = 'flex-start';
+            msgDiv.style.borderBottomLeftRadius = '2px';
+            // Render markdown for AI response
+            contentHtml = `<div class="markdown-body" style="font-size: 0.9rem; line-height: 1.5;">${marked.parse(text)}</div>`;
+        }
+        
+        if (context && context.length > 0) {
+            let contextHtml = '<div class="context-box" style="font-size: 0.8rem; background: rgba(218, 165, 32, 0.1); border-left: 3px solid #DAA520; padding: 8px; margin-bottom: 8px; border-radius: 4px;"><strong>Retrieved Context:</strong><br>';
+            context.forEach((c, idx) => {
+                const preview = c.preview ? c.preview.substring(0, 150) : "";
+                contextHtml += `<div style="margin-top: 4px;">[${idx + 1}] <b style="color: #DAA520;">${c.title}</b>: <span style="color: var(--text-tertiary);">${preview}...</span></div>`;
+            });
+            contextHtml += '</div>';
+            contentHtml = contextHtml + contentHtml;
+        }
+        
+        msgDiv.innerHTML = contentHtml;
+        chatArea.appendChild(msgDiv);
+        chatArea.scrollTop = chatArea.scrollHeight;
+    }
+
+    async function handleChat() {
+        const message = chatInput.value.trim();
+        const kbId = document.getElementById('kb-id-chat').value.trim();
+        
+        if (!message || !kbId) return;
+        
+        appendChatMessage(message, true);
+        chatInput.value = '';
+        chatInput.disabled = true;
+        btnKbChat.disabled = true;
+        btnKbChat.textContent = '...';
+        hideKbResult();
+        
+        try {
+            const response = await fetch('/api/v1/kb/chat', {
+                method: 'POST',
+                headers: { ...apiHeaders() },
+                body: JSON.stringify({
+                    kb_id: kbId,
+                    message: message,
+                    history: chatHistory
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                appendChatMessage(data.reply, false, data.context);
+                chatHistory.push({ role: "user", content: message });
+                chatHistory.push({ role: "assistant", content: data.reply });
+            } else {
+                appendChatMessage("Error: " + (data.error || "Unknown error"), false);
+            }
+        } catch (err) {
+            appendChatMessage("Failed to connect to server.", false);
+        } finally {
+            chatInput.disabled = false;
+            btnKbChat.disabled = false;
+            btnKbChat.textContent = 'Send';
+            chatInput.focus();
+        }
+    }
+
+    btnKbChat.addEventListener('click', handleChat);
+    chatInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') handleChat();
+    });
+
+    function showKbResult(message, type) {
+        const el = document.getElementById('kb-result');
+        el.textContent = message;
+        el.className = `kb-result ${type}`;
+        el.style.display = 'block';
+    }
+
+    function hideKbResult() {
+        document.getElementById('kb-result').style.display = 'none';
+    }
+
+    function setBtnLoading(btnId, loading) {
+        const btn = document.getElementById(btnId);
+        btn.disabled = loading;
+        if (loading) {
+            btn.dataset.label = btn.dataset.label || btn.textContent;
+            btn.innerHTML = '<span class="loading-spinner"></span>Processing...';
+        } else {
+            btn.textContent = btn.dataset.label;
+        }
+    }
+});
+
 // ── Init ─────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     const username = localStorage.getItem('username');

@@ -41,9 +41,18 @@ Step 4: POST-CALL (agent.py, finally block)
 
 ```
 Step 1: Agent auto-starts when LiveKit detects an inbound SIP room
-Step 2: Entrypoint detects missing Redis tracking → creates calls:active entry
-Step 3: Same voice pipeline as outbound
-Step 4: Same post-call processing
+Step 2: Resolve KB scope
+  ├── Parse metadata — extract phone_number
+  ├── POST /api/v1/telephony/resolve-inbound-call → backend
+  └── Returns: org_id, kb_id, kb_tags, prompt, voice, model
+Step 3: Build KB scope from resolved context
+  ├── org_id always appended as kb_id
+  ├── kb_id/kb_ids from payload appended
+  └── kb_tags from payload appended
+Step 4: Entrypoint detects missing Redis tracking → creates calls:active entry
+Step 5: Build agent instructions + register search_knowledge_base tool
+Step 6: Same voice pipeline as outbound
+Step 7: Same post-call processing
 ```
 
 ## Queue-Based Dispatch (deprecated path via dispatcher.py)

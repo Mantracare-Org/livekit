@@ -23,19 +23,22 @@ Modular, asynchronous, multi-process architecture based on Python `asyncio`.
 │   Plivo/     │                  └───────┬───────┘                         │
 │   Zadarma)   │                          │                                 │
 └─────────────┘                            │                          ┌──────┴──────┐
-                                   ┌───────┴───────┐                  │ LiveKit     │
-                                   │  Static Files  │                  │ Cloud API   │
-                                   │  (HTML/JS/CSS) │                  └──────┬──────┘
-                                   └───────┬───────┘                         │
-                                           │                          ┌──────┴──────┐
-                                   ┌───────┴───────┐                  │ Voice Agent │
-                                   │  PostgreSQL   │                  │ agent.py    │
-                                   │  (call_logs)  │                  │             │
-                                   └───────────────┘                  │ STT→LLM→TTS│
-                                                                      └─────────────┘
-                            ┌────────────────────┐
-                            │  AWS S3 (recordings)│
-                            └────────────────────┘
+                                    ┌───────┴───────┐                  │ LiveKit     │
+                                    │  Static Files  │                  │ Cloud API   │
+                                    │  (HTML/JS/CSS) │                  └──────┬──────┘
+                                    └───────┬───────┘                         │
+                                            │                          ┌──────┴──────┐
+                                    ┌───────┴───────┐                  │ Voice Agent │
+                                    │  PostgreSQL   │                  │ agent.py    │
+                                    │  (call_logs   │                  │             │
+                                    │   + kb_pages) │                  │ STT→LLM→TTS│
+                                    └───────────────┘                  └──┬──────┬───┘
+                                                                          │      │
+                             ┌────────────────────┐               ┌──────┘      └──────┐
+                             │  AWS S3 (recordings)│               │  Human Agent       │
+                             └────────────────────┘               │  (SIP Participant  │
+                                                                   │   dialed into room)│
+                                                                   └────────────────────┘
 ```
 
 ## Key Architecture Decisions
@@ -45,5 +48,6 @@ Modular, asynchronous, multi-process architecture based on Python `asyncio`.
 3. **In-memory session recording** — `SessionRecorder` holds audio as numpy arrays, never touches disk
 4. **HMAC-signed webhooks** — Post-call data sent to MantraAssist backend with SHA-256 signing
 5. **Fallback TTS** — Multiple Cartesia API keys cycled on rate limits via `FallbackAdapter`
+6. **Handoff via co-room SIP** — Human agent dialed into the same LiveKit room as AI + caller, then AI silenced via `update_instructions`
 
 See [[Architecture/Design Decisions.md]] for the full decision log.

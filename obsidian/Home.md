@@ -40,12 +40,13 @@ Telephony Provider → Webhook → FastAPI → Redis Queue → Dispatcher → Li
 
 | Metric | Value |
 |--------|-------|
-| Python modules | 6 (`mantra/`) |
+| Python modules | 7 (`mantra/`) |
 | Frontend files | 5 (`static/`) |
 | MCP server | 1 (`mcp/server.py`) |
-| Total source lines | ~4,724 |
-| Core agent file | `mantra/agent.py` — 995 lines |
-| API server file | `mantra/ui_server.py` — 933 lines |
+| Total source lines | ~6,206 |
+| Core agent file | `mantra/agent.py` — 1,513 lines |
+| API server file | `mantra/ui_server.py` — 2,143 lines |
+| KB module | `mantra/knowledge_base.py` — 461 lines |
 
 ---
 

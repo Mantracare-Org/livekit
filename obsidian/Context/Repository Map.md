@@ -1,17 +1,19 @@
 # Repository Map
 
 ```
-/home/fardeen/lkt/
+/home/assassinsk004/livekit/
 ├── mantra/                        # Core Python application package
 │   ├── __init__.py               # Version string
-│   ├── agent.py                  # LiveKit voice agent (995 lines) ★
-│   ├── ui_server.py              # FastAPI web/API server (933 lines) ★
-│   ├── dispatcher.py             # Redis queue-based call dispatcher (172 lines)
-│   ├── utils.py                  # S3, DB, recording, analysis helpers (476 lines)
-│   └── email_alerts.py           # SMTP crash alerts with memes (201 lines)
+│   ├── agent.py                  # LiveKit voice agent (1513 lines) ★
+│   ├── ui_server.py              # FastAPI web/API server (2143 lines) ★
+│   ├── dispatcher.py             # Redis queue-based call dispatcher (203 lines)
+│   ├── knowledge_base.py         # Postgres FTS knowledge base (461 lines) ★
+│   ├── retriever.py              # KB retriever with session cache (50 lines)
+│   ├── utils.py                  # S3, DB, recording, analysis helpers (534 lines)
+│   └── email_alerts.py           # SMTP crash alerts with memes (244 lines)
 │
 ├── mcp/                          # Model Context Protocol server
-│   ├── server.py                 # Postgres tools (177 lines)
+│   ├── server.py                 # Postgres tools (1058 lines)
 │   └── README.md                 # MCP server docs
 │
 ├── static/                       # Frontend (no build step)
@@ -40,15 +42,20 @@
 
 | File | Lines | % of Codebase |
 |------|-------|---------------|
-| `mantra/agent.py` | 995 | 21% |
-| `mantra/ui_server.py` | 933 | 20% |
-| `static/dashboard.html` | 577 | 12% |
-| `mantra/utils.py` | 476 | 10% |
-| `static/index.html` | 475 | 10% |
-| `mantra/dispatcher.py` | 172 | 4% |
-| `mcp/server.py` | 177 | 4% |
-| `mantra/email_alerts.py` | 201 | 4% |
-| Other | ~718 | 15% |
+| `mantra/ui_server.py` | 2143 | 21% |
+| `mantra/agent.py` | 1513 | 15% |
+| `mcp/server.py` | 1058 | 10% |
+| `static/dashboard.html` | 577 | 6% |
+| `mantra/utils.py` | 534 | 5% |
+| `static/index.html` | 475 | 5% |
+| `mantra/knowledge_base.py` | 461 | 5% |
+| `static/login.html` | 259 | 3% |
+| `static/app.js` | 253 | 3% |
+| `mantra/email_alerts.py` | 244 | 2% |
+| `static/dashboard.js` | 206 | 2% |
+| `mantra/dispatcher.py` | 203 | 2% |
+| `mcp/README.md` | 180 | 2% |
+| `mantra/retriever.py` | 50 | <1% |
 
 ## Git Branches
 

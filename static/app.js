@@ -25,7 +25,32 @@ const tabContents = document.querySelectorAll('.tab-content');
 const inputClientName = document.getElementById('input-client-name');
 const inputCallId = document.getElementById('input-call-id');
 const inputLeadId = document.getElementById('input-lead-id');
+const inputKbId = document.getElementById('input-kb-id');
 const inputPrompt = document.getElementById('input-prompt');
+
+// Load KB IDs
+async function loadKbIdsForConsole() {
+    if (!inputKbId) return;
+    try {
+        const res = await fetch('/api/v1/knowledge/list', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const data = await res.json();
+        
+        inputKbId.innerHTML = '<option value="">None (No KB context)</option>';
+        if (data.status === 'success' && data.kbs.length > 0) {
+            data.kbs.forEach(kb => {
+                const opt = document.createElement('option');
+                opt.value = kb;
+                opt.textContent = kb;
+                inputKbId.appendChild(opt);
+            });
+        }
+    } catch (e) {
+        console.error("Failed to load KB IDs", e);
+    }
+}
+loadKbIdsForConsole();
 
 // Raw Inputs
 const payloadRaw = document.getElementById('payload-raw');
@@ -58,6 +83,7 @@ parseRawBtn.addEventListener('click', () => {
         if (data.client_name) inputClientName.value = data.client_name;
         if (data.call_id) inputCallId.value = data.call_id;
         if (data.lead_id) inputLeadId.value = data.lead_id;
+        if (data.kb_id) inputKbId.value = data.kb_id;
         if (data.prompt) inputPrompt.value = data.prompt;
         
         // Switch to structured tab
@@ -78,6 +104,7 @@ async function connect() {
             client_name: inputClientName.value || 'User',
             call_id: inputCallId.value || '99999',
             lead_id: inputLeadId.value || '12345',
+            kb_id: inputKbId.value || undefined,
             prompt: inputPrompt.value || 'You are a helpful assistant.'
         };
 
@@ -249,5 +276,102 @@ function setupRoomListeners() {
         }
     });
 }
+
+// ──────────────────────────────────────────
+// INBOUND MANAGEMENT
+// ──────────────────────────────────────────
+
+const inboundResult = document.getElementById('inbound-result');
+
+function displayInboundResult(data) {
+    inboundResult.value = JSON.stringify(data, null, 2);
+}
+
+async function apiPost(url, body) {
+    try {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        displayInboundResult(data);
+        return data;
+    } catch (e) {
+        inboundResult.value = `Error: ${e.message}`;
+    }
+}
+
+async function apiGet(url) {
+    try {
+        const res = await fetch(url);
+        const data = await res.json();
+        displayInboundResult(data);
+        return data;
+    } catch (e) {
+        inboundResult.value = `Error: ${e.message}`;
+    }
+}
+
+async function apiDelete(url) {
+    try {
+        const res = await fetch(url, { method: 'DELETE' });
+        const data = await res.json();
+        displayInboundResult(data);
+        return data;
+    } catch (e) {
+        inboundResult.value = `Error: ${e.message}`;
+    }
+}
+
+// Inbound Trunk Handlers
+document.getElementById('create-trunk-btn').addEventListener('click', async () => {
+    const headersRaw = document.getElementById('trunk-headers').value.trim();
+    let headersToAttributes = {};
+    if (headersRaw) {
+        try { headersToAttributes = JSON.parse(headersRaw); } catch (e) {
+            inboundResult.value = `Error: Invalid JSON in Headers to Attributes: ${e.message}`;
+            return;
+        }
+    }
+
+    await apiPost('/api/v1/sip/trunks/inbound', {
+        name: document.getElementById('trunk-name').value || 'ui-inbound-trunk',
+        numbers: document.getElementById('trunk-numbers').value.split(',').map(s => s.trim()).filter(Boolean),
+        auth_username: document.getElementById('trunk-auth-user').value,
+        auth_password: document.getElementById('trunk-auth-pass').value,
+        headers_to_attributes: headersToAttributes,
+    });
+});
+
+document.getElementById('list-trunks-btn').addEventListener('click', () => {
+    apiGet('/api/v1/sip/trunks/inbound');
+});
+
+document.getElementById('delete-trunk-btn').addEventListener('click', () => {
+    const id = document.getElementById('trunk-delete-id').value.trim();
+    if (!id) { inboundResult.value = 'Error: Trunk ID is required'; return; }
+    apiDelete(`/api/v1/sip/trunks/inbound/${id}`);
+});
+
+// Dispatch Rule Handlers
+document.getElementById('create-rule-btn').addEventListener('click', async () => {
+    await apiPost('/api/v1/sip/dispatch-rules', {
+        name: document.getElementById('rule-name').value || 'ui-inbound-rule',
+        trunk_id: document.getElementById('rule-trunk-id').value,
+        room_prefix: document.getElementById('rule-prefix').value || 'inbound_',
+        prompt: document.getElementById('rule-prompt').value || 'You are a healthcare assistant. Greet the caller warmly.',
+    });
+});
+
+document.getElementById('list-rules-btn').addEventListener('click', () => {
+    apiGet('/api/v1/sip/dispatch-rules');
+});
+
+document.getElementById('delete-rule-btn').addEventListener('click', () => {
+    const id = document.getElementById('rule-delete-id').value.trim();
+    if (!id) { inboundResult.value = 'Error: Rule ID is required'; return; }
+    apiDelete(`/api/v1/sip/dispatch-rules/${id}`);
+});
 
 
