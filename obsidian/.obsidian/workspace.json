@@ -35,16 +35,24 @@
             }
           },
           {
-            "id": "f9a329e7ddef5a50",
+            "id": "210cf3ad49e340a6",
             "type": "leaf",
             "state": {
-              "type": "graph",
-              "state": {},
-              "icon": "lucide-git-fork",
-              "title": "Graph view"
+              "type": "canvas",
+              "state": {
+                "file": "MCP Architecture.canvas",
+                "viewState": {
+                  "x": -401.6928791476845,
+                  "y": -615.5899848480851,
+                  "zoom": -0.6050883150856595
+                }
+              },
+              "icon": "lucide-layout-dashboard",
+              "title": "MCP Architecture"
             }
           }
         ],
+        "currentTab": 2
         "currentTab": 2
       }
     ],
@@ -206,7 +214,7 @@
       "bases:Create new base": false
     }
   },
-  "active": "f9a329e7ddef5a50",
+  "active": "210cf3ad49e340a6",
   "lastOpenFiles": [
     "Outbound Call Walkthrough.canvas",
     "Untitled.canvas",

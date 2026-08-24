@@ -11,11 +11,11 @@
 
 | Area              | Document                                                                                                                       |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| 🏛️ Architecture   | [[Architecture/Overview.md\|Overview]] · [[Architecture/Components.md\|Components]] · [[Architecture/Data Flow.md\|Data Flow]] |
+| 🏛️ Architecture   | [[Architecture/Overview.md\|Overview]] · [[Architecture/MCP System Overview.md\|MCP Architecture]] · [[MCP Architecture.canvas\|MCP Interactive Canvas]] · [[Architecture/Components.md\|Components]] · [[Architecture/Data Flow.md\|Data Flow]] |
 | 🌐 APIs           | [[Architecture/APIs.md\|API Reference]]                                                                                        |
 | 🗄️ Database       | [[Architecture/Database.md\|Database Schema]]                                                                                  |
 | ⚙️ Infrastructure | [[Architecture/Infrastructure.md\|Infrastructure]]                                                                             |
-| 🎯 Features       | [[Features/Feature Index.md\|Feature Index]]                                                                                   |
+| 🎯 Features       | [[Features/Feature Index.md\|Feature Index]] · [[Features/MCP Integration Guide for Backend.md\|MCP Backend Guide]] · [[Features/Doctor Availability Tool.md\|Doctor Availability]] |
 | 📋 Development    | [[Development/TODO.md\|TODO]] · [[Development/Changelog.md\|Changelog]] · [[Development/Bugs.md\|Bugs]]                        |
 | 🧠 Knowledge      | [[Knowledge/Coding Standards.md\|Coding Standards]] · [[Knowledge/Conventions.md\|Conventions]]                                |
 | 📖 Context        | [[Context/Project Summary.md\|Project Summary]] · [[Context/Stack.md\|Stack]] · [[Context/Repository Map.md\|Repository Map]]  |
