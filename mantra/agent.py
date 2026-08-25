@@ -572,38 +572,60 @@ class AssistantFunctions:
         description=(
             "Check doctor and healthcare provider availability, working hours, and open appointment slots on a specific date. "
             "ALWAYS use this tool whenever the caller asks about doctor availability, open consultation times, "
-            "scheduling an appointment, or doctor working hours on a given day."
+            "scheduling an appointment, or doctor working hours on a given day. "
+            "If the caller mentions or asks about a specific medical department or specialty (e.g. 'Cardiology', 'Dermatology', 'Orthopedics', 'Pediatrics', 'Dental'), extract and pass it in department."
         )
     )
     async def check_doctor_availability(
         self,
         date: Annotated[str, "The date to check in YYYY-MM-DD format (e.g. '2026-08-25'). If the caller specifies a relative day like 'tomorrow' or 'next Tuesday', calculate the exact YYYY-MM-DD date."],
-        doctor_name: Annotated[Optional[str], "Optional doctor name to filter by (e.g. 'Sharma' or 'Dr. Ananya')."] = None,
+        doctor_name: Annotated[Optional[str], "Optional doctor name to filter by (e.g. 'Sharma' or 'Dr. Ananya'). If no doctor name is mentioned, leave None."] = None,
+        department: Annotated[Optional[str], "Optional medical department or specialty mentioned in the transcript/call (e.g. 'Cardiology', 'Dermatology', 'Orthopedics', 'Pediatrics', 'General Medicine'). If no department is mentioned, leave None."] = None,
     ) -> str:
-        org_id = 66
+        org_id = None
         caller_phone = None
+
+        # 1. Extract from active call state (resolved from registered phone number in org_configs)
+        if self.call_state:
+            org_id = self.call_state.get("org_id")
+            caller_phone = (
+                self.call_state.get("caller_phone_number")
+                or self.call_state.get("caller_phone")
+                or self.call_state.get("phone_number")
+                or self.call_state.get("client_phone")
+            )
+
+        # 2. Extract dynamically from call metadata payload
         if self.job_metadata:
             try:
                 payload = json.loads(self.job_metadata) if isinstance(self.job_metadata, str) else self.job_metadata
-                org_id = payload.get("org_id") or payload.get("metadata", {}).get("org_id") or 66
-                caller_phone = payload.get("phone_number") or payload.get("from_phone") or payload.get("caller_phone")
-            except Exception:
-                pass
+                if not org_id:
+                    org_id = payload.get("org_id") or (payload.get("metadata", {}).get("org_id") if isinstance(payload.get("metadata"), dict) else None)
+                if not caller_phone:
+                    caller_phone = (
+                        payload.get("phone_number")
+                        or payload.get("caller_phone")
+                        or payload.get("client_phone")
+                        or payload.get("from_phone")
+                    )
+            except Exception as e:
+                logger.warning(f"Could not parse job_metadata in check_doctor_availability: {e}")
 
-        if not caller_phone and self.call_state:
-            caller_phone = self.call_state.get("caller_phone") or self.call_state.get("phone_number")
-
-        logger.info(f"Agent requesting doctor availability via MCP JSON-RPC: org_id={org_id}, date={date}, doctor={doctor_name}, phone={caller_phone}")
+        logger.info(f"Agent requesting doctor availability via MCP: org_id={org_id}, date={date}, doctor={doctor_name}, department={department}, phone={caller_phone}")
 
         from mantra.mcp_client import get_mcp_client
 
         mcp_client = get_mcp_client()
         result = await mcp_client.call_tool(
-            "search_provider_availability",
+            "receive_doctor_availability",
             {
-                "org_id": int(org_id),
+                "org_id": org_id,
+                "date": str(date).strip(),
                 "query_date": str(date).strip(),
-                "query": str(doctor_name).strip() if doctor_name else None,
+                "name": str(doctor_name).strip() if doctor_name else None,
+                "doc_name": str(doctor_name).strip() if doctor_name else "",
+                "department": str(department).strip() if department else "",
+                "query": str(doctor_name).strip() if doctor_name else (str(department).strip() if department else None),
                 "caller_phone": caller_phone,
             },
         )
@@ -725,6 +747,8 @@ async def entrypoint(ctx: JobContext):
                     resolved_context = await resolve_inbound_context(phone_number)
                     if resolved_context:
                         meta_payload.update(resolved_context)
+                        if resolved_context.get("org_id"):
+                            call_state["org_id"] = resolved_context.get("org_id")
                         logger.info(f"[DIAG] Inbound context merged: org_id={resolved_context.get('org_id')}")
                     else:
                         logger.warning(f"[DIAG] Inbound resolution failed for {phone_number} — using dispatch rule defaults, call WILL connect")
@@ -732,6 +756,7 @@ async def entrypoint(ctx: JobContext):
                     logger.warning("[DIAG] Inbound call has no phone_number in metadata")
 
             if meta_payload.get("org_id"):
+                call_state["org_id"] = meta_payload.get("org_id")
                 kb_ids_list.append(str(meta_payload["org_id"]))
             if "kb_id" in meta_payload and meta_payload["kb_id"]:
                 kb_ids_list.append(str(meta_payload["kb_id"]))
@@ -746,7 +771,14 @@ async def entrypoint(ctx: JobContext):
 
     logger.info(f"KB scope: kb_ids={kb_ids_list}, kb_tags={kb_tags_list}")
 
-    fnc_ctx = AssistantFunctions(ctx.job.metadata, ctx.room.name, ctx=ctx, kb_ids=kb_ids_list, kb_tags=kb_tags_list, call_state=call_state)
+    fnc_ctx = AssistantFunctions(
+        json.dumps(meta_payload) if ctx.job.metadata else "",
+        ctx.room.name,
+        ctx=ctx,
+        kb_ids=kb_ids_list,
+        kb_tags=kb_tags_list,
+        call_state=call_state,
+    )
 
     # Session ID for S3 key naming
     session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1424,7 +1456,10 @@ Follow these specific instructions:
 
                 try:
                     logger.info("Waiting for session to become inactive (25s timeout).")
-                    await asyncio.wait_for(session.wait_for_inactive(), timeout=25.0)
+                    if hasattr(session, "wait_for_inactive") and callable(getattr(session, "wait_for_inactive")):
+                        await asyncio.wait_for(session.wait_for_inactive(), timeout=25.0)
+                    else:
+                        await asyncio.sleep(25.0)
                     logger.info("Session became inactive naturally.")
                 except asyncio.TimeoutError:
                     logger.warning(

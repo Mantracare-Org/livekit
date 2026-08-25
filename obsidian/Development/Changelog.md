@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-08-25
+
+### Dynamic Department Parameter & Inbound Org ID Resolution for Doctor Availability
+
+- **feat:** Added `department` parameter extraction across `lkt` and `livekit-mcp`:
+  - **`mantra/agent.py`:** Updated `check_doctor_availability` tool to accept `department: Optional[str]` and dynamically extract medical specialty/department (e.g. `'Cardiology'`, `'Dermatology'`, `'Retina'`, `'Orthopedics'`) from caller transcripts.
+  - **`livekit-mcp`:** Updated `receive_doctor_availability` and `search_provider_availability` tools to accept `department` and query `GET /api/v1/providers/availability` with standard UTC params (`org_id`, `date`, `datetime`, `doc_name`, `department`).
+- **fix:** Fixed dynamic `org_id` resolution for inbound telephony calls in `mantra/agent.py`:
+  - Inbound calls now look up dialed DID in PostgreSQL `org_configs` and pass the registered `org_id` (e.g. `68`, `278`) directly into `call_state["org_id"]` and `AssistantFunctions`.
+  - Removed incorrect fallback to `kb_ids` vector collection UUIDs.
+- **fix:** Hardened `livekit-mcp` and `mantra/mcp_client.py`:
+  - Added seamless dev-mode anonymous auth in `livekit_mcp/auth/middleware.py`.
+  - Added relative date resolver (`resolve_date_string`) handling `'today'`, `'tomorrow'`, `'yesterday'`.
+  - Added resilient HTTP fallback (`POST /api/tools/call` via `httpx`) in `mantra/mcp_client.py` if SSE transport fails.
+  - Fixed logging format string `%d` → `%s` and normalized 10-digit Indian phone numbers.
+- Files: [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py), [mantra/mcp_client.py](file:///home/fardeen/lkt/mantra/mcp_client.py), `livekit-mcp/src/livekit_mcp/tools/doctor_availability.py`, `livekit-mcp/src/livekit_mcp/clients/backend_client.py`.
+
 ## 2026-08-29
 
 ### DeepSeek TTFT Resiliency & LLM Streaming Read Timeout Hardening
@@ -109,7 +126,6 @@
   - Instructed the LLM to synthesize its spoken response immediately after the initial search rather than launching sequential retries over the network.
 - Files: [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py)
 
-
 ### Deepgram Nova-3 Telephony STT Configuration & Dynamic Locale Routing
 
 - **fix:** Resolved Deepgram STT misrecognizing Indian names (such as "Jaideep" -> "Debbie", "Navodaya" -> "Noodle"):
@@ -118,7 +134,6 @@
   - **`numerals=True`:** Enables digit formatting for numbers, dates, times, and phone numbers.
   - **Dynamic Locale Routing (`resolve_stt_language`):** Automatically provisions `en-IN` for Indian callers (+91), `en-US` for US/Canada (+1), `en-GB` for UK (+44), `en-AU` for Australia (+61), while supporting explicit language overrides (`hi`, `es`, `fr`).
 - Files: [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py), [mantra/language_manager.py](file:///home/fardeen/lkt/mantra/language_manager.py)
-
 
 ### Pipeline Error Alerting (LLM/STT/TTS Provider Failures)
 

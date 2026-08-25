@@ -1,18 +1,19 @@
 """Model Context Protocol (MCP) Client for LiveKit Voice Agent.
 
 Communicates with MCP Servers using the official Model Context Protocol (JSON-RPC 2.0)
-over SSE transport via the Anthropic MCP Python SDK.
+over SSE transport via the Anthropic MCP Python SDK, with automatic HTTP fallback.
 """
 
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import json
 import logging
 import os
-from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 
@@ -36,10 +37,14 @@ class MantraMCPClient:
         auth_token: Optional[str] = None,
         timeout: float = 8.0,
     ):
-        base_url = (server_url or os.getenv("LIVEKIT_MCP_URL", "http://localhost:8000")).rstrip("/")
-        # Ensure SSE endpoint path
-        self.sse_url = base_url if base_url.endswith("/sse") else f"{base_url}/sse"
+        self.base_url = (server_url or os.getenv("LIVEKIT_MCP_URL", "http://localhost:8000")).rstrip("/")
         self.auth_token = auth_token or os.getenv("LIVEKIT_MCP_JWT_TOKEN", "")
+        # Append token query param if available for seamless SSE transport
+        if self.auth_token:
+            self.sse_url = f"{self.base_url}/sse?token={self.auth_token}"
+        else:
+            self.sse_url = f"{self.base_url}/sse"
+
         self.timeout = timeout
         self._headers: Dict[str, str] = {}
         if self.auth_token:
@@ -66,7 +71,8 @@ class MantraMCPClient:
             return []
 
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
-        """Execute a tool on the MCP server via official JSON-RPC tools/call over SSE."""
+        """Execute a tool on the MCP server via official JSON-RPC tools/call over SSE with HTTP fallback."""
+        # 1. Try MCP SSE JSON-RPC
         try:
             async with asyncio.timeout(self.timeout):
                 async with sse_client(self.sse_url, headers=self._headers if self._headers else None) as (read_stream, write_stream):
@@ -81,12 +87,29 @@ class MantraMCPClient:
                         output = "\n".join(text_blocks) if text_blocks else "No details returned."
                         logger.info(f"[MCP] Tool '{tool_name}' returned: {output[:120]}...")
                         return output
-        except asyncio.TimeoutError:
-            logger.error(f"[MCP] Tool call '{tool_name}' timed out after {self.timeout}s")
-            return "The request to the scheduling service timed out. Please try again or offer a callback."
-        except Exception as e:
-            logger.error(f"[MCP] Tool call '{tool_name}' failed over SSE JSON-RPC: {e}")
-            return f"Unable to reach the scheduling service: {e}"
+        except Exception as sse_err:
+            logger.warning(f"[MCP] SSE JSON-RPC failed ({sse_err}), falling back to direct HTTP /api/tools/call...")
+
+        # 2. HTTP Fallback Endpoint
+        try:
+            http_url = f"{self.base_url}/api/tools/call"
+            async with httpx.AsyncClient(timeout=5.0) as http_client:
+                resp = await http_client.post(
+                    http_url,
+                    json={"name": tool_name, "arguments": arguments},
+                    headers=self._headers,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    result = data.get("result", "")
+                    logger.info(f"[MCP-HTTP] Tool '{tool_name}' returned: {result[:120]}...")
+                    return result if result else "No availability information found."
+                else:
+                    logger.error(f"[MCP-HTTP] Status {resp.status_code}: {resp.text}")
+        except Exception as http_err:
+            logger.error(f"[MCP-HTTP] Direct HTTP call failed: {http_err}")
+
+        return "Unable to retrieve doctor schedule at the moment. Please offer to take a callback request."
 
 
 # Global singleton instance

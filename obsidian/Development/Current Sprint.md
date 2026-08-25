@@ -1,8 +1,13 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)  
-> **Last Updated:** 2026-08-29  
-> **Status:** Active maintenance, Doctor Availability Tool Integration, Org Processes & Stages MCP Tool, Inbound Post-Call Integration, Production Dockerization
+> **Last Updated:** 2026-08-25  
+> **Status:** Active maintenance, Doctor Availability Tool Integration, Department parameter, Inbound Org ID Resolution
+
+- [x] **Dynamic Department Parameter & Inbound Org ID Resolution for Doctor Availability (2026-08-25):** (1) Added `department` parameter extraction across `mantra/agent.py` and `livekit-mcp`. (2) Inbound calls now look up dialed DID in PostgreSQL `org_configs` and pass the registered `org_id` (e.g. `68`, `278`) directly to `AssistantFunctions`. (3) Added resilient HTTP fallback (`httpx`) in `mantra/mcp_client.py` and relative date resolution in `livekit-mcp`. Files: `mantra/agent.py`, `mantra/mcp_client.py`, `livekit-mcp/src/livekit_mcp/tools/doctor_availability.py`.
+
+  > **Last Updated:** 2026-08-29  
+  > **Status:** Active maintenance, Doctor Availability Tool Integration, Org Processes & Stages MCP Tool, Inbound Post-Call Integration, Production Dockerization
 
 - [x] **DeepSeek TTFT Resiliency & LLM Streaming Read Timeout Hardening (2026-08-29):** (1) Fixed `httpcore.ReadTimeout` $\rightarrow$ `httpx.ReadTimeout` $\rightarrow$ `APIConnectionError` during LLM streaming chunk ingestion by configuring dedicated `httpx.AsyncClient` with generous 60s read timeouts (`timeout=httpx.Timeout(connect=15.0, read=60.0, write=15.0, pool=15.0)`) and connection limits (`keepalive_expiry=120`) in `build_post_call_llm` and live agent DeepSeek setup. (2) Passed explicit `conn_options=APIConnectOptions(timeout=60.0, max_retry=3, retry_interval=2.0)` to `llm_engine.chat()` in `SessionRecorder.analyze_call` and `SessionRecorder.generate_summary` (`mantra/utils.py`), preventing LiveKit's internal `LLMStream` from defaulting to a 10s socket read cutoff during deep reasoning or high-latency TTFT periods. Files: `mantra/agent.py`, `mantra/utils.py`.
 - [x] **Production Multi-Stage Dockerfile for `livekit-mcp` (2026-08-29):** Implemented production multi-stage Docker build using `ghcr.io/astral-sh/uv:python3.12-bookworm-slim`, unprivileged `appuser` (UID 10001), layer caching, runtime healthcheck, and direct binary CMD execution. Files: `livekit-mcp/Dockerfile`.
@@ -31,7 +36,7 @@
 
 - [x] **Premature `end_call` Trigger Guard & Prompt Hardening (2026-08-14):** Fixed race condition where DeepSeek LLM called `end_call` tool concurrently with the opening greeting on turn 1, disconnecting calls prematurely after 3 seconds. Added runtime state guards in `AssistantFunctions.end_call()` to ignore tool calls before `initial_greeting_done` and `user_has_spoken`. Updated `end_call` tool docstring and softened overly assertive `ENDING THE CALL` system prompt instructions to prevent model bias towards early termination. Files: `mantra/agent.py`.
 
-- [x] **Kannada, Telugu & Marathi Language Integration & Instant Switch Latency (2026-08-13):** Enabled Kannada (`kn`), Telugu (`te`), and Marathi (`mr`) language matching and TTS resolution in `mantra/agent.py`. Optimized language-switching latency by adding `INSTANT LANGUAGE SWITCH RULE` (prevents LLM preamble hesitations like *"Sure, I can speak Kannada"*) and tightening VAD `min_silence_duration` to 250ms (`0.25`s) and endpointing `max_delay` to 500ms (`0.5`s). Files: `mantra/agent.py`.
+- [x] **Kannada, Telugu & Marathi Language Integration & Instant Switch Latency (2026-08-13):** Enabled Kannada (`kn`), Telugu (`te`), and Marathi (`mr`) language matching and TTS resolution in `mantra/agent.py`. Optimized language-switching latency by adding `INSTANT LANGUAGE SWITCH RULE` (prevents LLM preamble hesitations like _"Sure, I can speak Kannada"_) and tightening VAD `min_silence_duration` to 250ms (`0.25`s) and endpointing `max_delay` to 500ms (`0.5`s). Files: `mantra/agent.py`.
 
 - [x] **Outbound SIP Dispatch Latency Optimization (2026-08-12):** Fixed 4-second API response latency on `/api/v1/sip/plivo/create-and-call` by setting `wait_until_answered=False` on `CreateSIPParticipantRequest`. The HTTP POST request now dispatches the SIP call asynchronously and returns `200 OK` (`status: success`) immediately in **<100ms** (instead of waiting 3.5–5s for the phone to physically ring and be picked up). Files: `mantra/ui_server.py`.
 
