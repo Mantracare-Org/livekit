@@ -9,14 +9,14 @@
 
 ## 📌 Executive Summary for Backend Engineers
 
-1. **What you need to build:** A single HTTP REST endpoint:  
-   `GET /api/v1/providers/availability` (or `POST /api/v1/providers/availability`)
+1. **What you need to build:** A webhook endpoint:  
+   `POST /api/v1/webhooks/mcp` (or `GET /api/v1/webhooks/mcp`)
 2. **What MCP sends to your endpoint (Always in UTC):**
-   - **`org_id`**: Organization ID (e.g. `68` or `""`)
+   - **`org_id`**: Organization ID (e.g. `68`, `278`, or `""`)
    - **`date`**: UTC Date string in `YYYY-MM-DD` (e.g. `"2026-08-25"` or `""`)
    - **`datetime`**: Full ISO 8601 UTC timestamp (`YYYY-MM-DDTHH:mm:ss.sssZ`, e.g. `"2026-08-25T00:00:00.000Z"` or `""`)
    - **`doc_name`**: Doctor name filter (e.g. `"Dr. Ananya Sharma"` or `""` if not mentioned)
-   - **`department`**: Department / Specialty filter (e.g. `"Cardiology"`, `"Dermatology"`, `"Orthopedics"`, or `""` if not mentioned)
+   - **`department`**: Department / Specialty filter (e.g. `"Cardiology"`, `"Dermatology"`, `"Retina"`, or `""` if not mentioned)
 3. **What your endpoint returns:** List of providers with their available time slots in **UTC** (e.g. `["04:30 - 05:30", "14:00 - 15:00"]`).
 4. **Timezone Handling:** Everything exchanged with your backend is **100% in UTC**. `livekit-mcp` handles all the timezone localization for the patient on the call.
 
@@ -24,7 +24,7 @@
 
 ## 🛠️ Endpoint Specification
 
-### `GET /api/v1/providers/availability`
+### `POST /api/v1/webhooks/mcp`
 
 #### Query Parameters:
 
