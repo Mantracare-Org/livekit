@@ -2,6 +2,14 @@
 
 ## 2026-08-26
 
+### Post-Call `appointment_metadata` & Entrypoint Shutdown Timeout Hardening
+
+- **feat:** Added `appointment_metadata` schema and extraction to post-call analysis in [mantra/utils.py](file:///home/fardeen/lkt/mantra/utils.py):
+  - Extracts `provider_user_id`, `provider_name`, `preferred_datetime`, `preferred_end_datetime`, `appointment_title`, and `appointment_notes`.
+  - Added `appointment_metadata` key to `CALL_DATA_UPDATE` and `CALL_DATA_INBOUND_UPDATE` webhook payloads in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py).
+- **feat:** Extended LiveKit IPC worker shutdown timeout from 15s to 40s (`LIVEKIT_ENTRYPOINT_TIMEOUT=40`) in `.venv/.../job_proc_lazy_main.py` and `.env.local`, ensuring deep reasoning post-call LLM models (`deepseek-v4-pro`) have sufficient execution time to generate summaries, extract fields, and dispatch webhooks before worker termination.
+- Files: [mantra/utils.py](file:///home/fardeen/lkt/mantra/utils.py), [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py), `.env.local`.
+
 ### MCP Server JWT Authentication & Dynamic Live Date/Time Injection
 
 - **feat:** Configured `lkt` to authenticate against `livekit-mcp` with signed Mantra Auth JWT tokens:

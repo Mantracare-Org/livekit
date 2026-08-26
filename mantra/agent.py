@@ -1839,6 +1839,7 @@ Follow these specific instructions:
                 llm_analysis_ran = False
                 derived_process_id = None
                 derived_user_intent = None
+                appointment_metadata = None
                 client_custom_fields = call_payload.get("client_custom_fields", {})
                 if not isinstance(client_custom_fields, dict):
                     client_custom_fields = {}
@@ -1908,6 +1909,15 @@ Follow these specific instructions:
                                 client_custom_fields["doctor"] = analysis["doctor"]
                             if analysis.get("hospital_location"):
                                 client_custom_fields["hospital_location"] = analysis["hospital_location"]
+
+                            appointment_metadata = analysis.get("appointment_metadata") if isinstance(analysis.get("appointment_metadata"), dict) else None
+                            if appointment_metadata:
+                                if appointment_metadata.get("preferred_datetime"):
+                                    appointment_metadata["preferred_datetime"] = normalize_datetime(appointment_metadata["preferred_datetime"])
+                                if appointment_metadata.get("preferred_end_datetime"):
+                                    appointment_metadata["preferred_end_datetime"] = normalize_datetime(appointment_metadata["preferred_end_datetime"])
+                                if appointment_metadata.get("provider_user_id") is not None:
+                                    appointment_metadata["provider_user_id"] = _as_int(appointment_metadata["provider_user_id"])
 
                             logger.info(
                                 f"Analysis completed. Process: {derived_process_id}, New Stage ID: {new_stage_id}, Next Call On: {next_call_on}, User Intent: {derived_user_intent}, Client Name: {call_payload.get('client_name')}"
@@ -2005,6 +2015,8 @@ Follow these specific instructions:
                         },
                     }
                 }
+                if appointment_metadata:
+                    webhook_payload["data"]["appointment_metadata"] = appointment_metadata
             else:
                 event_name = "CALL_RETRY" if call_status in ["No Answer", "Busy", "Failed"] else "CALL_DATA_UPDATE"
                 if event_name == "CALL_RETRY":
@@ -2041,6 +2053,8 @@ Follow these specific instructions:
                             "call_custom_fields": call_payload.get("call_custom_fields", {}),
                         },
                     }
+                if appointment_metadata:
+                    webhook_payload["data"]["appointment_metadata"] = appointment_metadata
 
             # 8. Send to MantraAssist backend and save to local DB
             logger.info(f"[DIAG] finalize(): Step 8 — Saving to DB and delivering webhook...")
