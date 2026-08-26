@@ -959,8 +959,13 @@ Follow these specific instructions:
                 else:
                     context_body += f"- {readable_key}: {value}\n"
 
-            if context_body:
-                initial_instructions += context_header + context_body
+            # Inject live date and time context so LLM always uses current year and date
+            now_dt = datetime.datetime.now()
+            initial_instructions += "\n\n--- CURRENT DATE & TIME ---\n"
+            initial_instructions += f"- Today's Date: {now_dt.strftime('%A, %B %d, %Y')}\n"
+            initial_instructions += f"- Current Time: {now_dt.strftime('%I:%M %p')}\n"
+            initial_instructions += f"- Current Year: {now_dt.year}\n"
+            initial_instructions += f"- Always calculate appointment dates and relative days (e.g. 'today', 'tomorrow', 'next week', 'August 31') using the current year ({now_dt.year}) and pass in YYYY-MM-DD format.\n"
 
             # Add an overriding rule at the very end so it takes precedence over the backend prompt
             initial_instructions += "\n\n*** CRITICAL OVERRIDING RULES ***\n"

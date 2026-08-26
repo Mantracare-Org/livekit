@@ -1,9 +1,10 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)  
-> **Last Updated:** 2026-08-25  
-> **Status:** Active maintenance, Doctor Availability Tool Integration, Department parameter, Inbound Org ID Resolution
+> **Last Updated:** 2026-08-26  
+> **Status:** Active maintenance, Doctor Availability Tool Integration, Backend Service Auth, Inbound MCP Delivery Verified
 
+- [x] **Environment-Driven Backend Authentication & Live Date/Time Prompt Injection (2026-08-26):** (1) Injected live date, time, and current year (`2026`) directly into `initial_instructions` in `mantra/agent.py`, eliminating LLM 2024/2025 training bias on appointment date calculations. (2) Added past-year auto-roll forward in `livekit-mcp` (`resolve_date_string` in `timezone.py`). (3) Guaranteed calendar date preservation (`utc_date_val = 2026-08-31`) and defaulted `datetime` to `YYYY-MM-DDT00:00:00.000Z` when no specific hour is specified. (4) Configured environment-driven `x-client-id` and `x-client-secret` authentication headers in `livekit-mcp` (`backend_client.py` and `config.py`) targeting `/api/v1/webhooks/mcp` without hardcoded secrets. Files: `mantra/agent.py`, `livekit-mcp/src/livekit_mcp/utils/timezone.py`, `livekit-mcp/src/livekit_mcp/clients/backend_client.py`.
 - [x] **Dynamic Department Parameter & Inbound Org ID Resolution for Doctor Availability (2026-08-25):** (1) Added `department` parameter extraction across `mantra/agent.py` and `livekit-mcp`. (2) Inbound calls now look up dialed DID in PostgreSQL `org_configs` and pass the registered `org_id` (e.g. `68`, `278`) directly to `AssistantFunctions`. (3) Added resilient HTTP fallback (`httpx`) in `mantra/mcp_client.py` and relative date resolution in `livekit-mcp`. Files: `mantra/agent.py`, `mantra/mcp_client.py`, `livekit-mcp/src/livekit_mcp/tools/doctor_availability.py`.
 
   > **Last Updated:** 2026-08-29  
