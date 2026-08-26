@@ -2,19 +2,17 @@
 
 ## 2026-08-26
 
-### Environment-Driven Backend Client Authentication & Live Date/Time Prompt Injection
+### MCP Server JWT Authentication & Dynamic Live Date/Time Injection
 
+- **feat:** Configured `lkt` to authenticate against `livekit-mcp` with signed Mantra Auth JWT tokens:
+  - Added active `LIVEKIT_MCP_URL` and `LIVEKIT_MCP_JWT_TOKEN` in `lkt/.env`.
+  - `MantraMCPClient` sends `Authorization: Bearer <jwt>` and `?token=<jwt>` over SSE transport.
+  - `livekit-mcp` `AuthMiddleware` verifies token signature using shared `JWT_SECRET` (`sub: lkt-voice-agent`).
+- **feat:** Cleaned `livekit-mcp` $\rightarrow$ `MantraAssist-backend` client to query `GET /api/v1/webhooks/mcp` directly using webhook headers (`x-client-id`, `x-client-secret`, `ngrok-skip-browser-warning`).
 - **feat:** Injected dynamic live date, time, and current year (`2026`) directly into `initial_instructions` in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py), eliminating LLM 2024/2025 pre-training cutoff bias on appointment date calculations.
 - **feat:** Added past-year auto-roll forward in `livekit-mcp` (`resolve_date_string` in `src/livekit_mcp/utils/timezone.py`) to automatically update any past-year dates to the current calendar year.
 - **feat:** Updated `backend_client.py` and `timezone.py` in `livekit-mcp` to preserve the target calendar date (`date = 2026-08-31`) and default `datetime` to `YYYY-MM-DDT00:00:00.000Z` when time is not specified by the user.
-- **feat:** Configured environment-driven client credentials in `livekit-mcp`:
-  - **`config.py`:** Added `mantraassist_client_id` and `mantraassist_client_secret` loaded strictly from `os.getenv` without hardcoded secrets.
-  - **`backend_client.py`:** Injects `x-client-id`, `x-client-secret`, and `ngrok-skip-browser-warning` headers dynamically on all requests to `/api/v1/webhooks/mcp`. Prioritizes `GET` requests with `POST` fallback.
-- **test:** End-to-end verified on live inbound phone call (`+919484959268`, caller `9015982614`, `org_id: 77`):
-  - Agent called `check_doctor_availability` over official MCP SSE JSON-RPC transport (`receive_doctor_availability`).
-  - Backend responded with HTTP `200 OK` (`providers: []`).
-  - Agent parsed response and replied naturally to caller.
-- Files: [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py), `livekit-mcp/src/livekit_mcp/config.py`, `livekit-mcp/src/livekit_mcp/utils/timezone.py`, `livekit-mcp/src/livekit_mcp/clients/backend_client.py`.
+- Files: [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py), [mantra/mcp_client.py](file:///home/fardeen/lkt/mantra/mcp_client.py), `lkt/.env`, `livekit-mcp/src/livekit_mcp/clients/backend_client.py`, `livekit-mcp/src/livekit_mcp/utils/timezone.py`.
 
 ## 2026-08-25
 
