@@ -33,7 +33,7 @@ logger = logging.getLogger("mantra.agent")
 logging.getLogger("livekit.agents").setLevel(logging.DEBUG)
 logger.info("Initializing process...")
 
-POST_CALL_LLM_MODEL = os.getenv("POST_CALL_LLM_MODEL", "deepseek-v4-pro")
+POST_CALL_LLM_MODEL = os.getenv("POST_CALL_LLM_MODEL", "deepseek-chat")
 
 
 def build_post_call_llm() -> "llm.LLM":
@@ -629,6 +629,15 @@ class AssistantFunctions:
                 "caller_phone": caller_phone,
             },
         )
+        if self.call_state is not None and isinstance(result, str):
+            import re
+            m = re.search(r'User ID:\s*(\d+)', result, re.IGNORECASE) or re.search(r'Doctor ID:\s*(\d+)', result, re.IGNORECASE) or re.search(r'user_id[":\s]+(\d+)', result, re.IGNORECASE)
+            if m:
+                try:
+                    self.call_state["provider_user_id"] = int(m.group(1))
+                    logger.info(f"Captured provider_user_id={self.call_state['provider_user_id']} from MCP availability result")
+                except Exception:
+                    pass
         return result
 
     # Removed query_knowledge_base tool as per user request to inject KB directly into the main job
@@ -1825,6 +1834,49 @@ Follow these specific instructions:
                     if (fnc_ctx and hasattr(fnc_ctx, 'used_process_stage_data') and fnc_ctx.used_process_stage_data) 
                     else None
                 )
+                # For inbound calls, query org processes and stage descriptions via MCP before post-call analysis
+                if is_inbound and not kb_process_stage_data:
+                    inbound_org_id = (
+                        call_state.get("org_id")
+                        or call_payload.get("org_id")
+                        or (fnc_ctx.org_id if fnc_ctx and hasattr(fnc_ctx, 'org_id') else None)
+                    )
+                    if inbound_org_id:
+                        try:
+                            from mantra.mcp_client import get_mcp_client
+                            logger.info(f"Fetching org processes via MCP for inbound post-call analysis: org_id={inbound_org_id}")
+                            mcp_client = get_mcp_client()
+                            mcp_res = await mcp_client.call_tool("fetch_org_processes", {"org_id": inbound_org_id})
+                            if mcp_res:
+                                items = []
+                                if isinstance(mcp_res, list):
+                                    items = mcp_res
+                                elif isinstance(mcp_res, dict):
+                                    items = [mcp_res]
+                                elif isinstance(mcp_res, str):
+                                    mcp_res_str = mcp_res.strip()
+                                    try:
+                                        parsed = json.loads(mcp_res_str)
+                                        if isinstance(parsed, list):
+                                            items = parsed
+                                        elif isinstance(parsed, dict):
+                                            items = [parsed]
+                                    except Exception:
+                                        pass
+                                    if not items:
+                                        for line in mcp_res_str.splitlines():
+                                            line = line.strip()
+                                            if line:
+                                                try:
+                                                    items.append(json.loads(line))
+                                                except Exception:
+                                                    pass
+                                if items:
+                                    kb_process_stage_data = items
+                                    logger.info(f"[INBOUND-MCP] Loaded {len(kb_process_stage_data)} processes via MCP for org_id={inbound_org_id}:\n{json.dumps(kb_process_stage_data, indent=2)}")
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch org processes via MCP for inbound call: {e}")
+
                 if not kb_process_stage_data and fnc_ctx and hasattr(fnc_ctx, 'kb_ids') and fnc_ctx.kb_ids:
                     try:
                         kb = get_global_kb()
@@ -1879,7 +1931,7 @@ Follow these specific instructions:
                                     client_country_code=client_country_code,
                                     process_stage_data=kb_process_stage_data,
                                 ),
-                                timeout=70.0
+                                timeout=10.0
                             )
                             summary_text = analysis["summary"]
                             new_stage_id = analysis["new_stage_id"]
@@ -1912,12 +1964,14 @@ Follow these specific instructions:
 
                             appointment_metadata = analysis.get("appointment_metadata") if isinstance(analysis.get("appointment_metadata"), dict) else None
                             if appointment_metadata:
+                                appointment_metadata.pop("preferred_end_datetime", None)
                                 if appointment_metadata.get("preferred_datetime"):
                                     appointment_metadata["preferred_datetime"] = normalize_datetime(appointment_metadata["preferred_datetime"])
-                                if appointment_metadata.get("preferred_end_datetime"):
-                                    appointment_metadata["preferred_end_datetime"] = normalize_datetime(appointment_metadata["preferred_end_datetime"])
                                 if appointment_metadata.get("provider_user_id") is not None:
                                     appointment_metadata["provider_user_id"] = _as_int(appointment_metadata["provider_user_id"])
+                                elif call_state.get("provider_user_id") is not None:
+                                    appointment_metadata["provider_user_id"] = _as_int(call_state.get("provider_user_id"))
+                                    logger.info(f"[DIAG] Auto-injected provider_user_id={appointment_metadata['provider_user_id']} into appointment_metadata from call_state")
 
                             logger.info(
                                 f"Analysis completed. Process: {derived_process_id}, New Stage ID: {new_stage_id}, Next Call On: {next_call_on}, User Intent: {derived_user_intent}, Client Name: {call_payload.get('client_name')}"
@@ -1926,9 +1980,17 @@ Follow these specific instructions:
                             logger.warning(
                                 "Skipping analysis: LLM or history unavailable after session close"
                             )
-                    except asyncio.TimeoutError:
-                        logger.warning("[DIAG] finalize(): analyze_call timed out — using fallback summary")
-                        summary_text = "Call completed. Summary timed out during processing."
+                    except (asyncio.TimeoutError, asyncio.CancelledError):
+                        logger.warning("[DIAG] finalize(): analyze_call timed out or task cancelled — using fallback summary and captured state")
+                        summary_text = "Call completed."
+                        if call_state.get("provider_user_id") and not appointment_metadata:
+                            appointment_metadata = {
+                                "provider_user_id": _as_int(call_state.get("provider_user_id")),
+                                "provider_name": None,
+                                "preferred_datetime": None,
+                                "appointment_title": "Scheduled Appointment",
+                                "appointment_notes": "Appointment requested during call."
+                            }
                     except Exception as e:
                         logger.error(
                             f"Analysis or summary generation failed: {e}", exc_info=True
@@ -1941,7 +2003,7 @@ Follow these specific instructions:
                     else:
                         summary_text = "Call completed."
 
-            except Exception as e:
+            except (Exception, asyncio.CancelledError) as e:
                 logger.error(f"[DIAG] finalize(): Pipeline error in finalize: {e}", exc_info=True)
 
             # 6. Build webhook payload — separate structures for inbound vs outbound
@@ -1970,20 +2032,38 @@ Follow these specific instructions:
                     process_stage_data=kb_process_stage_data,
                 )
 
+                # Ensure payload_stage_id belongs to the effective_process_id
+                proc_stages = []
+                for p in kb_process_stage_data:
+                    if isinstance(p, dict) and _as_int(p.get("process_id") or p.get("id")) == effective_process_id:
+                        stg_list = p.get("stages") or p.get("stageDetails") or []
+                        for s in stg_list:
+                            if isinstance(s, dict):
+                                sid = _as_int(s.get("stage_id") or s.get("id"))
+                                if sid is not None:
+                                    proc_stages.append(sid)
+
+                if proc_stages:
+                    if payload_stage_id not in proc_stages:
+                        logger.info(
+                            f"[DIAG] finalize(): payload_stage_id {payload_stage_id} does not belong to process {effective_process_id} "
+                            f"(available: {proc_stages}) — defaulting to initial stage {proc_stages[0]}"
+                        )
+                        payload_stage_id = proc_stages[0]
 
             # Enforce stage-based call status rule:
             # If payload_new_stage_id == initial_stage_id (not updated) -> Incomplete
             # If payload_new_stage_id != initial_stage_id (updated) -> Completed
             if call_status not in ["No Answer", "Busy", "Failed"]:
-                if initial_stage_id is not None and payload_new_stage_id != initial_stage_id:
+                if payload_stage_id is not None and payload_new_stage_id != payload_stage_id:
                     call_status = "Completed"
-                    logger.info(f"[DIAG] finalize(): Stage updated from {initial_stage_id} to {payload_new_stage_id} — call_status='Completed'")
-                elif initial_stage_id is None and payload_new_stage_id is not None:
+                    logger.info(f"[DIAG] finalize(): Stage updated from {payload_stage_id} to {payload_new_stage_id} — call_status='Completed'")
+                elif payload_stage_id is None and payload_new_stage_id is not None:
                     call_status = "Completed"
                     logger.info(f"[DIAG] finalize(): New stage assigned ({payload_new_stage_id}) with no initial stage — call_status='Completed'")
                 else:
                     call_status = "Incomplete"
-                    logger.info(f"[DIAG] finalize(): Stage not updated (new_stage_id={payload_new_stage_id}, initial={initial_stage_id}) — call_status='Incomplete'")
+                    logger.info(f"[DIAG] finalize(): Stage not updated (new_stage_id={payload_new_stage_id}, initial={payload_stage_id}) — call_status='Incomplete'")
 
             if direction == "inbound":
                 raw_caller_phone = call_state.get("caller_phone_number") or call_payload.get("client_phone_number") or call_payload.get("client_phone") or ""
@@ -2055,6 +2135,24 @@ Follow these specific instructions:
                     }
                 if appointment_metadata:
                     webhook_payload["data"]["appointment_metadata"] = appointment_metadata
+
+            # Prominently log the complete generated webhook payload for easy developer copying
+            payload_json_str = json.dumps(webhook_payload, indent=2)
+            logger.info(
+                f"\n{'='*70}\n"
+                f"📋 [COMPLETE WEBHOOK PAYLOAD - {webhook_payload.get('event')}]\n"
+                f"{'='*70}\n"
+                f"{payload_json_str}\n"
+                f"{'='*70}"
+            )
+            print(
+                f"\n{'='*70}\n"
+                f"📋 [COMPLETE WEBHOOK PAYLOAD - {webhook_payload.get('event')}]\n"
+                f"{'='*70}\n"
+                f"{payload_json_str}\n"
+                f"{'='*70}\n",
+                flush=True
+            )
 
             # 8. Send to MantraAssist backend and save to local DB
             logger.info(f"[DIAG] finalize(): Step 8 — Saving to DB and delivering webhook...")

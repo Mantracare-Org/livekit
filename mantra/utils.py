@@ -30,6 +30,7 @@ import hmac
 import hashlib
 import asyncio
 import datetime
+import zoneinfo
 import logging
 import httpx
 import numpy as np
@@ -831,8 +832,7 @@ Client Country Code: {client_country_code}
    - `appointment_metadata`: If an appointment, visit, consultation, or live demo was booked or confirmed:
       * `provider_name`: Name of doctor, provider, or host (e.g. "Anshul" or "Dr. Ananya Sharma"). If none, use null.
       * `provider_user_id`: Integer provider user ID if mentioned or identifiable, otherwise null.
-      * `preferred_datetime`: Start date/time (e.g. "2026-08-28 10:00:00").
-      * `preferred_end_datetime`: End date/time (e.g. "2026-08-28 10:30:00").
+      * `preferred_datetime`: Start date/time (e.g. "2026-08-28 09:00:00").
       * `appointment_title`: Concise title (e.g. "MantraAssist Demo - Multi-specialty Hospital").
       * `appointment_notes`: Concise summary notes of the appointment.
       If no appointment was booked/discussed, use null.
@@ -853,7 +853,6 @@ You MUST return your response as a valid JSON object with the following schema:
     "provider_user_id": integer or null,
     "provider_name": "string or null",
     "preferred_datetime": "string or null",
-    "preferred_end_datetime": "string or null",
     "appointment_title": "string or null",
     "appointment_notes": "string or null"
   }} or null
@@ -1073,15 +1072,41 @@ async def report_telemetry(
         return False
 
 
-def normalize_datetime(dt_str: Optional[str]) -> Optional[str]:
-    """Convert datetime string to 'YYYY-MM-DDTHH:MM:SSZ' format for payloads."""
+def normalize_datetime(dt_str: Optional[str], default_tz_str: str = "Asia/Kolkata") -> Optional[str]:
+    """Convert datetime string to standardized UTC 'YYYY-MM-DDTHH:MM:SSZ' format for payloads."""
     if not dt_str:
         return None
     val = str(dt_str).strip()
     if not val or val.lower() in ("null", "none", "n/a", ""):
         return None
-    val = val.replace(" ", "T")
-    if not val.endswith("Z"):
-        val += "Z"
+    
+    val_clean = val.replace(" ", "T")
+    try:
+        if val_clean.endswith("Z"):
+            dt = datetime.datetime.fromisoformat(val_clean[:-1]).replace(tzinfo=datetime.timezone.utc)
+            return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        dt = datetime.datetime.fromisoformat(val_clean)
+        if dt.tzinfo is None:
+            try:
+                local_tz = zoneinfo.ZoneInfo(default_tz_str)
+            except Exception:
+                local_tz = zoneinfo.ZoneInfo("Asia/Kolkata")
+            dt = dt.replace(tzinfo=local_tz)
+        dt_utc = dt.astimezone(datetime.timezone.utc)
+        return dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception:
+        pass
+
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            dt = datetime.datetime.strptime(val, fmt)
+            local_tz = zoneinfo.ZoneInfo(default_tz_str)
+            dt = dt.replace(tzinfo=local_tz)
+            dt_utc = dt.astimezone(datetime.timezone.utc)
+            return dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+        except Exception:
+            continue
+
     return val
 >>>>>>> 021c4f3 (feat: add appointment_metadata extraction to post-call analysis and increase LiveKit IPC worker shutdown timeout to 40s)

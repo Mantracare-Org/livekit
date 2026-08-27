@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-08-27
+
+### Organization Processes & Stages MCP Tool (`fetch_org_processes`) & Inbound Post-Call Integration
+
+- **feat:** Added `fetch_org_processes` (and alias `receive_org_processes`) tool to `livekit-mcp`:
+  - Queries `MantraAssist-backend` (`GET /api/v1/processes?org_id={org_id}`) with standard webhook headers (`x-client-id`, `x-client-secret`, `ngrok-skip-browser-warning`).
+  - Normalizes processes and stages along with their descriptions and stage IDs into structured format `[{"process_id": 317, "process_name": "...", "process_description": "...", "stage_ids": [1155, 1156, ...], "stages": [...]}]`.
+  - Implemented an in-memory TTL cache (10-minute expiry) in `MantraAssistBackendClient` to avoid redundant network queries for the same organization.
+- **feat:** Integrated MCP process stage retrieval into inbound call post-call analysis in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py):
+  - When an inbound call completes in `finalize()`, if `org_id` is present, it invokes `fetch_org_processes` via `MantraMCPClient`.
+  - Injects the retrieved `process_stage_data` into `SessionRecorder.analyze_call()`, enabling LLM post-call analysis to accurately assign `derived_process_id` and `new_stage_id` for CRM webhooks.
+- **refactor:** Removed legacy placeholder `greeting` tool from `livekit-mcp` (`tools/greeting.py`, `tools/__init__.py`, `server.py`).
+- **refactor:** Removed HTML landing page template from `livekit-mcp`:
+  - Replaced root endpoint (`GET /`) with a clean, lightweight JSON response (`{"status": "working", "service": "livekit-mcp", "transport": "sse", ...}`).
+  - Deleted `src/livekit_mcp/templates/` directory.
+- **fix:** Corrected database connection configuration in `livekit-mcp`:
+  - Mapped `DATABASE_URL` and `MCP_EVENTS_DB_URL` to point to `postgresql://postgres:password@localhost:5442/mcp_logs_db` (from the active `lkdb` Docker `postgres_mcp` container).
+  - Fixed health check endpoint `/api/dev/check-db` to return `200 OK` (healthy).
+- **feat:** Added provider `user_id` injection to doctor availability tool and post-call analysis:
+  - Formatted provider list in `doctor_availability.py` to include `(User ID: <id>)` (e.g. `Anshul (User ID: 345)`).
+  - Captured `provider_user_id` in `check_doctor_availability` and auto-injected into `appointment_metadata.provider_user_id` in `finalize()` in `mantra/agent.py`.
+- **refactor:** Standardized datetime formats and reconciled inbound stage transitions:
+  - Removed `preferred_end_datetime` from `appointment_metadata`.
+  - Updated `normalize_datetime` in `mantra/utils.py` to convert all timestamps to true UTC ISO 8601 string (`YYYY-MM-DDTHH:MM:SSZ`).
+  - Added reconciliation for initial `stage_id` in `finalize()` to ensure it strictly belongs to `effective_process_id` (defaulting to the process initial entry stage `1155`), preventing mismatched legacy stages (`323`).
+- **refactor:** Removed `x-client-id` and `x-client-secret` auth headers from `livekit-mcp` backend requests to `MantraAssist-backend`.
+- Files: [livekit-mcp/src/livekit_mcp/clients/backend_client.py](file:///home/fardeen/livekit-mcp/src/livekit_mcp/clients/backend_client.py), [livekit-mcp/src/livekit_mcp/tools/org_processes.py](file:///home/fardeen/livekit-mcp/src/livekit_mcp/tools/org_processes.py), [livekit-mcp/src/livekit_mcp/tools/doctor_availability.py](file:///home/fardeen/livekit-mcp/src/livekit_mcp/tools/doctor_availability.py), [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py), [mantra/utils.py](file:///home/fardeen/lkt/mantra/utils.py).
+
 ## 2026-08-26
 
 ### Post-Call `appointment_metadata` & Entrypoint Shutdown Timeout Hardening
