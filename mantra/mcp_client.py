@@ -2,6 +2,7 @@
 
 Communicates with MCP Servers using the official Model Context Protocol (JSON-RPC 2.0)
 over SSE transport via the Anthropic MCP Python SDK, with automatic HTTP fallback.
+Supports dynamic OAuth 2.1 token acquisition via Mantra Auth.
 """
 
 from __future__ import annotations
@@ -38,23 +39,62 @@ class MantraMCPClient:
         timeout: float = 8.0,
     ):
         self.base_url = (server_url or os.getenv("LIVEKIT_MCP_URL", "http://localhost:8000")).rstrip("/")
+        self.auth_server_url = os.getenv("AUTH_SERVER_URL", "http://localhost:3000").rstrip("/")
+        self.client_id = os.getenv("OAUTH_CLIENT_ID", "")
+        self.client_secret = os.getenv("OAUTH_CLIENT_SECRET", "")
+        
         self.auth_token = auth_token or os.getenv("LIVEKIT_MCP_JWT_TOKEN", "")
-        # Append token query param if available for seamless SSE transport
-        if self.auth_token:
-            self.sse_url = f"{self.base_url}/sse?token={self.auth_token}"
-        else:
-            self.sse_url = f"{self.base_url}/sse"
-
         self.timeout = timeout
-        self._headers: Dict[str, str] = {}
+
+    async def _ensure_auth_token(self) -> Optional[str]:
+        """Dynamically fetch OAuth access token from Mantra Auth using client credentials if token is missing."""
         if self.auth_token:
-            self._headers["Authorization"] = f"Bearer {self.auth_token}"
+            return self.auth_token
+
+        if not self.client_id or not self.client_secret:
+            logger.debug("[MCP] No auth_token or OAuth client credentials configured.")
+            return None
+
+        token_url = f"{self.auth_server_url}/api/oauth/token"
+        payload = {
+            "grant_type": "client_credentials",
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=4.0) as http_client:
+                resp = await http_client.post(token_url, data=payload)
+                if resp.status_code == 200:
+                    token_data = resp.json()
+                    self.auth_token = token_data.get("access_token", "")
+                    logger.info("[MCP] Successfully acquired OAuth access token from Auth Server.")
+                    return self.auth_token
+                else:
+                    logger.warning(f"[MCP] Failed to fetch OAuth token ({resp.status_code}): {resp.text[:150]}")
+        except Exception as e:
+            logger.warning(f"[MCP] Error contacting Auth Server for OAuth token: {e}")
+
+        return None
+
+    def _get_connection_params(self, token: Optional[str]) -> tuple[str, Dict[str, str]]:
+        """Construct SSE URL and Authorization headers."""
+        if token:
+            sse_url = f"{self.base_url}/sse?token={token}"
+            headers = {"Authorization": f"Bearer {token}"}
+        else:
+            sse_url = f"{self.base_url}/sse"
+            headers = {}
+        return sse_url, headers
 
     async def list_tools(self) -> List[MCPToolInfo]:
         """Query the MCP server for available tools via JSON-RPC tools/list."""
+        token = await self._ensure_auth_token()
+        sse_url, headers = self._get_connection_params(token)
+
         try:
             async with asyncio.timeout(self.timeout):
-                async with sse_client(self.sse_url, headers=self._headers if self._headers else None) as (read_stream, write_stream):
+                async with sse_client(sse_url, headers=headers if headers else None) as (read_stream, write_stream):
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
                         tools_result = await session.list_tools()
@@ -67,15 +107,18 @@ class MantraMCPClient:
                             for t in tools_result.tools
                         ]
         except Exception as e:
-            logger.warning(f"[MCP] Could not query tools from {self.sse_url}: {e}")
+            logger.warning(f"[MCP] Could not query tools from {sse_url}: {e}")
             return []
 
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """Execute a tool on the MCP server via official JSON-RPC tools/call over SSE with HTTP fallback."""
+        token = await self._ensure_auth_token()
+        sse_url, headers = self._get_connection_params(token)
+
         # 1. Try MCP SSE JSON-RPC
         try:
             async with asyncio.timeout(self.timeout):
-                async with sse_client(self.sse_url, headers=self._headers if self._headers else None) as (read_stream, write_stream):
+                async with sse_client(sse_url, headers=headers if headers else None) as (read_stream, write_stream):
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
                         logger.info(f"[MCP] Calling '{tool_name}' with args {arguments} via MCP SSE JSON-RPC")
@@ -97,7 +140,7 @@ class MantraMCPClient:
                 resp = await http_client.post(
                     http_url,
                     json={"name": tool_name, "arguments": arguments},
-                    headers=self._headers,
+                    headers=headers if headers else None,
                 )
                 if resp.status_code == 200:
                     data = resp.json()
