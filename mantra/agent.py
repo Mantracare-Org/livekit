@@ -1254,7 +1254,8 @@ Follow these specific instructions:
                 except Exception as pw_err:
                     logger.warning(f"[DEEPSEEK] Pre-warm non-fatal error: {pw_err}")
 
-            create_bg_task(_prewarm_deepseek())
+            # Pre-warm fired AFTER initial_instructions is fully built (see below)
+            # so DeepSeek's KV cache is populated with the actual system prompt.
     else:
         logger.info("Using OpenAI LLM")
         llm_engine = openai.LLM(model="gpt-4o-mini")
@@ -1285,6 +1286,30 @@ Follow these specific instructions:
 
     logger.info(f"[LANG] Initialized language state: '{language}' (Voice: {voice_id} | Speed: {voice_speed})")
 
+    # Fire DeepSeek pre-warm NOW — initial_instructions is fully built.
+    # Passing the real system prompt warms DeepSeek's KV prefix cache so the
+    # first actual turn (e.g. user says "Yes") reuses the cached prefix
+    # instead of recomputing the entire context → eliminates 2-3s TTFT on turn 2.
+    if model_name == "deepseek" and 'client' in locals():
+        async def _prewarm_deepseek_with_ctx():
+            try:
+                logger.info("[DEEPSEEK] Pre-warming KV cache with system prompt...")
+                pw_start = asyncio.get_event_loop().time()
+                await client.chat.completions.create(
+                    model="deepseek-v4-flash",
+                    messages=[
+                        {"role": "system", "content": initial_instructions},
+                        {"role": "user", "content": "hi"},
+                    ],
+                    max_tokens=1,
+                )
+                pw_dur = (asyncio.get_event_loop().time() - pw_start) * 1000
+                logger.info(f"[DEEPSEEK] KV cache pre-warmed with system prompt in {pw_dur:.1f}ms")
+            except Exception as pw_err:
+                logger.warning(f"[DEEPSEEK] Pre-warm (with ctx) non-fatal error: {pw_err}")
+        create_bg_task(_prewarm_deepseek_with_ctx())
+
+
     tts_engine = inference.TTS(
         model="cartesia/sonic-3",
         voice=voice_id,
@@ -1307,8 +1332,8 @@ Follow these specific instructions:
             turn_detection=inference.TurnDetector(),
             endpointing={
                 "mode": "dynamic",
-                "min_delay": 0.10,
-                "max_delay": 0.40,
+                "min_delay": 0.05,
+                "max_delay": 0.30,
             },
             interruption={
                 "mode": "adaptive",
@@ -1325,7 +1350,7 @@ Follow these specific instructions:
         vad=silero.VAD.load(
             min_speech_duration=0.10,
             min_silence_duration=0.25,
-            prefix_padding_duration=0.15,
+            prefix_padding_duration=0.10,
         ),
         stt=stt_engine,
         llm=llm_engine,
@@ -1412,7 +1437,8 @@ Follow these specific instructions:
                             content = " ".join([str(c) for c in m.content]) if isinstance(m.content, list) else str(m.content)
                             if content and not content.startswith("[System:"):
                                 content_preview = content[:200] + ("..." if len(content) > 200 else "")
-                                logger.info(f"[DIAG] TRANSCRIPT | {role}: {content_preview}")
+                                now_str = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                                logger.info(f"[DIAG] [{now_str}] TRANSCRIPT | {role}: {content_preview}")
 
                                 # Intercept caller/user utterances for dynamic language switching
                                 if str(role).lower() in ["user", "caller"]:
@@ -1459,8 +1485,10 @@ Follow these specific instructions:
     def on_agent_state(ev):
         call_state["agent_state"] = ev.new_state
         logger.info(f"[DIAG] Agent state change: {getattr(ev, 'old_state', 'None')} -> {ev.new_state}")
+        
         if ev.new_state == "speaking":
             call_state["greeting_started"] = True
+                
         elif getattr(ev, "old_state", None) == "speaking" and ev.new_state != "speaking":
             call_state["last_activity"] = asyncio.get_event_loop().time()
             if call_state.get("greeting_started"):
@@ -1473,6 +1501,8 @@ Follow these specific instructions:
             call_state["last_activity"] = asyncio.get_event_loop().time()
             call_state["prompted_inactivity"] = False
             call_state["user_has_spoken"] = True
+        elif getattr(ev, "old_state", None) == "speaking" and ev.new_state != "speaking":
+            call_state["user_finished_speaking_at"] = asyncio.get_event_loop().time()
 
     async def inactivity_monitor():
         logger.info("Inactivity monitor started.")
@@ -1779,7 +1809,7 @@ Follow these specific instructions:
                                 instructions=(
                                     "The call went to voicemail. Follow your instructions about "
                                     "voicemail. If you have no voicemail instructions, introduce "
-                                    "yourself by name and ask them to call you back. Keep it brief."
+                                    "yourself by name and ask them to call back. Keep it brief."
                                 )
                             )
                             await speech_handle.wait_for_playout()
