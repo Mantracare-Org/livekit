@@ -1,5 +1,6 @@
 # Changelog
 
+<<<<<<< HEAD
 ## 2026-09-02
 
 ### MCP Client Cloudflare WAF Bypass & AuthMiddleware Public Paths Update
@@ -89,6 +90,17 @@
   - Added resilient HTTP fallback (`POST /api/tools/call` via `httpx`) in `mantra/mcp_client.py` if SSE transport fails.
   - Fixed logging format string `%d` → `%s` and normalized 10-digit Indian phone numbers.
 - Files: [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py), [mantra/mcp_client.py](file:///home/fardeen/lkt/mantra/mcp_client.py), `livekit-mcp/src/livekit_mcp/tools/doctor_availability.py`, `livekit-mcp/src/livekit_mcp/clients/backend_client.py`.
+=======
+## 2026-09-01
+
+### DeepSeek Extreme Low-Latency (<1s) Optimization & Intermittent Lag Elimination
+
+- **feat/perf:** Fixed intermittent 3–8 second latency spikes and achieved ultra-fast (<1s) DeepSeek responses on live voice calls:
+  - **DeepSeek HTTP/2 Socket Pre-Warming & Keep-Alive:** Configured `httpx.AsyncClient` with `http2=True`, `max_connections=50`, `max_keepalive_connections=20`, and `keepalive_expiry=300.0`. Added background socket pre-warming ping (`_prewarm_deepseek`) on room connect to pre-establish TLS/TCP handshakes before the caller speaks.
+  - **Upfront KB System Prompt Context Injection:** Added `format_upfront_kb_context()` and pre-loaded organization Knowledge Base content directly into system instructions (`<!-- UPFRONT_KB_START -->`) at room startup. Eliminates 2-turn function tool call loops (`search_knowledge_base`), saving 1.5s–2.5s on factual turns.
+  - **Fix AssistantFunctions Scope:** Corrected `format_upfront_kb_context()` placement to module-level scope before `class AssistantFunctions`, resolving `AttributeError: 'AssistantFunctions' object has no attribute 'warmup'`.
+- Files: [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py).
+>>>>>>> 1d37a8d (feat: optimize DeepSeek latency via HTTP/2 socket pre-warming, upfront Knowledge Base injection, and dynamic turn endpointing)
 
 ## 2026-08-29
 

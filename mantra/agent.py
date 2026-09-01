@@ -286,6 +286,23 @@ async def resolve_inbound_context(phone_number: str) -> dict | None:
     return config
 
 
+def format_upfront_kb_context(pages: list) -> str:
+    if not pages:
+        return ""
+    text = "\n\n<!-- UPFRONT_KB_START -->\n=== ORGANIZATION KNOWLEDGE BASE (PRE-LOADED FOR INSTANT ZERO-LATENCY ANSWERS) ===\n"
+    total_len = 0
+    for i, page in enumerate(pages, 1):
+        content = page.content_in_text if hasattr(page, "content_in_text") else str(getattr(page, "content", ""))
+        title = page.title if hasattr(page, "title") else f"Doc {i}"
+        entry = f"\n[DOCUMENT: {title}]\n{content}\n"
+        if total_len + len(entry) > 12000:
+            break
+        text += entry
+        total_len += len(entry)
+    text += "\nDIRECTIVE: Use the pre-loaded Knowledge Base information above to answer caller questions directly and instantly without calling search_knowledge_base whenever possible.\n<!-- UPFRONT_KB_END -->"
+    return text
+
+
 class AssistantFunctions:
     def __init__(
         self,
@@ -333,6 +350,25 @@ class AssistantFunctions:
     async def _get_kb(self) -> PostgresKnowledgeBase:
         return get_global_kb()
 
+<<<<<<< HEAD
+=======
+    async def warmup(self):
+        try:
+            kb = await self._get_kb()
+            await kb.warmup(self.kb_ids)
+            retriever = await self._get_retriever()
+            pages = await retriever.prefetch(self.kb_ids)
+            if pages and self.agent:
+                upfront_text = format_upfront_kb_context(pages)
+                if upfront_text:
+                    cur_inst = self.agent.instructions
+                    if isinstance(cur_inst, str) and "<!-- UPFRONT_KB_START -->" not in cur_inst:
+                        await self.agent.update_instructions(cur_inst + upfront_text)
+                        logger.info(f"[KB] Injected {len(pages)} preloaded KB pages into agent instructions for zero-latency turn responses")
+        except Exception as e:
+            logger.warning(f"[KB] AssistantFunctions warmup error: {e}")
+
+>>>>>>> 1d37a8d (feat: optimize DeepSeek latency via HTTP/2 socket pre-warming, upfront Knowledge Base injection, and dynamic turn endpointing)
     async def _get_retriever(self) -> KnowledgeRetriever:
         if self._retriever is None:
             kb = await self._get_kb()
@@ -1053,16 +1089,59 @@ Follow these specific instructions:
             logger.warning("DEEPSEEK_API_KEY not set, falling back to OpenAI")
             llm_engine = openai.LLM(model="gpt-4o-mini")
         else:
+<<<<<<< HEAD
             logger.info("Using DeepSeek LLM")
             import openai as openai_client
             client = openai_client.AsyncClient(
                 api_key=deepseek_key,
                 base_url="https://api.deepseek.com",
+=======
+            logger.info("Using DeepSeek LLM (Optimized Low-Latency HTTP/2)")
+
+            try:
+                http_client = httpx.AsyncClient(
+                    timeout=httpx.Timeout(connect=10.0, read=45.0, write=15.0, pool=15.0),
+                    limits=httpx.Limits(max_connections=50, max_keepalive_connections=20, keepalive_expiry=300.0),
+                    http2=True,
+                )
+            except Exception:
+                http_client = httpx.AsyncClient(
+                    timeout=httpx.Timeout(connect=10.0, read=45.0, write=15.0, pool=15.0),
+                    limits=httpx.Limits(max_connections=50, max_keepalive_connections=20, keepalive_expiry=300.0),
+                )
+
+            deepseek_base = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+            client = openai_client.AsyncClient(
+                api_key=deepseek_key,
+                base_url=deepseek_base,
+                http_client=http_client,
+>>>>>>> 1d37a8d (feat: optimize DeepSeek latency via HTTP/2 socket pre-warming, upfront Knowledge Base injection, and dynamic turn endpointing)
             )
             llm_engine = openai.LLM(
                 model="deepseek-v4-flash",
                 client=client,
+<<<<<<< HEAD
+=======
+                timeout=httpx.Timeout(connect=10.0, read=45.0, write=15.0, pool=15.0),
+>>>>>>> 1d37a8d (feat: optimize DeepSeek latency via HTTP/2 socket pre-warming, upfront Knowledge Base injection, and dynamic turn endpointing)
             )
+
+            # Fire background socket pre-warming ping to eliminate initial SSL/TCP handshake latency
+            async def _prewarm_deepseek():
+                try:
+                    logger.info("[DEEPSEEK] Pre-warming DeepSeek API connection...")
+                    pw_start = asyncio.get_event_loop().time()
+                    await client.chat.completions.create(
+                        model="deepseek-v4-flash",
+                        messages=[{"role": "user", "content": "hi"}],
+                        max_tokens=1,
+                    )
+                    pw_dur = (asyncio.get_event_loop().time() - pw_start) * 1000
+                    logger.info(f"[DEEPSEEK] Socket pre-warmed successfully in {pw_dur:.1f}ms")
+                except Exception as pw_err:
+                    logger.warning(f"[DEEPSEEK] Pre-warm non-fatal error: {pw_err}")
+
+            create_bg_task(_prewarm_deepseek())
     else:
         logger.info("Using OpenAI LLM")
         llm_engine = openai.LLM(model="gpt-4o-mini")
@@ -1114,9 +1193,9 @@ Follow these specific instructions:
         turn_handling=TurnHandlingOptions(
             turn_detection=inference.TurnDetector(),
             endpointing={
-                "mode": "fixed",
-                "min_delay": 0.25,
-                "max_delay": 1.50,
+                "mode": "dynamic",
+                "min_delay": 0.10,
+                "max_delay": 0.40,
             },
             interruption={
                 "mode": "adaptive",
@@ -1133,7 +1212,7 @@ Follow these specific instructions:
         vad=silero.VAD.load(
             min_speech_duration=0.10,
             min_silence_duration=0.25,
-            prefix_padding_duration=0.20,
+            prefix_padding_duration=0.15,
         ),
         stt=stt_engine,
         llm=llm_engine,
