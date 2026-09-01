@@ -101,7 +101,7 @@
 
 ## In Progress
 
-- [ ] **BLOCKER:** Fix MCP server — `CstdioServerParameters` attribute missing in `livekit.agents.llm.mcp` (upstream API changed)
+- [x] **RESOLVED (2026-09-01):** Fix MCP server — `mcp/server.py` was using stdio transport (`mcp.run()` default), not reachable over HTTP. Fixed: `mcp.run(transport="sse", port=8000)`. Also re-enabled `check_doctor_availability` in `agent_tools` which was commented out.
 - [ ] **BLOCKER:** Ingest KB data for org 66 — `kb_pages` table has zero rows for this org
 - [ ] Fix post-call webhook 404 — n8n endpoint missing on ngrok backend
 - [ ] Fix handoff TTS glitch — silence instructions race with tool return producing `"..."` utterance

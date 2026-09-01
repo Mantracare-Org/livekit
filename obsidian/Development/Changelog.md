@@ -1,6 +1,14 @@
 # Changelog
 
+## 2026-09-01
+
+### MCP Server Transport Fix & `check_doctor_availability` Re-enablement
+
+- **fix:** `mcp/server.py` was running in `stdio` mode (`mcp.run()` default). `MantraMCPClient` connects over SSE HTTP to `http://0.0.0.0:8000/sse`, so no requests ever reached the server. Changed to `mcp.run(transport="sse", port=8000)` (configurable via `MCP_SERVER_PORT` env var). Files: `mcp/server.py`.
+- **fix:** `check_doctor_availability` was commented out of `agent_tools` in `mantra/agent.py`, so the LLM was never offered the tool and could never call the MCP server even when availability queries were made. Re-enabled it in the tools list. Files: `mantra/agent.py`.
+
 ## 2026-08-30
+
 
 ### Dynamic OAuth Token Acquisition & Hardcoded JWT Removal
 
