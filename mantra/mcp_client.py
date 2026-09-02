@@ -38,12 +38,12 @@ class MantraMCPClient:
         auth_token: Optional[str] = None,
         timeout: float = 8.0,
     ):
-        self.base_url = (server_url or os.getenv("LIVEKIT_MCP_URL", "http://localhost:8000")).rstrip("/")
-        self.auth_server_url = os.getenv("AUTH_SERVER_URL", "http://localhost:3000").rstrip("/")
-        self.client_id = os.getenv("OAUTH_CLIENT_ID", "")
-        self.client_secret = os.getenv("OAUTH_CLIENT_SECRET", "")
+        self.base_url = (server_url or os.getenv("LIVEKIT_MCP_URL")).rstrip("/")
+        self.auth_server_url = os.getenv("AUTH_SERVER_URL").rstrip("/")
+        self.client_id = os.getenv("OAUTH_CLIENT_ID")
+        self.client_secret = os.getenv("OAUTH_CLIENT_SECRET")
         
-        self.auth_token = auth_token or os.getenv("LIVEKIT_MCP_JWT_TOKEN", "")
+        self.auth_token = auth_token or os.getenv("LIVEKIT_MCP_JWT_TOKEN")
         self.timeout = timeout
 
     async def _ensure_auth_token(self) -> Optional[str]:

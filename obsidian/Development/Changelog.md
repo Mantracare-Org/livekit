@@ -4,6 +4,7 @@
 
 ### MCP Client Cloudflare WAF Bypass & AuthMiddleware Public Paths Update
 
+- **fix:** Added `auth.mantracare.com`, `livekit-mcp.app-mantra.com`, and `app-mantra.com` to `NO_PROXY` in `lkt/.env` to prevent outgoing MCP/Auth HTTP requests from routing through the HTTP proxy `13.234.222.62:8888` and triggering Cloudflare 403 blocks. Files: `lkt/.env`.
 - **fix:** Added standard browser `User-Agent` and `ngrok-skip-browser-warning` headers to `MantraMCPClient` (`mantra/mcp_client.py`) across OAuth token requests and SSE/HTTP tool call connections. Resolves Cloudflare WAF 403 Forbidden ("Attention Required! Cloudflare") blocks when fetching tokens or querying MCP endpoints over domain routes like `app-mantra.com`. Files: `mantra/mcp_client.py`.
 - **fix:** Added `/sitemap.xml` and `/robots.txt` to `DEFAULT_PUBLIC_PATHS` in `livekit-mcp` (`livekit_mcp/auth/middleware.py`). Prevents unauthenticated web crawlers and scanners from triggering unnecessary `401 Unauthorized: Missing token` warning logs. Files: `livekit-mcp/src/livekit_mcp/auth/middleware.py`.
 
