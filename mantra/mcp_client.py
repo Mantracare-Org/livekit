@@ -63,7 +63,12 @@ class MantraMCPClient:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=4.0) as http_client:
+            req_headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "application/json, text/plain, */*",
+                "ngrok-skip-browser-warning": "true",
+            }
+            async with httpx.AsyncClient(timeout=4.0, headers=req_headers) as http_client:
                 resp = await http_client.post(token_url, data=payload)
                 if resp.status_code == 200:
                     token_data = resp.json()
@@ -79,12 +84,16 @@ class MantraMCPClient:
 
     def _get_connection_params(self, token: Optional[str]) -> tuple[str, Dict[str, str]]:
         """Construct SSE URL and Authorization headers."""
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/event-stream, */*",
+            "ngrok-skip-browser-warning": "true",
+        }
         if token:
             sse_url = f"{self.base_url}/sse?token={token}"
-            headers = {"Authorization": f"Bearer {token}"}
+            headers["Authorization"] = f"Bearer {token}"
         else:
             sse_url = f"{self.base_url}/sse"
-            headers = {}
         return sse_url, headers
 
     async def list_tools(self) -> List[MCPToolInfo]:

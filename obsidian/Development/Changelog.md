@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-09-02
+
+### MCP Client Cloudflare WAF Bypass & AuthMiddleware Public Paths Update
+
+- **fix:** Added standard browser `User-Agent` and `ngrok-skip-browser-warning` headers to `MantraMCPClient` (`mantra/mcp_client.py`) across OAuth token requests and SSE/HTTP tool call connections. Resolves Cloudflare WAF 403 Forbidden ("Attention Required! Cloudflare") blocks when fetching tokens or querying MCP endpoints over domain routes like `app-mantra.com`. Files: `mantra/mcp_client.py`.
+- **fix:** Added `/sitemap.xml` and `/robots.txt` to `DEFAULT_PUBLIC_PATHS` in `livekit-mcp` (`livekit_mcp/auth/middleware.py`). Prevents unauthenticated web crawlers and scanners from triggering unnecessary `401 Unauthorized: Missing token` warning logs. Files: `livekit-mcp/src/livekit_mcp/auth/middleware.py`.
+
 ## 2026-09-01
 
 ### MCP Server Transport Fix & `check_doctor_availability` Re-enablement
