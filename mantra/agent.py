@@ -125,6 +125,16 @@ AMD_ENABLED = os.getenv("AMD_ENABLED", "1") == "1"
 
 server = AgentServer(num_idle_processes=20, shutdown_process_timeout=120.0)
 
+from mantra.call_duration import (
+    BASE_FAREWELL_SECONDS as CALL_BASE_FAREWELL_SECONDS,
+    BASE_HARD_LIMIT_SECONDS as CALL_BASE_HARD_LIMIT_SECONDS,
+    EXTENDED_FAREWELL_SECONDS as CALL_EXTENDED_FAREWELL_SECONDS,
+    EXTENDED_HARD_LIMIT_SECONDS as CALL_EXTENDED_HARD_LIMIT_SECONDS,
+    current_limits,
+    extend_call,
+)
+from mantra.positive_intent import should_extend_from_history
+
 # --- Transfer/Handoff Configuration ---
 TRANSFER_NUMBERS = {}
 _raw_transfer = os.getenv("TRANSFER_NUMBERS")
@@ -807,7 +817,13 @@ async def entrypoint(ctx: JobContext):
         "agent_joined_at": datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
         "human_joined_at": None,
         "call_initiated_at": None,
-        "timeline": [{"event": "Agent Session Started", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"}]
+        "timeline": [{"event": "Agent Session Started", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"}],
+        "entrypoint_start_time": entrypoint_start_time,
+        "duration_extended": False,
+        "extension_event": asyncio.Event(),
+        "farewell_triggered": False,
+        "original_instructions": None,
+        "is_inbound": False,
     }
 
     tos_task_id = None
@@ -1160,9 +1176,12 @@ Follow these specific instructions:
                 initial_instructions += "- If the caller seems confused, help them understand who you are.\n"
                 
             logger.info(f"Loaded full context for {client_name} (inbound: {is_inbound})")
+            call_state["is_inbound"] = is_inbound
 
         except Exception as e:
             logger.error(f"Failed to parse metadata: {e}")
+
+    call_state["is_inbound"] = is_inbound
 
     # 3. Select LLM and Voice based on payload
     if "payload" in locals():
@@ -1472,6 +1491,35 @@ Follow these specific instructions:
     )
     fnc_ctx.agent = agent
     fnc_ctx.session = session
+    call_state["_agent_ref"] = agent
+    call_state["original_instructions"] = initial_instructions
+
+    async def positive_intent_monitor():
+        logger.info("[INTENT] Positive-intent monitor started (outbound only, heuristic, auto-extend 3m to 5m)")
+        await asyncio.sleep(5.0)
+        while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+            try:
+                if call_state.get("is_inbound") or call_state.get("duration_extended"):
+                    await asyncio.sleep(2.0)
+                    continue
+                elapsed = asyncio.get_event_loop().time() - entrypoint_start_time
+                if elapsed < 15.0 or elapsed > CALL_EXTENDED_HARD_LIMIT_SECONDS - 10:
+                    await asyncio.sleep(2.0)
+                    continue
+                if not (session and hasattr(session, "history") and session.history):
+                    await asyncio.sleep(2.0)
+                    continue
+                msgs = list(session.history.messages())
+                should, reason = should_extend_from_history(msgs)
+                if should:
+                    logger.info(f"[INTENT] Positive intent detected: {reason} at t={elapsed:.1f}s")
+                    ok = await extend_call(call_state, reason, elapsed)
+                    if ok:
+                        create_bg_task(report_telemetry(tos_task_id=call_state.get("tos_task_id"), message=f"[Agent Worker] Call auto-extended to 5m — {reason}", call_id=call_state.get("call_id"), data={"reason": reason, "elapsed": round(elapsed, 1)}))
+                    break
+            except Exception as e:
+                logger.info(f"[INTENT] monitor error: {e}")
+            await asyncio.sleep(2.0)
 
     # ── Transcript logging & dynamic language switching task ─────────────
     _last_logged_history_size = 0
@@ -1662,103 +1710,102 @@ Follow these specific instructions:
             except Exception as e:
                 logger.info(f"Farewell safety net error: {e}")
 
-    # Call duration limiter logic
+    # Call duration limiter logic — supports 3m default to 5m extension on positive intent (outbound only)
     async def call_limiter():
         logger.info("[DIAG] call_limiter: Started — waiting for remote participant to join.")
+        _force_disconnect_cancelled = call_state.get("_force_disconnect_cancelled")
+        if not isinstance(_force_disconnect_cancelled, asyncio.Event):
+            _force_disconnect_cancelled = asyncio.Event()
+            call_state["_force_disconnect_cancelled"] = _force_disconnect_cancelled
+        extension_event = call_state.get("extension_event")
         try:
-            # Wait for remote participant to join before starting the 2m/3m timers
             while not list(ctx.room.remote_participants.values()):
                 await asyncio.sleep(1.0)
+                if ctx.room.connection_state != rtc.ConnectionState.CONN_CONNECTED:
+                    return
 
-            logger.info("[DIAG] call_limiter: Remote participant detected in room.")
+            def _targets():
+                ext = bool(call_state.get("duration_extended") and not call_state.get("is_inbound"))
+                return current_limits(ext)
+
             elapsed = asyncio.get_event_loop().time() - entrypoint_start_time
+            farewell_target, hard_target = _targets()
             logger.info(
                 f"[DIAG] call_limiter: Participant joined at t={elapsed:.2f}s. "
-                f"Farewell in {max(0.0, 150.0 - elapsed):.2f}s, Hard kill in {max(0.0, 180.0 - elapsed):.2f}s."
+                f"Farewell in {max(0.0, farewell_target - elapsed):.2f}s (target {farewell_target}s), "
+                f"Hard kill in {max(0.0, hard_target - elapsed):.2f}s (target {hard_target}s)."
             )
 
-            # Event that lets us cancel the force-disconnect if the call ends naturally
-            _force_disconnect_cancelled = asyncio.Event()
+            farewell_done = False
+            while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+                await asyncio.sleep(1.0)
+                if _force_disconnect_cancelled.is_set():
+                    logger.info("Call limiter exiting — force-disconnect cancelled.")
+                    return
+                cur_farewell, cur_hard = _targets()
+                if (cur_farewell, cur_hard) != (farewell_target, hard_target):
+                    logger.warning(f"[CALL_LIMITER] Targets updated: farewell {farewell_target}->{cur_farewell}s hard {hard_target}->{cur_hard}s")
+                    farewell_target, hard_target = cur_farewell, cur_hard
+                    if farewell_done and cur_farewell == CALL_EXTENDED_FAREWELL_SECONDS:
+                        elapsed_now = asyncio.get_event_loop().time() - entrypoint_start_time
+                        if elapsed_now < cur_farewell:
+                            farewell_done = False
+                            call_state["farewell_triggered"] = False
 
-            async def force_disconnect_timer():
-                try:
-                    disconnect_delay = max(
-                        0.0,
-                        180.0
-                        - (asyncio.get_event_loop().time() - entrypoint_start_time),
-                    )
-                    logger.info(
-                        f"Force-disconnect timer armed: t+{disconnect_delay:.2f}s"
-                    )
-                    await asyncio.wait_for(
-                        _force_disconnect_cancelled.wait(), timeout=disconnect_delay
-                    )
-                except asyncio.TimeoutError:
-                    pass  # Timeout expired — proceed to disconnect
-                except asyncio.CancelledError:
-                    logger.info("Force-disconnect timer cancelled.")
-                    return  # Cancelled — exit cleanly
-                else:
-                    logger.info(
-                        "Call ended naturally — force-disconnect timer exiting."
-                    )
-                    return  # Event was set — call ended naturally, exit cleanly
-
-                if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
-                    logger.warning(
-                        "HARD DISCONNECT: 3m limit reached. Force disconnecting room."
-                    )
-                    call_state["timeline"].append(
-                        {
-                            "event": "Max Call Duration Reached",
-                            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
-                        }
-                    )
-                    await _force_disconnect_room(ctx)
-                else:
-                    logger.info(
-                        "Room already disconnected — force-disconnect skipping."
-                    )
-
-            create_bg_task(force_disconnect_timer())
-
-            # Stage 1: 2m 30s mark — update agent instructions for a natural farewell
-            # We do NOT call generate_reply() here, so the agent won't interrupt the user.
-            # The updated instructions are picked up on the agent's next natural turn.
-            stage1_delay = max(
-                0.0, 150.0 - (asyncio.get_event_loop().time() - entrypoint_start_time)
-            )
-            await asyncio.sleep(stage1_delay)
-            elapsed = asyncio.get_event_loop().time() - entrypoint_start_time
-            logger.info(f"Farewell stage hit at t={elapsed:.2f}s")
-
-            if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
-                logger.info("Updating agent instructions for farewell.")
-                current_inst = agent.instructions
-                if isinstance(current_inst, str):
-                    farewell_inst = (
-                        "IMPORTANT: The call time is ending now. "
-                        "On your next turn, say a quick, natural one-sentence goodbye "
-                        "and do not continue the conversation. Do not ask questions."
-                    )
-                    await agent.update_instructions(
-                        current_inst + "\n\n" + farewell_inst
-                    )
-                logger.info("Farewell instructions set.")
-
-                try:
-                    logger.info("Waiting for session to become inactive (25s timeout).")
-                    if hasattr(session, "wait_for_inactive") and callable(getattr(session, "wait_for_inactive")):
-                        await asyncio.wait_for(session.wait_for_inactive(), timeout=25.0)
+                elapsed = asyncio.get_event_loop().time() - entrypoint_start_time
+                if not farewell_done and elapsed >= farewell_target:
+                    farewell_done = True
+                    call_state["farewell_triggered"] = True
+                    logger.info(f"Farewell stage hit at t={elapsed:.2f}s (target {farewell_target}s)")
+                    if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+                        logger.info("Updating agent instructions for farewell.")
+                        current_inst = agent.instructions
+                        if isinstance(current_inst, str) and "call time is ending now" not in current_inst:
+                            farewell_inst = (
+                                "IMPORTANT: The call time is ending now. "
+                                "On your next turn, say a quick, natural one-sentence goodbye "
+                                "and do not continue the conversation. Do not ask questions."
+                            )
+                            await agent.update_instructions(current_inst + "\n\n" + farewell_inst)
+                        logger.info("Farewell instructions set.")
+                        for _ in range(25):
+                            if call_state.get("duration_extended") and not call_state.get("is_inbound"):
+                                logger.info("[CALL_LIMITER] Farewell wait interrupted — call extended")
+                                farewell_done = False
+                                call_state["farewell_triggered"] = False
+                                break
+                            if ctx.room.connection_state != rtc.ConnectionState.CONN_CONNECTED or _force_disconnect_cancelled.is_set():
+                                break
+                            if hasattr(session, "wait_for_inactive") and callable(getattr(session, "wait_for_inactive")):
+                                try:
+                                    await asyncio.wait_for(session.wait_for_inactive(), timeout=1.0)
+                                    logger.info("Session became inactive naturally.")
+                                    break
+                                except asyncio.TimeoutError:
+                                    continue
+                                except Exception:
+                                    await asyncio.sleep(1.0)
+                            else:
+                                await asyncio.sleep(1.0)
+                        else:
+                            logger.warning("Session did not go inactive within 25s — hard limit will handle it.")
                     else:
-                        await asyncio.sleep(25.0)
-                    logger.info("Session became inactive naturally.")
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        "Session did not go inactive within 25s — force-disconnect at 3m will handle it."
-                    )
-            else:
-                logger.warning("Room already disconnected — skipping farewell.")
+                        logger.warning("Room already disconnected — skipping farewell.")
+
+                elapsed = asyncio.get_event_loop().time() - entrypoint_start_time
+                if elapsed >= hard_target:
+                    if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+                        logger.warning(f"HARD DISCONNECT: {hard_target}s limit reached. Force disconnecting room.")
+                        call_state["timeline"].append(
+                            {
+                                "event": "Max Call Duration Reached",
+                                "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+                                "limit": hard_target,
+                                "extended": bool(call_state.get("duration_extended")),
+                            }
+                        )
+                        await _force_disconnect_room(ctx)
+                    break
         except asyncio.CancelledError:
             logger.info("Call limiter cancelled (call ended naturally before limits).")
             try:
@@ -1775,6 +1822,7 @@ Follow these specific instructions:
         limiter_task = asyncio.create_task(call_limiter())
         inactivity_task = asyncio.create_task(inactivity_monitor())
         safety_net_task = asyncio.create_task(farewell_safety_net())
+        intent_task = asyncio.create_task(positive_intent_monitor())
 
         logger.info(f"[DIAG] Checking for already-published tracks...")
         # Check if agent track was already published before we attached the listener
@@ -1941,6 +1989,7 @@ Follow these specific instructions:
             "goodbye_task",
             "safety_net_task",
             "transcript_task",
+            "intent_task",
         ]:
             task = locals().get(task_name)
             if task and not task.done():
