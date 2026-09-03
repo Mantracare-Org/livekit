@@ -347,6 +347,36 @@ def format_upfront_kb_context(pages: list) -> str:
     return text
 
 
+def format_upfront_process_context(processes: list) -> str:
+    if not processes:
+        return ""
+
+    text = "\n\n<!-- UPFRONT_PROCESS_CONTEXT_START -->\n=== ORGANIZATION PROCESS AND STAGE INFORMATION ===\n"
+    total_len = 0
+    for process in processes:
+        if not isinstance(process, dict):
+            continue
+        process_name = process.get("name") or process.get("process_name") or "Process"
+        description = process.get("description") or process.get("process_description") or ""
+        entry = f"\n[PROCESS: {process_name}]\n{description}\n"
+        stages = process.get("stages") or process.get("stageDetails") or []
+        for stage in stages:
+            if not isinstance(stage, dict):
+                continue
+            stage_name = stage.get("name") or stage.get("stage_name") or "Stage"
+            stage_description = stage.get("description") or stage.get("stage_description") or ""
+            entry += f"[STAGE: {stage_name}]\n{stage_description}\n"
+        if total_len + len(entry) > 12000:
+            break
+        text += entry
+        total_len += len(entry)
+
+    if total_len == 0:
+        return ""
+    text += "\nDIRECTIVE: Use this process and stage information to answer specific caller questions directly. Do not invent details that are not present here.\n<!-- UPFRONT_PROCESS_CONTEXT_END -->"
+    return text
+
+
 class AssistantFunctions:
     def __init__(
         self,
@@ -402,13 +432,18 @@ class AssistantFunctions:
             await kb.warmup(self.kb_ids)
             retriever = await self._get_retriever()
             pages = await retriever.prefetch(self.kb_ids)
-            if pages and self.agent:
+            process_context = await kb.get_process_stage_data_for_kb_ids(self.kb_ids)
+            if self.agent:
                 upfront_text = format_upfront_kb_context(pages)
+                upfront_text += format_upfront_process_context(process_context)
                 if upfront_text:
                     cur_inst = self.agent.instructions
                     if isinstance(cur_inst, str) and "<!-- UPFRONT_KB_START -->" not in cur_inst:
                         await self.agent.update_instructions(cur_inst + upfront_text)
-                        logger.info(f"[KB] Injected {len(pages)} preloaded KB pages into agent instructions for zero-latency turn responses")
+                        logger.info(
+                            f"[KB] Injected {len(pages)} KB pages and {len(process_context)} "
+                            "process contexts into agent instructions"
+                        )
         except Exception as e:
             logger.warning(f"[KB] AssistantFunctions warmup error: {e}")
 
@@ -882,6 +917,15 @@ async def entrypoint(ctx: JobContext):
             kb_tags_list = list(set([str(t) for t in kb_tags_list if t]))
         except Exception as e:
             logger.error(f"Failed to parse/resolve metadata: {e}")
+
+    if call_state.get("org_id"):
+        try:
+            org_id = str(call_state["org_id"])
+            org_kb_ids = await get_global_kb().get_kb_ids_for_org(org_id)
+            kb_ids_list = list(set(kb_ids_list + [str(kb_id) for kb_id in org_kb_ids if kb_id]))
+            logger.info(f"[DIAG] Expanded org {org_id} to KB collections: {org_kb_ids}")
+        except Exception as e:
+            logger.warning(f"Failed to expand KB collections for org {call_state['org_id']}: {e}")
 
     logger.info(f"KB scope: kb_ids={kb_ids_list}, kb_tags={kb_tags_list}")
 

@@ -1,6 +1,20 @@
 # Changelog
 
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+## 2026-09-03
+
+### Live Call Process Context Injection
+
+- **fix:** Injected process and stage metadata into live agent instructions during KB warmup. This allows explicit questions such as affordable intern therapy plans to use process/stage content even when the scoped `kb_pages` table is empty.
+- **fix:** Preserved the existing KB search and no-invention guardrails while adding a bounded 12,000-character process context.
+- **fix:** Corrected `KnowledgeRetriever.prefetch()` to return its loaded pages. Without this return value, live warmup received `None`, raised a `len(None)` error, and skipped process-context injection.
+- **fix:** Expanded outbound organization scopes through `kb_collections`, so collection-backed pages are included instead of searching only the legacy `org_id` value.
+- **fix:** Normalized outbound `org_id` to text before querying `kb_collections`; integer metadata previously caused asyncpg type validation to abort expansion.
+- Files: [mantra/agent.py](../../mantra/agent.py), [mantra/retriever.py](../../mantra/retriever.py).
+
+>>>>>>> 0798df6 (feat: inject organization process and stage metadata into agent instructions during KB warmup and expand KB collection scope)
 ## 2026-09-02
 
 ### MCP Client Cloudflare WAF Bypass & AuthMiddleware Public Paths Update
