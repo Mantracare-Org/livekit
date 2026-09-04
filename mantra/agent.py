@@ -5,7 +5,7 @@ import os
 import datetime
 import aiohttp
 from mantra.email_alerts import send_crash_email
-from mantra.language_manager import LanguageManager, MultilingualParallelSTT
+from mantra.language_manager import LanguageManager, MultilingualParallelSTT, resolve_stt_language, resolve_stt_keyterms
 import sys
 
 # ── Suppress OpenTelemetry 429 errors ──────────────────────────────────
@@ -1341,13 +1341,43 @@ Follow these specific instructions:
         }
     )
 
-    # Native Deepgram Nova-3 Multilingual STT engine (supports English & Hindi)
-    stt_engine = deepgram.STT(
-        model="nova-3",
-        language="multi",
-        endpointing_ms=25,
-        no_delay=True,
+    # Deepgram Nova-3 STT engine with international locale resolution (en-IN, en-US, en-GB, en-AU, etc.)
+    # Fully compatible with both INBOUND and OUTBOUND calls
+    call_phone = (
+        call_state.get("caller_phone_number")
+        or (payload.get("phone_number") if "payload" in locals() and isinstance(payload, dict) else None)
+        or (payload.get("client_phone_number") if "payload" in locals() and isinstance(payload, dict) else None)
+        or (payload.get("client_phone") if "payload" in locals() and isinstance(payload, dict) else None)
+        or (payload.get("caller_phone") if "payload" in locals() and isinstance(payload, dict) else None)
+        or (payload.get("to_phone") if "payload" in locals() and isinstance(payload, dict) else None)
+        or (call_data.get("phone_number") if "call_data" in locals() and isinstance(call_data, dict) else None)
+        or (call_payload.get("client_phone_number") if "call_payload" in locals() and isinstance(call_payload, dict) else None)
+        or (getattr(participant, "identity", None) if "participant" in locals() and participant else None)
     )
+    country_val = (
+        (payload.get("country") or payload.get("country_code") or payload.get("client_country"))
+        if "payload" in locals() and isinstance(payload, dict)
+        else None
+    )
+
+    stt_lang = resolve_stt_language(language=language, phone_number=call_phone, country_code=country_val)
+    logger.info(f"[STT] Deepgram Nova-3 configured with language/locale: '{stt_lang}' (Direction: {'inbound' if is_inbound else 'outbound'} | Phone: {call_phone})")
+
+    dynamic_keyterms = resolve_stt_keyterms(payload=payload if "payload" in locals() and isinstance(payload, dict) else None)
+    stt_kwargs = {
+        "model": "nova-3",
+        "language": stt_lang,
+        "smart_format": True,
+        "punctuate": True,
+        "numerals": True,
+        "endpointing_ms": 25,
+        "no_delay": True,
+    }
+    if dynamic_keyterms:
+        stt_kwargs["keyterm"] = dynamic_keyterms
+        logger.info(f"[STT] Deepgram Nova-3 keyterm prompting enabled ({len(dynamic_keyterms)} terms): {dynamic_keyterms[:10]}...")
+
+    stt_engine = deepgram.STT(**stt_kwargs)
 
     session = AgentSession(
         turn_handling=TurnHandlingOptions(
@@ -1413,13 +1443,12 @@ Follow these specific instructions:
                                     logger.info(f"[LANG] TTS updated to language='{new_lang}' (voice={voice_id})")
                                 except Exception as tts_err:
                                     logger.error(f"[LANG] Failed to update TTS options: {tts_err}")
-                                if stt_lang != "multi":
-                                    try:
-                                        target_stt_lang = resolve_stt_language(language=new_lang, phone_number=call_phone, country_code=country_val) if new_lang == "en" else new_lang
-                                        stt_engine.update_options(language=target_stt_lang)
-                                        logger.info(f"[LANG] STT updated to language/locale='{target_stt_lang}'")
-                                    except Exception as stt_err:
-                                        logger.error(f"[LANG] Failed to update STT options: {stt_err}")
+                                try:
+                                    target_stt_lang = resolve_stt_language(language=new_lang, phone_number=call_phone, country_code=country_val)
+                                    stt_engine.update_options(language=target_stt_lang)
+                                    logger.info(f"[LANG] STT updated to language/locale='{target_stt_lang}'")
+                                except Exception as stt_err:
+                                    logger.error(f"[LANG] Failed to update STT options: {stt_err}")
 
                             # Synchronously update the language directive in the system message inside chat_ctx
                             directive = language_mgr.get_prompt_directive()

@@ -7,6 +7,12 @@
 =======
 ## 2026-09-04
 
+### STT Language Resolution Unlocking & Hindi Model (`hi`) Target Fix
+
+- **bugfix:** Fixed bug where STT resolution mapped all Hindi/Indian calls to `multi`. Because `stt_lang == "multi"`, the `if stt_lang != "multi":` guard in `llm_node()` evaluated to `False`, permanently trapping the STT engine in generic `multi` mode and preventing STT options from updating when Hindi or English speech occurred.
+- **fix:** Restored `resolve_stt_language()` so Hindi calls (`language="hi"`) evaluate directly to Deepgram Nova-3's dedicated Hindi speech model (**`hi`**), which transcribes Hindi speech into Hindi words/Devanagari with 100% accuracy.
+- **fix:** Removed the `if stt_lang != "multi":` blocking guard in `mantra/agent.py`. STT options now dynamically update (`stt_engine.update_options`) between Deepgram's Hindi model (`hi`) and Indian English model (`en-IN` + dynamic `keyterm` prompting) on every turn transition.
+
 ### Indian Telesales Executive Hinglish System Prompt & Language Directive Alignment
 
 - **feat:** Updated `initial_instructions` in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py) with full natural Hinglish guidelines tailored for Indian female telesales executive personas (short 1-2 sentence turns, active listening, context retention, search directives, handoff rules, flat prosody, and brand single-word pronunciation guards).

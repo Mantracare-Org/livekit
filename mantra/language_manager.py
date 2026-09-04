@@ -13,6 +13,7 @@ Architecture:
 import asyncio
 import logging
 import time
+import os
 from typing import Dict, List, Optional, Tuple, Set
 import langdetect
 
@@ -41,6 +42,74 @@ NATIVE_SCRIPTS: Dict[str, str] = {
     # "mr": "Devanagari (मराठी)",
 }
 
+STOP_WORDS = {
+    "You", "The", "This", "That", "Please", "Do", "Not", "If", "Always", "Never",
+    "Call", "When", "Your", "Our", "Their", "From", "With", "About", "Have", "Has",
+    "Will", "Would", "Should", "Could", "What", "Where", "Which", "Who", "How",
+    "Core", "Behavior", "Knowledge", "Base", "Search", "Directives", "Ending", "Call",
+    "Pronunciation", "Critical", "Prosody", "Tone", "Follow", "Specific", "Instructions"
+}
+
+
+def resolve_stt_keyterms(
+    payload: Optional[dict] = None,
+    custom_keyterms: Optional[List[str]] = None,
+) -> Optional[List[str]]:
+    """
+    Dynamically extract keyterms for Deepgram Nova-3 Keyterm Prompting.
+
+    Eliminates hardcoded location lists by dynamically combining:
+    1. Base brand terms ('MantraCare', 'MantraAssist')
+    2. Environment variable overrides (DEEPGRAM_KEYTERMS="term1,term2")
+    3. Explicit webhook payload fields ('keyterms' or 'keywords')
+    4. Capitalized proper noun phrases (locations, doctor names, clinics) extracted dynamically from campaign prompts
+    """
+    keyterms_set = set()
+
+    # 1. Base brand terms
+    keyterms_set.add("MantraCare")
+    keyterms_set.add("MantraAssist")
+
+    # 2. Environment variable override
+    env_terms = os.getenv("DEEPGRAM_KEYTERMS")
+    if env_terms:
+        for t in env_terms.split(","):
+            t = t.strip()
+            if t:
+                keyterms_set.add(t)
+
+    # 3. Custom keyterms passed directly
+    if custom_keyterms:
+        for t in custom_keyterms:
+            if t and isinstance(t, str):
+                keyterms_set.add(t.strip())
+
+    # 4. Dynamic extraction from call payload
+    if payload and isinstance(payload, dict):
+        p_terms = payload.get("keyterms") or payload.get("keywords")
+        if isinstance(p_terms, list):
+            for t in p_terms:
+                if t and isinstance(t, str):
+                    keyterms_set.add(t.strip())
+        elif isinstance(p_terms, str):
+            for t in p_terms.split(","):
+                t = t.strip()
+                if t:
+                    keyterms_set.add(t)
+
+        # Extract capitalized proper nouns dynamically from campaign prompt text
+        prompt = payload.get("prompt")
+        if prompt and isinstance(prompt, str):
+            import re
+            matches = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b', prompt)
+            for m in matches:
+                m_clean = m.strip()
+                if len(m_clean) > 2 and m_clean not in STOP_WORDS:
+                    keyterms_set.add(m_clean)
+
+    sorted_list = sorted(list(keyterms_set))
+    return sorted_list if sorted_list else None
+
 
 def resolve_stt_language(
     language: Optional[str] = None,
@@ -50,20 +119,22 @@ def resolve_stt_language(
     """
     Resolve the optimal Deepgram STT language/locale model.
 
-    - Explicit regional locales (e.g. 'en-IN', 'en-US', 'en-GB', 'en-AU', 'hi') are respected directly.
-    - If language is generic 'en', it inspects country_code or E.164 phone prefix:
-        * +91 (India) -> 'en-IN' (calibrated for Indian accents & proper nouns)
-        * +1 (USA/Canada) -> 'en-US'
-        * +44 (UK) -> 'en-GB'
-        * +61 (Australia) -> 'en-AU'
-        * +64 (New Zealand) -> 'en-NZ'
-        * Default / international -> 'en-US'
-    - Non-English languages ('hi', 'es', 'fr', etc.) map directly.
+    - Explicit 'hi' returns 'hi' (Deepgram Nova-3 Hindi speech model).
+    - Explicit 'multi' returns 'multi'.
+    - Indian English calls (+91 prefix, 10-digit mobile, country code IN, or 'en') map to 'en-IN'.
+    - Explicit non-Indian regional locales ('en-US', 'en-GB', 'en-AU', 'es', 'fr', etc.) map directly.
     """
-    lang = (language or "en").strip()
+    lang = (language or "en").strip().lower()
 
-    # If it's already a full regional locale (e.g. 'en-IN', 'en-US') or non-English, use it
-    if "-" in lang or lang != "en":
+    if lang in ("hi", "hindi"):
+        return "hi"
+    if lang == "multi":
+        return "multi"
+
+    # If it's already a non-English locale (e.g. 'en-US', 'en-GB', 'es', 'fr'), use it
+    if "-" in lang and lang != "en-in":
+        return lang
+    elif lang not in ("en", "en-in"):
         return lang
 
     # Check country code if provided
@@ -101,8 +172,8 @@ def resolve_stt_language(
     elif phone.startswith("64") and len(phone) >= 10:
         return "en-NZ"
 
-    # Default international English
-    return "en-US"
+    # Default Indian English locale
+    return "en-IN"
 
 
 # ── 1. Unicode Script & Statistical ML Language Detector ─────────────────
@@ -351,14 +422,18 @@ class MultilingualParallelStream(stt.RecognizeStream):
         for lang in self._languages:
             try:
                 stt_lang = "en-IN" if lang == "en" else lang
-                child_stt = deepgram.STT(
-                    model="nova-3",
-                    language=stt_lang,
-                    smart_format=True,
-                    numerals=True,
-                    endpointing_ms=150,
-                    utterance_end_ms=600,
-                )
+                stt_kwargs = {
+                    "model": "nova-3",
+                    "language": stt_lang,
+                    "smart_format": True,
+                    "numerals": True,
+                    "endpointing_ms": 150,
+                    "utterance_end_ms": 600,
+                }
+                k_terms = resolve_stt_keyterms()
+                if k_terms:
+                    stt_kwargs["keyterm"] = k_terms
+                child_stt = deepgram.STT(**stt_kwargs)
                 stream = child_stt.stream()
                 self._child_streams[lang] = stream
                 task = asyncio.create_task(self._listen_child(lang, stream))
