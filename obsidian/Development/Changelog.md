@@ -2,7 +2,17 @@
 
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
+=======
+## 2026-09-04
+
+### Deepgram STT Multilingual (`multi`) & Accent Recognition
+
+- **fix:** Updated `resolve_stt_language()` in [mantra/language_manager.py](file:///home/fardeen/lkt/mantra/language_manager.py) to resolve Indian region and phone calls to Deepgram Nova-3's native `multi` (multilingual) locale instead of locking STT into single-language `en-IN`.
+- **fix:** Prevents single-language STT lockouts where Hindi spoken responses (*"जी"*, *"हाँ"*, *"नमस्ते"*) following Hindi agent greetings were dropped by English-only acoustic filters. Both Hindi and English (with Indian place names and accents) are now captured concurrently on the exact same stream.
+
+>>>>>>> 1f4cdd1 (feat: update language manager to use Deepgram Nova-3 multilingual locale for Indian region and phone calls)
 ## 2026-09-03
 
 ### Live Call Process Context Injection
