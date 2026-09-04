@@ -7,6 +7,12 @@
 =======
 ## 2026-09-04
 
+### Indian Telesales Executive Hinglish System Prompt & Language Directive Alignment
+
+- **feat:** Updated `initial_instructions` in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py) with full natural Hinglish guidelines tailored for Indian female telesales executive personas (short 1-2 sentence turns, active listening, context retention, search directives, handoff rules, flat prosody, and brand single-word pronunciation guards).
+- **fix:** Updated `LanguageManager.get_prompt_directive()` in [mantra/language_manager.py](file:///home/fardeen/lkt/mantra/language_manager.py) to return Hinglish prompt directives matching `<!-- LANGUAGE_DIRECTIVE_START --> ... <!-- LANGUAGE_DIRECTIVE_END -->`. Prevents dynamic `llm_node` language updates from overwriting Hinglish instructions with pure Devanagari Hindi or pure Latin English.
+
+
 ### Deepgram STT Indian English (`en-IN`) Locale Resolution & Devanagari Script Fix
 
 - **fix:** Updated `resolve_stt_language()` in [mantra/language_manager.py](file:///home/fardeen/lkt/mantra/language_manager.py) so Indian calls (country code `IN`, `+91` prefix, 10-digit Indian numbers starting `6-9`, landlines starting `0`) strictly use Deepgram Nova-3's **`en-IN`** locale, while US and international calls retain **`en-US`**.

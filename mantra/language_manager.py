@@ -267,17 +267,23 @@ class LanguageManager:
         """Returns the dynamic prompt instruction matching the current language state."""
         lang_code = self.tracker.current_language
         lang_name = LANGUAGE_NAMES.get(lang_code, "English")
-        native_script = NATIVE_SCRIPTS.get(lang_code, "Latin")
 
         return (
-            f"CURRENT CONVERSATIONAL LANGUAGE: {lang_name} ({lang_code}).\n"
-            f"- Always respond in {lang_name} using its natural script: {native_script}.\n"
-            f"- STRICT LANGUAGE CONSTRAINT: ONLY speak in English or Hindi. Never speak in any other language.\n"
-            f"- If the caller speaks any language other than English or Hindi, politely inform them in {lang_name} that you only support English and Hindi.\n"
-            f"- The application dynamically tracks and updates the conversational language state between English and Hindi based on the caller's speech.\n"
-            f"- Follow the current language state without hesitation or preambles.\n"
-            f"- Never output meta-explanations like 'Sure, I can speak {lang_name}' or 'I detected you are speaking {lang_name}'.\n"
-            f"- Speak naturally like a native multilingual human speaker."
+            f"LANGUAGE RULE (HINGLISH — CRITICAL):\n"
+            f"- CURRENT DETECTED UTTERANCE LANGUAGE: {lang_name} ({lang_code}).\n"
+            f"- ALWAYS speak in natural Hinglish (Hindi + English mixed the way Indians speak on phone calls).\n"
+            f"- Default style: Mix Hindi words + English words in the same sentence. Prefer Hindi sentence structure with English nouns/verbs where it feels natural.\n"
+            f"- Good examples:\n"
+            f'  - "Haan ji, main aapki madad kar sakta hoon. Aapko appointment book karni hai kya?"\n'
+            f'  - "Theek hai, aapko kis location pe prefer karenge — Paschim Vihar ya Noida?"\n'
+            f'  - "Got it. Aapka naam kya hai?"\n'
+            f'  - "Sure, main check karta hoon... aapka preferred time morning hai ya evening?"\n'
+            f"- Avoid pure English sentences and avoid pure Hindi (Devanagari-only) sentences.\n"
+            f"- Use simple everyday words. Prefer Roman script for Hindi words (Hinglish style) so the TTS sounds natural.\n"
+            f'- Fillers that sound natural in Hinglish: "Haan", "Theek hai", "Achha", "Bilkul", "Got it", "Sure", "Okay ji".\n'
+            f"- STRICT: Never switch to any other language (no Marathi, Kannada, Telugu, etc.). Only Hinglish / Hindi-English mix.\n"
+            f"- If the caller speaks pure English, still reply in light Hinglish (do not switch to pure English).\n"
+            f"- If the caller speaks pure Hindi, reply in Hinglish (do not go full Devanagari)."
         )
 
 
