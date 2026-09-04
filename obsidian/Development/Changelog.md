@@ -7,10 +7,11 @@
 =======
 ## 2026-09-04
 
-### Deepgram STT Multilingual (`multi`) & Accent Recognition
+### Deepgram STT Indian English (`en-IN`) Locale Resolution & Devanagari Script Fix
 
-- **fix:** Updated `resolve_stt_language()` in [mantra/language_manager.py](file:///home/fardeen/lkt/mantra/language_manager.py) to resolve Indian region and phone calls to Deepgram Nova-3's native `multi` (multilingual) locale instead of locking STT into single-language `en-IN`.
-- **fix:** Prevents single-language STT lockouts where Hindi spoken responses (*"जी"*, *"हाँ"*, *"नमस्ते"*) following Hindi agent greetings were dropped by English-only acoustic filters. Both Hindi and English (with Indian place names and accents) are now captured concurrently on the exact same stream.
+- **fix:** Updated `resolve_stt_language()` in [mantra/language_manager.py](file:///home/fardeen/lkt/mantra/language_manager.py) so Indian calls (country code `IN`, `+91` prefix, 10-digit Indian numbers starting `6-9`, landlines starting `0`) strictly use Deepgram Nova-3's **`en-IN`** locale, while US and international calls retain **`en-US`**.
+- **fix:** Fixed `NativeLanguageDetector.detect()` in [mantra/language_manager.py](file:///home/fardeen/lkt/mantra/language_manager.py): any utterance containing Devanagari script (e.g., *"Hello आप"*, *"नहीं मेरा नाम व्यात्या sir."*) strictly evaluates to Hindi (`hi`), preventing false language switches to English (`hi -> en`).
+- **fix:** Updated initial language initialization in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py) to automatically inspect `initial_instructions` for Devanagari script when `payload` lacks an explicit language field. Initializes `initial_language="hi"` (Hindi) so initial Hindi agent greetings (*"नमस्ते..."*) start with `language="hi"` STT/TTS rather than default English (`en-IN`).
 
 >>>>>>> 1f4cdd1 (feat: update language manager to use Deepgram Nova-3 multilingual locale for Indian region and phone calls)
 ## 2026-09-03

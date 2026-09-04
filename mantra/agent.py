@@ -1271,6 +1271,13 @@ Follow these specific instructions:
             or ai_p.get("lang")
         )
 
+    # If no explicit language payload was provided, inspect initial_instructions for Devanagari script
+    if not raw_lang and "initial_instructions" in locals() and initial_instructions:
+        devanagari_count = sum(1 for ch in initial_instructions if 0x0900 <= ord(ch) <= 0x097F)
+        if devanagari_count > 0:
+            raw_lang = "hi"
+            logger.info(f"[LANG] Detected Devanagari script in prompt ({devanagari_count} chars). Auto-selecting initial_language='hi'")
+
     language_mgr = LanguageManager(initial_language=raw_lang)
     language = language_mgr.get_current_language()
     call_state["current_language"] = language
@@ -1391,10 +1398,11 @@ Follow these specific instructions:
                                     logger.info(f"[LANG] TTS updated to language='{new_lang}' (voice={voice_id})")
                                 except Exception as tts_err:
                                     logger.error(f"[LANG] Failed to update TTS options: {tts_err}")
-                                try:
-                                    stt_engine.update_options(language=new_lang)
-                                except Exception as stt_err:
-                                    logger.error(f"[LANG] Failed to update STT options: {stt_err}")
+                                if stt_lang != "multi":
+                                    try:
+                                        stt_engine.update_options(language=new_lang)
+                                    except Exception as stt_err:
+                                        logger.error(f"[LANG] Failed to update STT options: {stt_err}")
 
                             # Synchronously update the language directive in the system message inside chat_ctx
                             directive = language_mgr.get_prompt_directive()
@@ -1449,11 +1457,12 @@ Follow these specific instructions:
                                         logger.info(f"[LANG] Language switch triggered: {old_lang} -> {new_lang}")
 
                                         # 1. Dynamically update STT language options
-                                        try:
-                                            stt_engine.update_options(language=new_lang)
-                                            logger.info(f"[LANG] STT updated to language='{new_lang}'")
-                                        except Exception as stt_err:
-                                            logger.error(f"[LANG] Failed to update STT language: {stt_err}")
+                                        if stt_lang != "multi":
+                                            try:
+                                                stt_engine.update_options(language=new_lang)
+                                                logger.info(f"[LANG] STT updated to language='{new_lang}'")
+                                            except Exception as stt_err:
+                                                logger.error(f"[LANG] Failed to update STT language: {stt_err}")
 
                                         # 2. Dynamically update TTS language options (preserving voice & speed)
                                         try:

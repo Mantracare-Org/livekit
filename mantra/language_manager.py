@@ -69,7 +69,7 @@ def resolve_stt_language(
     # Check country code if provided
     cc = (country_code or "").strip().upper()
     if cc in ("IN", "IND", "INDIA"):
-        return "multi"
+        return "en-IN"
     elif cc in ("US", "USA", "CA", "CAN", "UNITED STATES", "CANADA"):
         return "en-US"
     elif cc in ("GB", "GBR", "UK", "UNITED KINGDOM"):
@@ -87,11 +87,11 @@ def resolve_stt_language(
         phone = phone[1:]
 
     if phone.startswith("91") and len(phone) >= 12:
-        return "multi"
+        return "en-IN"
     elif len(phone) == 10 and phone[0] in ("6", "7", "8", "9"):
-        return "multi"
+        return "en-IN"
     elif phone.startswith("0") and len(phone) in (10, 11) and phone[1] in ("1", "2", "6", "7", "8", "9"):
-        return "multi"
+        return "en-IN"
     elif phone.startswith("1") and len(phone) >= 11:
         return "en-US"
     elif phone.startswith("44") and len(phone) >= 11:
@@ -101,8 +101,8 @@ def resolve_stt_language(
     elif phone.startswith("64") and len(phone) >= 10:
         return "en-NZ"
 
-    # Default to Deepgram Nova-3 multilingual locale ('multi') for bilingual English/Hindi speech
-    return "multi"
+    # Default international English
+    return "en-US"
 
 
 # ── 1. Unicode Script & Statistical ML Language Detector ─────────────────
@@ -140,15 +140,9 @@ class NativeLanguageDetector:
         #     return "te", counts["telugu"] / total
 
         # 3. Devanagari script block -> Hindi
-        if counts["devanagari"] > 0 and counts["devanagari"] >= counts["latin"]:
+        if counts["devanagari"] > 0:
             ratio = counts["devanagari"] / total
-            # try:
-            #     detected = langdetect.detect(text)
-            #     if detected in ["mr", "hi"]:
-            #         return detected, max(ratio, 0.9)
-            # except Exception:
-            #     pass
-            return "hi", max(ratio, 0.9)
+            return "hi", max(ratio, 0.95)
 
         # 4. Latin script block -> Statistical ML detection
         if counts["latin"] > 0:
