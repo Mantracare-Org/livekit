@@ -1400,7 +1400,9 @@ Follow these specific instructions:
                                     logger.error(f"[LANG] Failed to update TTS options: {tts_err}")
                                 if stt_lang != "multi":
                                     try:
-                                        stt_engine.update_options(language=new_lang)
+                                        target_stt_lang = resolve_stt_language(language=new_lang, phone_number=call_phone, country_code=country_val) if new_lang == "en" else new_lang
+                                        stt_engine.update_options(language=target_stt_lang)
+                                        logger.info(f"[LANG] STT updated to language/locale='{target_stt_lang}'")
                                     except Exception as stt_err:
                                         logger.error(f"[LANG] Failed to update STT options: {stt_err}")
 
@@ -1459,8 +1461,9 @@ Follow these specific instructions:
                                         # 1. Dynamically update STT language options
                                         if stt_lang != "multi":
                                             try:
-                                                stt_engine.update_options(language=new_lang)
-                                                logger.info(f"[LANG] STT updated to language='{new_lang}'")
+                                                target_stt_lang = resolve_stt_language(language=new_lang, phone_number=call_phone, country_code=country_val) if new_lang == "en" else new_lang
+                                                stt_engine.update_options(language=target_stt_lang)
+                                                logger.info(f"[LANG] STT updated to language/locale='{target_stt_lang}'")
                                             except Exception as stt_err:
                                                 logger.error(f"[LANG] Failed to update STT language: {stt_err}")
 
