@@ -14,6 +14,7 @@ import asyncio
 import logging
 import time
 import os
+import unicodedata
 from typing import Dict, List, Optional, Tuple, Set
 import langdetect
 
@@ -42,15 +43,6 @@ NATIVE_SCRIPTS: Dict[str, str] = {
     # "mr": "Devanagari (मराठी)",
 }
 
-STOP_WORDS = {
-    "You", "The", "This", "That", "Please", "Do", "Not", "If", "Always", "Never",
-    "Call", "When", "Your", "Our", "Their", "From", "With", "About", "Have", "Has",
-    "Will", "Would", "Should", "Could", "What", "Where", "Which", "Who", "How",
-    "Core", "Behavior", "Knowledge", "Base", "Search", "Directives", "Ending", "Call",
-    "Pronunciation", "Critical", "Prosody", "Tone", "Follow", "Specific", "Instructions"
-}
-
-
 def resolve_stt_keyterms(
     payload: Optional[dict] = None,
     custom_keyterms: Optional[List[str]] = None,
@@ -58,19 +50,10 @@ def resolve_stt_keyterms(
     """
     Dynamically extract keyterms for Deepgram Nova-3 Keyterm Prompting.
 
-    Eliminates hardcoded location lists by dynamically combining:
-    1. Base brand terms ('MantraCare', 'MantraAssist')
-    2. Environment variable overrides (DEEPGRAM_KEYTERMS="term1,term2")
-    3. Explicit webhook payload fields ('keyterms' or 'keywords')
-    4. Capitalized proper noun phrases (locations, doctor names, clinics) extracted dynamically from campaign prompts
+    Collects only runtime-provided terms from environment and call metadata.
     """
     keyterms_set = set()
 
-    # 1. Base brand terms
-    keyterms_set.add("MantraCare")
-    keyterms_set.add("MantraAssist")
-
-    # 2. Environment variable override
     env_terms = os.getenv("DEEPGRAM_KEYTERMS")
     if env_terms:
         for t in env_terms.split(","):
@@ -78,13 +61,11 @@ def resolve_stt_keyterms(
             if t:
                 keyterms_set.add(t)
 
-    # 3. Custom keyterms passed directly
     if custom_keyterms:
         for t in custom_keyterms:
             if t and isinstance(t, str):
                 keyterms_set.add(t.strip())
 
-    # 4. Dynamic extraction from call payload
     if payload and isinstance(payload, dict):
         p_terms = payload.get("keyterms") or payload.get("keywords")
         if isinstance(p_terms, list):
@@ -97,18 +78,69 @@ def resolve_stt_keyterms(
                 if t:
                     keyterms_set.add(t)
 
-        # Extract capitalized proper nouns dynamically from campaign prompt text
-        prompt = payload.get("prompt")
-        if prompt and isinstance(prompt, str):
-            import re
-            matches = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b', prompt)
-            for m in matches:
-                m_clean = m.strip()
-                if len(m_clean) > 2 and m_clean not in STOP_WORDS:
-                    keyterms_set.add(m_clean)
-
     sorted_list = sorted(list(keyterms_set))
     return sorted_list if sorted_list else None
+
+
+class CallKeytermMemory:
+    """Bounded vocabulary learned from one call and discarded with that call."""
+
+    def __init__(self, initial_terms: Optional[List[str]] = None, max_terms: int = 80):
+        self._terms: Dict[str, str] = {}
+        self._max_terms = max_terms
+        self.add(initial_terms or [])
+
+    @staticmethod
+    def _clean(term: str) -> str:
+        punctuation = " \t\r\n.,!?;:()[]{}\""
+        return " ".join(term.strip(punctuation).split())
+
+    def add(self, terms: List[str]) -> bool:
+        changed = False
+        for raw_term in terms:
+            if not isinstance(raw_term, str):
+                continue
+            term = self._clean(raw_term)
+            if len(term) < 2 or len(term) > 64:
+                continue
+            key = term.casefold()
+            if key not in self._terms and len(self._terms) < self._max_terms:
+                self._terms[key] = term
+                changed = True
+        return changed
+
+    def learn_from_text(self, text: str) -> bool:
+        if not text:
+            return False
+        words = [self._clean(word) for word in text.split()]
+        words = [word for word in words if word and any(char.isalnum() for char in word)]
+        candidates: List[str] = []
+        phrase: List[str] = []
+        for word in words:
+            has_non_latin_letter = any(
+                char.isalpha() and "LATIN" not in unicodedata.name(char, "")
+                for char in word
+            )
+            if has_non_latin_letter or word[:1].isupper() or (word.isupper() and word.isalpha()):
+                phrase.append(word)
+                candidates.append(word)
+            elif phrase:
+                candidates.append(" ".join(phrase))
+                phrase = []
+        if phrase:
+            candidates.append(" ".join(phrase))
+        return self.add(candidates)
+
+    def snapshot(self) -> List[str]:
+        terms: List[str] = []
+        token_count = 0
+        for term in self._terms.values():
+            next_tokens = len(term.split())
+            if token_count + next_tokens > 450:
+                break
+            terms.append(term)
+            token_count += next_tokens
+        return terms
 
 
 def resolve_stt_language(
@@ -285,10 +317,17 @@ class LanguageManager:
     Zero hardcoded keyword dictionaries.
     """
 
-    def __init__(self, initial_language: str = "en"):
+    def __init__(self, initial_language: str = "en", response_mode: Optional[str] = None):
         normalized_init = self.normalize_language_code(initial_language)
         self.detector = NativeLanguageDetector()
         self.tracker = LanguageHysteresisTracker(normalized_init)
+        requested_mode = str(response_mode or normalized_init).lower().strip()
+        if requested_mode in {"hi", "hindi", "hi-in"}:
+            self.response_mode = "hi"
+        elif requested_mode in {"en", "english", "en-us", "en-in", "en-gb"}:
+            self.response_mode = "en"
+        else:
+            self.response_mode = "hinglish"
         logger.info(f"[LANG] LanguageManager active with language='{self.tracker.current_language}'")
 
     @staticmethod
@@ -305,7 +344,7 @@ class LanguageManager:
         #     return "te"
         # elif raw in ["mr", "marathi", "mr-in"]:
         #     return "mr"
-        elif raw in ["en", "english", "en-us", "en-in", "en-gb"]:
+        elif raw in ["en", "english", "en-us", "en-in", "en-gb", "multi", "multilingual", "bilingual", "hinglish", "en-hi", "hi-en"]:
             return "en"
         return "en"
 
@@ -338,6 +377,24 @@ class LanguageManager:
         """Returns the dynamic prompt instruction matching the current language state."""
         lang_code = self.tracker.current_language
         lang_name = LANGUAGE_NAMES.get(lang_code, "English")
+
+        if self.response_mode == "en":
+            return (
+                f"LANGUAGE RULE (PROFESSIONAL ENGLISH — CRITICAL):\n"
+                f"- CURRENT DETECTED UTTERANCE LANGUAGE: {lang_name} ({lang_code}).\n"
+                f"- Respond entirely in clear, professional English.\n"
+                f"- Do not add Hindi words, Hinglish fillers, or Devanagari unless the caller explicitly switches languages.\n"
+                f"- Keep the phone response concise, natural, and polite."
+            )
+
+        if self.response_mode == "hi":
+            return (
+                f"LANGUAGE RULE (HINDI — CRITICAL):\n"
+                f"- CURRENT DETECTED UTTERANCE LANGUAGE: {lang_name} ({lang_code}).\n"
+                f"- Respond in natural Hindi, using Devanagari script.\n"
+                f"- Keep commonly understood English product or medical terms when natural.\n"
+                f"- Keep the phone response concise, natural, and polite."
+            )
 
         return (
             f"LANGUAGE RULE (HINGLISH — CRITICAL):\n"

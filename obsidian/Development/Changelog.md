@@ -7,6 +7,19 @@
 =======
 ## 2026-09-04
 
+### Per-Call STT Keyterm Memory
+
+- **feat:** Added bounded temporary keyterm memory that seeds Deepgram only from runtime metadata, learns language-neutral vocabulary candidates from finalized caller utterances, and updates Nova-3 keyterms for later turns.
+- **safety:** Memory is isolated to one call, capped at 80 terms and approximately 450 tokens, and is discarded when the call ends.
+- Files: [mantra/agent.py](../../mantra/agent.py), [mantra/language_manager.py](../../mantra/language_manager.py).
+
+### Hindi-English STT Stability & Name Recognition
+
+- **fix:** Defaulted calls without an explicit language to Deepgram Nova-3 `multi`, so Hindi-English code-switching is detected by Deepgram instead of being forced into a model inferred from the agent prompt.
+- **fix:** Removed per-turn STT model switching based on already-transcribed text; this avoids stream reconnects and language lock-in during bilingual calls while preserving dynamic TTS and response-language updates.
+- **fix:** Increased Nova-3 endpointing from `25ms` to `100ms`, matching Deepgram's code-switching guidance and reducing premature finalization of short Hindi names and place names.
+- Files: [mantra/agent.py](../../mantra/agent.py), [mantra/language_manager.py](../../mantra/language_manager.py).
+
 ### STT Language Resolution Unlocking & Hindi Model (`hi`) Target Fix
 
 - **bugfix:** Fixed bug where STT resolution mapped all Hindi/Indian calls to `multi`. Because `stt_lang == "multi"`, the `if stt_lang != "multi":` guard in `llm_node()` evaluated to `False`, permanently trapping the STT engine in generic `multi` mode and preventing STT options from updating when Hindi or English speech occurred.
