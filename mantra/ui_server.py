@@ -464,7 +464,7 @@ async def index():
 # ── Authentication ───────────────────────────────────────────────────────
 
 
-@app.post("/api/v1/auth/login")
+@app.post("/v1/auth/login")
 async def login(request: Request):
     """Authenticate with username/password, return JWT."""
     body = await request.json()
@@ -522,11 +522,11 @@ async def console_page():
 # ── Paths that require a clean bill of health before processing ─────────
 _DISPATCH_PATHS = frozenset({
     "/dispatch-test",
-    "/api/v1/webhooks/telephony",
-    "/api/v1/sip/trunks/outbound",
-    "/api/v1/sip/trunks/outbound/zadarma",
-    "/api/v1/sip/trunks/outbound/twilio",
-    "/api/v1/sip/trunks/outbound/plivo",
+    "/v1/webhooks/telephony",
+    "/v1/sip/trunks/outbound",
+    "/v1/sip/trunks/outbound/zadarma",
+    "/v1/sip/trunks/outbound/twilio",
+    "/v1/sip/trunks/outbound/plivo",
 })
 
 
@@ -565,7 +565,7 @@ async def _run_dependency_checks() -> tuple[bool, dict[str, bool | str]]:
             checks["mantraassist_backend"] = "MANTRAASSIST_BACKEND_URL not set"
             return
         try:
-            r = await http_client.get(f"{url}/api/v1/health")
+            r = await http_client.get(f"{url}/v1/health")
             if r.is_success:
                 data = r.json()
                 if data.get("success") is True:
@@ -788,7 +788,7 @@ async def health_gate_middleware(request: Request, call_next):
     """Per-provider capacity gate + coarse dependency gate. 503 on blocked dispatch."""
     path = request.url.path
     if request.method == "POST" and path in _DISPATCH_PATHS:
-        if path == "/api/v1/webhooks/telephony":
+        if path == "/v1/webhooks/telephony":
             try:
                 body = await request.body()
                 payload = json.loads(body) if body else {}
@@ -860,7 +860,7 @@ def _check_s3_bucket(bucket: str):
         os.environ.update(_saved)
 
 
-@app.post("/api/v1/kb/chat")
+@app.post("/v1/kb/chat")
 async def api_kb_chat(request: Request):
     """Text-based chat endpoint for testing the KB."""
     try:
@@ -952,7 +952,7 @@ async def api_kb_chat(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.post("/api/v1/kb/ingest")
+@app.post("/v1/kb/ingest")
 async def ingest_kb_data(request: Request):
     """
     Ingest endpoint for MantraAssist KB data.
@@ -967,7 +967,7 @@ async def ingest_kb_data(request: Request):
         try:
             form_data = await request.json()
         except Exception as e:
-            logger.warning(f"Failed to parse JSON body in /api/v1/kb/ingest: {e}")
+            logger.warning(f"Failed to parse JSON body in /v1/kb/ingest: {e}")
     else:
         try:
             form = await request.form()
@@ -1247,7 +1247,7 @@ async def ingest_kb_data(request: Request):
         return JSONResponse({"status_code": 500, "status": "error", "error": f"Failed to ingest to DB: {str(e)}"}, status_code=500)
 
 
-@app.post("/api/v1/kb/backfill-embeddings")
+@app.post("/v1/kb/backfill-embeddings")
 async def backfill_kb_embeddings(request: Request):
     """
     Backfill missing `embedding` values on kb_pages rows (pgvector semantic search).
@@ -1301,7 +1301,7 @@ async def backfill_kb_embeddings(request: Request):
     return JSONResponse({"status_code": 200, "status": "success", "summary": summary})
 
 
-@app.delete("/api/v1/kb/document")
+@app.delete("/v1/kb/document")
 async def delete_kb_document(
     org_id: str = Form(None),
     document_id: str = Form(None)
@@ -1392,7 +1392,7 @@ async def dispatch_test(request: Request):
     )
 
 
-@app.post("/api/v1/test/inbound-call")
+@app.post("/v1/test/inbound-call")
 async def test_inbound_call(request: Request):
     """
     Simulates an inbound call by triggering an outbound SIP call but dispatching
@@ -1470,7 +1470,7 @@ async def test_inbound_call(request: Request):
 
 
 
-@app.post("/api/v1/sip/trunks/inbound")
+@app.post("/v1/sip/trunks/inbound")
 async def create_inbound_trunk(request: Request):
     """
     Create a new SIP Inbound Trunk to receive incoming calls from SIP providers (e.g., Plivo).
@@ -1514,7 +1514,7 @@ async def create_inbound_trunk(request: Request):
         logger.error(f"Failed to create inbound trunk: {e}\n{traceback.format_exc()}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
-@app.post("/api/v1/sip/trunks/inbound/voicelink")
+@app.post("/v1/sip/trunks/inbound/voicelink")
 async def create_voicelink_inbound_trunk(request: Request):
     payload = await request.json()
     if not payload:
@@ -1592,7 +1592,7 @@ async def create_voicelink_inbound_trunk(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.get("/api/v1/sip/trunks/inbound")
+@app.get("/v1/sip/trunks/inbound")
 async def list_sip_inbound_trunks():
     """
     List all SIP Inbound Trunks configured in LiveKit.
@@ -1617,7 +1617,7 @@ async def list_sip_inbound_trunks():
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.delete("/api/v1/sip/trunks/inbound/{trunk_id}")
+@app.delete("/v1/sip/trunks/inbound/{trunk_id}")
 async def delete_sip_inbound_trunk(trunk_id: str):
     """
     Delete a SIP Inbound Trunk by its ID.
@@ -1641,7 +1641,7 @@ async def delete_sip_inbound_trunk(trunk_id: str):
         return JSONResponse({"status_code": 500, "status": "error", "error": str(e)}, status_code=500)
 
 
-@app.post("/api/v1/sip/dispatch-rules")
+@app.post("/v1/sip/dispatch-rules")
 async def create_dispatch_rule(request: Request):
     """
     Create a SIP Dispatch Rule to route incoming calls from a specific trunk to agent-controlled rooms.
@@ -1699,7 +1699,7 @@ async def create_dispatch_rule(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.get("/api/v1/sip/dispatch-rules")
+@app.get("/v1/sip/dispatch-rules")
 async def list_dispatch_rules():
     """
     List all SIP Dispatch Rules configured in LiveKit.
@@ -1736,7 +1736,7 @@ async def list_dispatch_rules():
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.delete("/api/v1/sip/dispatch-rules/{rule_id}")
+@app.delete("/v1/sip/dispatch-rules/{rule_id}")
 async def delete_dispatch_rule(rule_id: str):
     """
     Delete a SIP Dispatch Rule by its ID.
@@ -1834,8 +1834,8 @@ def _build_plivo_xml(sip_trunk_id: str, sip_domain: str, action_url: str, phone_
 </Response>'''
 
 
-@app.get("/api/v1/sip/plivo-xml")
-@app.post("/api/v1/sip/plivo-xml")
+@app.get("/v1/sip/plivo-xml")
+@app.post("/v1/sip/plivo-xml")
 async def plivo_xml(request: Request):
     """
     DEPRECATED: Replaced by Plivo Zentrunk SIP trunking.
@@ -1880,7 +1880,7 @@ async def plivo_xml(request: Request):
     # Build absolute action URL dynamically using headers for ngrok support
     req_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or "localhost:8081"
     req_scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
-    action_url = f"{req_scheme}://{req_host}/api/v1/sip/plivo-dial-status"
+    action_url = f"{req_scheme}://{req_host}/v1/sip/plivo-dial-status"
 
     
     xml_content = _build_plivo_xml(
@@ -1893,8 +1893,8 @@ async def plivo_xml(request: Request):
     return Response(content=xml_content, media_type="application/xml")
 
 
-@app.get("/api/v1/sip/twilio-webhook")
-@app.post("/api/v1/sip/twilio-webhook")
+@app.get("/v1/sip/twilio-webhook")
+@app.post("/v1/sip/twilio-webhook")
 async def twilio_webhook(request: Request):
     """
     Returns TwiML for Twilio to route to the LiveKit SIP Trunk.
@@ -2098,7 +2098,7 @@ async def _update_twilio_sip_forwarding(phone_number: str, sip_uri: str) -> dict
         # For SIP trunking, Twilio uses SIP Domain - we need to configure the SIP Domain
         # to route to the LiveKit SIP URI. This is typically done via TwiML app or SIP Domain.
         # Here we'll use the VoiceUrl with a TwiML that forwards to the SIP URI
-        voice_url = f"https://{os.getenv('LIVEKIT_URL', '').replace('wss://', '').replace('ws://', '').replace('https://', '').replace('http://', '')}/api/v1/sip/twilio-webhook"
+        voice_url = f"https://{os.getenv('LIVEKIT_URL', '').replace('wss://', '').replace('ws://', '').replace('https://', '').replace('http://', '')}/v1/sip/twilio-webhook"
         
         update_url = f"https://api.twilio.com/2010-04-01/Accounts/{twilio_account_sid}/IncomingPhoneNumbers/{number_sid}.json"
         update_data = {"VoiceUrl": voice_url, "VoiceMethod": "POST"}
@@ -2326,7 +2326,7 @@ async def _update_provider_sip_forwarding(provider: str, phone_number: str, sip_
         raise ValueError(f"Unsupported provider: {provider}. Supported providers: zadarma, twilio, plivo, voice_link")
 
 
-@app.post("/api/v1/sip/inbound/setup")
+@app.post("/v1/sip/inbound/setup")
 async def setup_inbound_sip(request: Request):
     """
     End-to-end inbound SIP setup:
@@ -2626,7 +2626,7 @@ async def _setup_inbound_sip_process(payload: dict | None) -> JSONResponse:
 
 
 
-@app.post("/api/v1/sip/plivo-dial-status")
+@app.post("/v1/sip/plivo-dial-status")
 async def plivo_dial_status(request: Request):
     """
     DEPRECATED: Replaced by Plivo Zentrunk SIP trunking.
@@ -2644,7 +2644,7 @@ async def plivo_dial_status(request: Request):
 
 
 
-@app.post("/api/v1/webhooks/telephony")
+@app.post("/v1/webhooks/telephony")
 async def handle_outbound_call_webhook(request: Request):
     """
     Webhook handler to process telephony events and trigger outbound agent dispatch.
@@ -3115,8 +3115,8 @@ async def _get_provider_from_trunk(trunk_id: str) -> str | None:
     return provider
 
 
-@app.post("/api/v1/sip/trunks/outbound")
-@app.post("/api/v1/sip/trunks/outbound/zadarma")
+@app.post("/v1/sip/trunks/outbound")
+@app.post("/v1/sip/trunks/outbound/zadarma")
 async def create_zadarma_sip_trunk(request: Request):
     """
     Create a new Zadarma SIP trunk.
@@ -3127,7 +3127,7 @@ async def create_zadarma_sip_trunk(request: Request):
         return JSONResponse({"error": "No payload provided"}, status_code=400)
 
     logger.info(
-        f"[POST /api/v1/sip/trunks/outbound] Payload received: {json.dumps(payload, separators=(',', ':'))}"
+        f"[POST /v1/sip/trunks/outbound] Payload received: {json.dumps(payload, separators=(',', ':'))}"
     )
 
     try:
@@ -3156,7 +3156,7 @@ async def create_zadarma_sip_trunk(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.post("/api/v1/sip/trunks/outbound/twilio")
+@app.post("/v1/sip/trunks/outbound/twilio")
 async def create_twilio_sip_trunk(request: Request):
     """
     Create a new Twilio SIP trunk using professional nomenclature.
@@ -3167,7 +3167,7 @@ async def create_twilio_sip_trunk(request: Request):
         return JSONResponse({"error": "No payload provided"}, status_code=400)
 
     logger.info(
-        f"[POST /api/v1/sip/trunks/outbound/twilio] Payload received: {json.dumps(payload, separators=(',', ':'))}"
+        f"[POST /v1/sip/trunks/outbound/twilio] Payload received: {json.dumps(payload, separators=(',', ':'))}"
     )
 
     # Twilio-friendly field mapping (accepting both CLI-style and original keys)
@@ -3206,7 +3206,7 @@ async def create_twilio_sip_trunk(request: Request):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
-@app.post("/api/v1/sip/trunks/outbound/voice_link")
+@app.post("/v1/sip/trunks/outbound/voice_link")
 async def create_voicelink_sip_trunk(request: Request):
     """
     Create a new Voicelink SIP trunk.
@@ -3268,7 +3268,7 @@ async def create_voicelink_sip_trunk(request: Request):
 
 
 
-@app.post("/api/v1/sip/trunks/outbound/plivo")
+@app.post("/v1/sip/trunks/outbound/plivo")
 async def create_and_call_plivo(request: Request):
     """
     Unified Plivo endpoint to provision a SIP trunk (optional) and place an outbound call.
@@ -3442,7 +3442,7 @@ async def create_and_call_plivo(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.get("/api/v1/sip/trunks/outbound")
+@app.get("/v1/sip/trunks/outbound")
 async def list_sip_outbound_trunks():
     """
     List all SIP outbound trunks.
@@ -3474,7 +3474,7 @@ async def list_sip_outbound_trunks():
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.delete("/api/v1/sip/trunks/outbound/{trunk_id}")
+@app.delete("/v1/sip/trunks/outbound/{trunk_id}")
 async def delete_sip_outbound_trunk(trunk_id: str):
     """
     Delete a SIP outbound trunk by its trunk ID.
@@ -3500,7 +3500,7 @@ async def delete_sip_outbound_trunk(trunk_id: str):
         logger.error(f"Failed to delete SIP outbound trunk {trunk_id}: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
-@app.patch("/api/v1/sip/trunks/inbound/{trunk_id}")
+@app.patch("/v1/sip/trunks/inbound/{trunk_id}")
 async def update_inbound_sip_trunk(trunk_id: str, request: Request):
     """Update fields on an existing inbound SIP trunk without recreating it.
 
@@ -3564,7 +3564,7 @@ async def update_inbound_sip_trunk(trunk_id: str, request: Request):
 # SIP DISPATCH RULE UPDATE
 # ──────────────────────────────────────────────
 
-@app.patch("/api/v1/sip/dispatch-rules/{rule_id}")
+@app.patch("/v1/sip/dispatch-rules/{rule_id}")
 async def update_sip_dispatch_rule(rule_id: str, request: Request):
     """Update fields on an existing SIP dispatch rule without recreating it."""
     payload = await request.json()
@@ -3627,7 +3627,7 @@ async def get_config():
 # ── Dashboard API (authenticated) ────────────────────────────────────────
 
 
-@app.get("/api/v1/dashboard/stream")
+@app.get("/v1/dashboard/stream")
 async def dashboard_stream(request: Request):
     """SSE endpoint with real-time queue status + active call details."""
     # require_auth(request)
@@ -3677,7 +3677,7 @@ async def dashboard_stream(request: Request):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
-@app.get("/api/v1/dashboard/metrics")
+@app.get("/v1/dashboard/metrics")
 async def dashboard_metrics(request: Request):
     """Today's call metrics from PostgreSQL."""
     # require_auth(request)
@@ -3735,7 +3735,7 @@ async def dashboard_metrics(request: Request):
         return {"error": str(e)}
 
 
-@app.get("/api/v1/dashboard/calls")
+@app.get("/v1/dashboard/calls")
 async def dashboard_calls(request: Request, limit: int = 20, offset: int = 0, search: str = None, status: str = None):
     """Paginated call history from PostgreSQL with search & status filtering."""
     try:
@@ -3836,7 +3836,7 @@ async def dashboard_calls(request: Request, limit: int = 20, offset: int = 0, se
         return {"error": str(e), "calls": [], "total": 0}
 
 
-@app.get("/api/v1/dashboard/active-calls")
+@app.get("/v1/dashboard/active-calls")
 async def dashboard_active_calls(request: Request):
     """Current active calls from Redis."""
     if not redis_client:
@@ -3861,7 +3861,7 @@ async def dashboard_active_calls(request: Request):
 
 
 
-@app.get("/api/v1/redis/info")
+@app.get("/v1/redis/info")
 async def redis_info(request: Request):
     """Get Redis server telemetry & summary statistics."""
     if not redis_client:
@@ -3892,7 +3892,7 @@ async def redis_info(request: Request):
         return {"error": str(e), "status": "error"}
 
 
-@app.get("/api/v1/redis/queue")
+@app.get("/v1/redis/queue")
 async def redis_queue_items(request: Request):
     """Fetch all pending jobs in the queue:pending sorted set."""
     if not redis_client:
@@ -3930,7 +3930,7 @@ async def redis_queue_items(request: Request):
         return {"error": str(e), "items": []}
 
 
-@app.get("/api/v1/redis/active-details")
+@app.get("/v1/redis/active-details")
 async def redis_active_details(request: Request):
     """Fetch active calls hash and their detailed status in Redis."""
     if not redis_client:
@@ -3957,7 +3957,7 @@ async def redis_active_details(request: Request):
         return {"error": str(e), "calls": []}
 
 
-@app.get("/api/v1/redis/keys")
+@app.get("/v1/redis/keys")
 async def redis_keys_list(request: Request, pattern: str = "*", limit: int = 100):
     """Scan and list keys matching pattern with type and TTL."""
     if not redis_client:
@@ -3993,7 +3993,7 @@ async def redis_keys_list(request: Request, pattern: str = "*", limit: int = 100
         return {"error": str(e), "keys": []}
 
 
-@app.get("/api/v1/redis/key-detail")
+@app.get("/v1/redis/key-detail")
 async def redis_key_detail(request: Request, key: str):
     """Get full data of a specific Redis key regardless of type."""
     if not redis_client or not key:
@@ -4029,7 +4029,7 @@ async def redis_key_detail(request: Request, key: str):
         return {"error": str(e)}
 
 
-@app.delete("/api/v1/redis/key")
+@app.delete("/v1/redis/key")
 async def redis_delete_key(request: Request, key: str):
     """Delete a specific key from Redis."""
     if not redis_client or not key:
@@ -4046,7 +4046,7 @@ async def redis_delete_key(request: Request, key: str):
 # ── Knowledge Base Ingestion Endpoints ────────────────────────────────
 
 
-@app.post("/api/v1/knowledge/upload")
+@app.post("/v1/knowledge/upload")
 async def kb_upload(request: Request, kb_id: str, file: UploadFile = File(...)):
     """Upload a file (.pdf, .txt, .md) and index it into the specified KB."""
     # require_auth(request)
@@ -4077,7 +4077,7 @@ async def kb_upload(request: Request, kb_id: str, file: UploadFile = File(...)):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.post("/api/v1/knowledge/text")
+@app.post("/v1/knowledge/text")
 async def kb_text(request: Request):
     """Ingest a raw text block into the specified KB."""
     # require_auth(request)
@@ -4109,7 +4109,7 @@ async def kb_text(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.post("/api/v1/knowledge/url")
+@app.post("/v1/knowledge/url")
 async def kb_url(request: Request):
     """Fetch a URL, extract text, and index it into the specified KB."""
     # require_auth(request)
@@ -4140,7 +4140,7 @@ async def kb_url(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.get("/api/v1/knowledge/list")
+@app.get("/v1/knowledge/list")
 async def kb_list(request: Request):
     """List distinct KB IDs available in the database."""
     try:
@@ -4164,7 +4164,7 @@ async def kb_list(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.delete("/api/v1/knowledge/{page_id}")
+@app.delete("/v1/knowledge/{page_id}")
 async def kb_delete_page(request: Request, page_id: str):
     """Delete a single page from the KB."""
     # require_auth(request)
@@ -4189,7 +4189,7 @@ async def kb_delete_page(request: Request, page_id: str):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.delete("/api/v1/knowledge/by-kb/{kb_id}")
+@app.delete("/v1/knowledge/by-kb/{kb_id}")
 async def kb_delete_by_kb(request: Request, kb_id: str):
     """Delete all pages for a KB."""
     # require_auth(request)
@@ -4215,7 +4215,7 @@ async def kb_delete_by_kb(request: Request, kb_id: str):
 # ORG CONFIGS MANAGEMENT (FOR MANTRAASSIST)
 # ──────────────────────────────────────────────
 
-@app.get("/api/v1/org-configs")
+@app.get("/v1/org-configs")
 async def list_org_configs(request: Request):
     """List all org configs, optionally filtered by org_id."""
     org_id = request.query_params.get("org_id")
@@ -4243,7 +4243,7 @@ async def list_org_configs(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.get("/api/v1/org-configs/{phone_number}")
+@app.get("/v1/org-configs/{phone_number}")
 async def get_org_config(phone_number: str):
     """Get a specific org config by phone number."""
     try:
@@ -4273,7 +4273,7 @@ async def get_org_config(phone_number: str):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.put("/api/v1/org-configs/{phone_number}")
+@app.put("/v1/org-configs/{phone_number}")
 async def update_org_config(phone_number: str, request: Request):
     """Update fields on an existing org config."""
     payload = await request.json()
@@ -4337,7 +4337,7 @@ async def update_org_config(phone_number: str, request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.delete("/api/v1/org-configs/{phone_number}")
+@app.delete("/v1/org-configs/{phone_number}")
 async def delete_org_config(phone_number: str):
     """Soft delete an org config by setting is_active = false."""
     try:

@@ -55,7 +55,7 @@ class MantraMCPClient:
             logger.debug("[MCP] No auth_token or OAuth client credentials configured.")
             return None
 
-        token_url = f"{self.auth_server_url}/api/oauth/token"
+        token_url = f"{self.auth_server_url}/oauth/token"
         payload = {
             "grant_type": "client_credentials",
             "client_id": self.client_id,
@@ -140,11 +140,11 @@ class MantraMCPClient:
                         logger.info(f"[MCP] Tool '{tool_name}' returned: {output[:120]}...")
                         return output
         except Exception as sse_err:
-            logger.warning(f"[MCP] SSE JSON-RPC failed ({sse_err}), falling back to direct HTTP /api/tools/call...")
+            logger.warning(f"[MCP] SSE JSON-RPC failed ({sse_err}), falling back to direct HTTP /tools/call...")
 
         # 2. HTTP Fallback Endpoint
         try:
-            http_url = f"{self.base_url}/api/tools/call"
+            http_url = f"{self.base_url}/tools/call"
             async with httpx.AsyncClient(timeout=5.0) as http_client:
                 resp = await http_client.post(
                     http_url,

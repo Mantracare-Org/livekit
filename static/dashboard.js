@@ -34,7 +34,7 @@ async function loadMetrics() {
     if (isFetchingMetrics) return;
     isFetchingMetrics = true;
     try {
-        const data = await apiFetch('/api/v1/dashboard/metrics');
+        const data = await apiFetch('/v1/dashboard/metrics');
         if (data.error) return;
 
         document.getElementById('metric-total').textContent = data.total_calls;
@@ -112,7 +112,7 @@ function renderFeed() {
 let lastActiveIds = new Set();
 
 function connectSSE() {
-    const evtSource = new EventSource(`/api/v1/dashboard/stream?token=${TOKEN}`);
+    const evtSource = new EventSource(`/v1/dashboard/stream?token=${TOKEN}`);
 
     evtSource.onmessage = (event) => {
         try {
@@ -178,7 +178,7 @@ async function loadCallHistory() {
     const searchVal = searchInput ? searchInput.value.trim() : '';
     const statusVal = statusSelect ? statusSelect.value : 'all';
 
-    let url = `/api/v1/dashboard/calls?limit=50&offset=0`;
+    let url = `/v1/dashboard/calls?limit=50&offset=0`;
     if (searchVal) url += `&search=${encodeURIComponent(searchVal)}`;
     if (statusVal && statusVal !== 'all') url += `&status=${encodeURIComponent(statusVal)}`;
 
@@ -475,7 +475,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const formData = new FormData();
             formData.append('file', file);
             
-            const res = await fetch(`/api/v1/knowledge/upload?kb_id=${encodeURIComponent(kbId)}`, {
+            const res = await fetch(`/v1/knowledge/upload?kb_id=${encodeURIComponent(kbId)}`, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${TOKEN}` },
                 body: formData
@@ -509,7 +509,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setBtnLoading('btn-kb-text', true);
         
         try {
-            const res = await fetch('/api/v1/knowledge/text', {
+            const res = await fetch('/v1/knowledge/text', {
                 method: 'POST',
                 headers: { ...apiHeaders() },
                 body: JSON.stringify({ kb_id: kbId, content, title: title || undefined })
@@ -543,7 +543,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setBtnLoading('btn-kb-url', true);
         
         try {
-            const res = await fetch('/api/v1/knowledge/url', {
+            const res = await fetch('/v1/knowledge/url', {
                 method: 'POST',
                 headers: { ...apiHeaders() },
                 body: JSON.stringify({ kb_id: kbId, url })
@@ -575,7 +575,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadKbIdsForDashboard() {
         if (!kbIdChatSelect) return;
         try {
-            const res = await fetch('/api/v1/knowledge/list', { headers: apiHeaders() });
+            const res = await fetch('/v1/knowledge/list', { headers: apiHeaders() });
             const data = await res.json();
             kbIdChatSelect.innerHTML = '';
             if (data.status === 'success' && data.kbs.length > 0) {
@@ -650,7 +650,7 @@ document.addEventListener('DOMContentLoaded', () => {
         hideKbResult();
         
         try {
-            const response = await fetch('/api/v1/kb/chat', {
+            const response = await fetch('/v1/kb/chat', {
                 method: 'POST',
                 headers: { ...apiHeaders() },
                 body: JSON.stringify({
