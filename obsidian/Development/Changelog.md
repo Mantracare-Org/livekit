@@ -1,10 +1,14 @@
 # Changelog
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
-=======
+## 2026-09-07
+
+### Inbound Client Recognition Contract
+
+- **feat:** Added a bounded pre-greeting client recognition request for inbound calls in [mantra/agent.py](../../mantra/agent.py).
+- **contract:** The agent calls the `recognize_client` MCP tool, which sends `POST /api/v1/webhooks/client-recognition` with `org_id` and an E.164 `phone_number`.
+- **fallback:** A missing client name, non-200 response, timeout, or backend error leaves the caller anonymous and does not block the greeting.
+- **backend action:** MantraAssist backend should implement the endpoint and return `{"client_name": "..."}` or `{"client_name": null}`.
+
 ## 2026-09-04
 
 ### Per-Call STT Keyterm Memory
@@ -31,15 +35,15 @@
 - **feat:** Updated `initial_instructions` in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py) with full natural Hinglish guidelines tailored for Indian female telesales executive personas (short 1-2 sentence turns, active listening, context retention, search directives, handoff rules, flat prosody, and brand single-word pronunciation guards).
 - **fix:** Updated `LanguageManager.get_prompt_directive()` in [mantra/language_manager.py](file:///home/fardeen/lkt/mantra/language_manager.py) to return Hinglish prompt directives matching `<!-- LANGUAGE_DIRECTIVE_START --> ... <!-- LANGUAGE_DIRECTIVE_END -->`. Prevents dynamic `llm_node` language updates from overwriting Hinglish instructions with pure Devanagari Hindi or pure Latin English.
 
-
 ### Deepgram STT Indian English (`en-IN`) Locale Resolution & Devanagari Script Fix
 
 - **fix:** Updated `resolve_stt_language()` in [mantra/language_manager.py](file:///home/fardeen/lkt/mantra/language_manager.py) so Indian calls (country code `IN`, `+91` prefix, 10-digit Indian numbers starting `6-9`, landlines starting `0`) strictly use Deepgram Nova-3's **`en-IN`** locale, while US and international calls retain **`en-US`**.
-- **fix:** Fixed `NativeLanguageDetector.detect()` in [mantra/language_manager.py](file:///home/fardeen/lkt/mantra/language_manager.py): any utterance containing Devanagari script (e.g., *"Hello आप"*, *"नहीं मेरा नाम व्यात्या sir."*) strictly evaluates to Hindi (`hi`), preventing false language switches to English (`hi -> en`).
-- **fix:** Updated initial language initialization in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py) to automatically inspect `initial_instructions` for Devanagari script when `payload` lacks an explicit language field. Initializes `initial_language="hi"` (Hindi) so initial Hindi agent greetings (*"नमस्ते..."*) start with `language="hi"` STT/TTS rather than default English (`en-IN`).
+- **fix:** Fixed `NativeLanguageDetector.detect()` in [mantra/language_manager.py](file:///home/fardeen/lkt/mantra/language_manager.py): any utterance containing Devanagari script (e.g., _"Hello आप"_, _"नहीं मेरा नाम व्यात्या sir."_) strictly evaluates to Hindi (`hi`), preventing false language switches to English (`hi -> en`).
+- **fix:** Updated initial language initialization in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py) to automatically inspect `initial_instructions` for Devanagari script when `payload` lacks an explicit language field. Initializes `initial_language="hi"` (Hindi) so initial Hindi agent greetings (_"नमस्ते..."_) start with `language="hi"` STT/TTS rather than default English (`en-IN`).
 - **fix:** Updated dynamic STT language switching in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py) (`stt_engine.update_options`) to run through `resolve_stt_language()` when `new_lang == 'en'`, preserving the `en-IN` regional locale for Indian phone calls instead of falling back to US English (`en-US`).
 
->>>>>>> 1f4cdd1 (feat: update language manager to use Deepgram Nova-3 multilingual locale for Indian region and phone calls)
+> > > > > > > 1f4cdd1 (feat: update language manager to use Deepgram Nova-3 multilingual locale for Indian region and phone calls)
+
 ## 2026-09-03
 
 ### Live Call Process Context Injection
@@ -51,7 +55,8 @@
 - **fix:** Normalized outbound `org_id` to text before querying `kb_collections`; integer metadata previously caused asyncpg type validation to abort expansion.
 - Files: [mantra/agent.py](../../mantra/agent.py), [mantra/retriever.py](../../mantra/retriever.py).
 
->>>>>>> 0798df6 (feat: inject organization process and stage metadata into agent instructions during KB warmup and expand KB collection scope)
+> > > > > > > 0798df6 (feat: inject organization process and stage metadata into agent instructions during KB warmup and expand KB collection scope)
+
 ## 2026-09-02
 
 ### MCP Client Cloudflare WAF Bypass & AuthMiddleware Public Paths Update
@@ -68,7 +73,6 @@
 - **fix:** `check_doctor_availability` was commented out of `agent_tools` in `mantra/agent.py`, so the LLM was never offered the tool and could never call the MCP server even when availability queries were made. Re-enabled it in the tools list. Files: `mantra/agent.py`.
 
 ## 2026-08-30
-
 
 ### Dynamic OAuth Token Acquisition & Hardcoded JWT Removal
 
@@ -140,8 +144,8 @@
   - Added relative date resolver (`resolve_date_string`) handling `'today'`, `'tomorrow'`, `'yesterday'`.
   - Added resilient HTTP fallback (`POST /api/tools/call` via `httpx`) in `mantra/mcp_client.py` if SSE transport fails.
   - Fixed logging format string `%d` → `%s` and normalized 10-digit Indian phone numbers.
-- Files: [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py), [mantra/mcp_client.py](file:///home/fardeen/lkt/mantra/mcp_client.py), `livekit-mcp/src/livekit_mcp/tools/doctor_availability.py`, `livekit-mcp/src/livekit_mcp/clients/backend_client.py`.
-=======
+- # Files: [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py), [mantra/mcp_client.py](file:///home/fardeen/lkt/mantra/mcp_client.py), `livekit-mcp/src/livekit_mcp/tools/doctor_availability.py`, `livekit-mcp/src/livekit_mcp/clients/backend_client.py`.
+
 ## 2026-09-01
 
 ### DeepSeek Extreme Low-Latency (<1s) Optimization & Intermittent Lag Elimination
@@ -151,7 +155,7 @@
   - **Upfront KB System Prompt Context Injection:** Added `format_upfront_kb_context()` and pre-loaded organization Knowledge Base content directly into system instructions (`<!-- UPFRONT_KB_START -->`) at room startup. Eliminates 2-turn function tool call loops (`search_knowledge_base`), saving 1.5s–2.5s on factual turns.
   - **Fix AssistantFunctions Scope:** Corrected `format_upfront_kb_context()` placement to module-level scope before `class AssistantFunctions`, resolving `AttributeError: 'AssistantFunctions' object has no attribute 'warmup'`.
 - Files: [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py).
->>>>>>> 1d37a8d (feat: optimize DeepSeek latency via HTTP/2 socket pre-warming, upfront Knowledge Base injection, and dynamic turn endpointing)
+  > > > > > > > 1d37a8d (feat: optimize DeepSeek latency via HTTP/2 socket pre-warming, upfront Knowledge Base injection, and dynamic turn endpointing)
 
 ## 2026-08-29
 
