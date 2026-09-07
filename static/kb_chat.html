@@ -341,7 +341,7 @@
     // Load KB IDs
     async function loadKbIds() {
         try {
-            const res = await fetch('/api/v1/knowledge/list');
+            const res = await fetch('/v1/knowledge/list');
             const data = await res.json();
             kbSelectDropdown.innerHTML = '';
             
@@ -445,7 +445,7 @@
         chatArea.scrollTop = chatArea.scrollHeight;
         
         try {
-            const response = await fetch('/api/v1/kb/chat', {
+            const response = await fetch('/v1/kb/chat', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'

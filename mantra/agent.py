@@ -264,7 +264,7 @@ async def _resolve_from_mantra_backend(phone_number: str) -> dict | None:
         logger.error("MANTRAASSIST_BACKEND_URL not set — cannot resolve inbound call context")
         return None
 
-    url = f"{base_url}/api/v1/telephony/resolve-inbound-call"
+    url = f"{base_url}/v1/telephony/resolve-inbound-call"
     logger.info(f"Resolving inbound call context for phone_number={phone_number} via {url}")
 
     try:

@@ -32,7 +32,7 @@ const inputPrompt = document.getElementById('input-prompt');
 async function loadKbIdsForConsole() {
     if (!inputKbId) return;
     try {
-        const res = await fetch('/api/v1/knowledge/list', {
+        const res = await fetch('/v1/knowledge/list', {
             headers: { 'Authorization': `Bearer ${token}` }
         });
         const data = await res.json();
@@ -335,7 +335,7 @@ document.getElementById('create-trunk-btn').addEventListener('click', async () =
         }
     }
 
-    await apiPost('/api/v1/sip/trunks/inbound', {
+    await apiPost('/v1/sip/trunks/inbound', {
         name: document.getElementById('trunk-name').value || 'ui-inbound-trunk',
         numbers: document.getElementById('trunk-numbers').value.split(',').map(s => s.trim()).filter(Boolean),
         auth_username: document.getElementById('trunk-auth-user').value,
@@ -345,18 +345,18 @@ document.getElementById('create-trunk-btn').addEventListener('click', async () =
 });
 
 document.getElementById('list-trunks-btn').addEventListener('click', () => {
-    apiGet('/api/v1/sip/trunks/inbound');
+    apiGet('/v1/sip/trunks/inbound');
 });
 
 document.getElementById('delete-trunk-btn').addEventListener('click', () => {
     const id = document.getElementById('trunk-delete-id').value.trim();
     if (!id) { inboundResult.value = 'Error: Trunk ID is required'; return; }
-    apiDelete(`/api/v1/sip/trunks/inbound/${id}`);
+    apiDelete(`/v1/sip/trunks/inbound/${id}`);
 });
 
 // Dispatch Rule Handlers
 document.getElementById('create-rule-btn').addEventListener('click', async () => {
-    await apiPost('/api/v1/sip/dispatch-rules', {
+    await apiPost('/v1/sip/dispatch-rules', {
         name: document.getElementById('rule-name').value || 'ui-inbound-rule',
         trunk_id: document.getElementById('rule-trunk-id').value,
         room_prefix: document.getElementById('rule-prefix').value || 'inbound_',
@@ -365,13 +365,13 @@ document.getElementById('create-rule-btn').addEventListener('click', async () =>
 });
 
 document.getElementById('list-rules-btn').addEventListener('click', () => {
-    apiGet('/api/v1/sip/dispatch-rules');
+    apiGet('/v1/sip/dispatch-rules');
 });
 
 document.getElementById('delete-rule-btn').addEventListener('click', () => {
     const id = document.getElementById('rule-delete-id').value.trim();
     if (!id) { inboundResult.value = 'Error: Rule ID is required'; return; }
-    apiDelete(`/api/v1/sip/dispatch-rules/${id}`);
+    apiDelete(`/v1/sip/dispatch-rules/${id}`);
 });
 
 

@@ -339,7 +339,7 @@ async def send_to_backend(payload: dict, max_retries: int = 3, force: bool = Fal
     if not await _claim_backend_delivery(dedupe_key, force=is_retry_payload):
         return True  # already delivered (or in-flight) by the other path
 
-    url = f"{base_url}/api/v1/webhooks/n8n"
+    url = f"{base_url}/v1/webhooks/n8n"
 
     timestamp = str(int(time.time()))
 
@@ -1026,7 +1026,7 @@ async def report_telemetry(
         logger.error("TOS_ENDPOINT environment variable not set. Cannot send telemetry.")
         return False
 
-    url = f"{tos_url}/api/telemetry/{tos_task_id}/log"
+    url = f"{tos_url}/telemetry/{tos_task_id}/log"
     token = tos_token or os.getenv("TOS_SERVICE_SECRET", "")
 
     body = {"level": level, "message": message}
