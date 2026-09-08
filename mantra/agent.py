@@ -233,7 +233,7 @@ async def _resolve_from_db(phone_number: str) -> dict | None:
                 "process_id": process_id,
                 "stage_id": stage_id,
                 "transfer_numbers": result.get("transfer_numbers", {}),
-                "client_name": result.get("client_name")
+                "client_name": result.get("client_name"),
             }
         return None
     except Exception as e:
@@ -296,8 +296,71 @@ async def resolve_inbound_context(phone_number: str) -> dict | None:
     return config
 
 
+def _extract_inbound_caller_phone(meta_payload: dict | None, fallback_phone: str | None = None) -> str:
+    """Prefer the true caller number over the org-bound inbound DID."""
+    candidates: list[str] = []
+    if isinstance(meta_payload, dict):
+        for key in (
+            "call_from",
+            "caller_number",
+            "client_phone_number",
+            "client_phone",
+            "from_number",
+            "source_number",
+            "phone_number",
+        ):
+            value = meta_payload.get(key)
+            if value:
+                candidates.append(str(value))
+    if fallback_phone:
+        candidates.insert(0, str(fallback_phone))
+
+    for candidate in candidates:
+        value = str(candidate).strip()
+        if not value:
+            continue
+        if value.lower().startswith("sip_"):
+            value = value[4:]
+        normalized = format_e164_phone_number(value)
+        if normalized:
+            return normalized
+    return ""
+
+
+def _extract_livekit_caller_phone(participants) -> str:
+    """Extract the inbound caller number from LiveKit SIP participant metadata."""
+    attribute_keys = (
+        "sip.phoneNumber",
+        "sip.from",
+        "sip.callerNumber",
+        "sip.sourceNumber",
+        "phone_number",
+        "caller_number",
+        "from_number",
+    )
+    for participant in participants:
+        attributes = getattr(participant, "attributes", {}) or {}
+        for key in attribute_keys:
+            value = attributes.get(key)
+            if value:
+                normalized = _extract_inbound_caller_phone({"phone_number": value})
+                if normalized:
+                    return normalized
+
+        identity = getattr(participant, "identity", "")
+        normalized = _extract_inbound_caller_phone({"phone_number": identity})
+        if normalized:
+            return normalized
+    return ""
+
+
 async def recognize_inbound_client(phone_number: str, org_id: str | int) -> str | None:
-    """Resolve a known client's display name before an inbound greeting."""
+    """Resolve a known client's display name before an inbound greeting.
+
+    Use the actual caller's phone number to identify the client, scoped by org_id.
+    The org-bound DID is only used for routing and should not be sent to the
+    client-recognition tool.
+    """
     if not phone_number or org_id in (None, ""):
         return None
 
@@ -912,31 +975,21 @@ async def entrypoint(ctx: JobContext):
             meta_payload = json.loads(ctx.job.metadata)
 
             if meta_payload.get("direction") == "inbound":
-                phone_number = meta_payload.get("phone_number", "")
-                logger.info(f"[DIAG] Inbound call detected — phone_number={phone_number}")
-                if phone_number:
-                    call_state["caller_phone_number"] = phone_number
-                    resolved_context = await resolve_inbound_context(phone_number)
+                # Dispatch metadata contains the org-bound DID. The real caller
+                # number is read from the LiveKit SIP participant after joining.
+                routing_phone = meta_payload.get("phone_number", "")
+                logger.info(f"[DIAG] Inbound call detected — routing phone={routing_phone or '<none>'}")
+                if routing_phone:
+                    resolved_context = await resolve_inbound_context(routing_phone)
                     if resolved_context:
                         meta_payload.update(resolved_context)
                         if resolved_context.get("org_id"):
                             call_state["org_id"] = resolved_context.get("org_id")
-                            recognized_name = await recognize_inbound_client(
-                                phone_number=phone_number,
-                                org_id=resolved_context["org_id"],
-                            )
-                            if recognized_name:
-                                meta_payload["client_name"] = recognized_name
-                                logger.info(
-                                    "[DIAG] Client recognition succeeded — org_id=%s, client=%s",
-                                    resolved_context["org_id"],
-                                    recognized_name,
-                                )
                         logger.info(f"[DIAG] Inbound context merged: org_id={resolved_context.get('org_id')}")
                     else:
-                        logger.warning(f"[DIAG] Inbound resolution failed for {phone_number} — using dispatch rule defaults, call WILL connect")
+                        logger.warning(f"[DIAG] Inbound resolution failed for {routing_phone} — using dispatch rule defaults, call WILL connect")
                 else:
-                    logger.warning("[DIAG] Inbound call has no phone_number in metadata")
+                    logger.warning("[DIAG] Inbound call has no routing phone in dispatch metadata")
             elif meta_payload.get("direction") == "outbound":
                 org_id = meta_payload.get("org_id")
                 logger.info(f"[DIAG] Outbound call detected — org_id={org_id}, resolving KB...")
@@ -1942,6 +1995,30 @@ Follow these specific instructions:
             call_state["timeline"].append({"event": "Remote Participant Joined", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
             await _telemetry("Customer joined the call")
             await asyncio.sleep(0.05)
+
+        if is_inbound and call_state.get("org_id"):
+            livekit_caller_phone = _extract_livekit_caller_phone(ctx.room.remote_participants.values())
+            if livekit_caller_phone:
+                call_state["caller_phone_number"] = livekit_caller_phone
+                logger.info(
+                    "[DIAG] LiveKit caller metadata resolved — caller=%s, org_id=%s; recognizing client",
+                    livekit_caller_phone,
+                    call_state["org_id"],
+                )
+                recognized_name = await recognize_inbound_client(
+                    phone_number=livekit_caller_phone,
+                    org_id=call_state["org_id"],
+                )
+                if recognized_name:
+                    if "payload" in locals() and isinstance(payload, dict):
+                        payload["client_name"] = recognized_name
+                    logger.info(
+                        "[DIAG] Client recognition succeeded — org_id=%s, client=%s",
+                        call_state["org_id"],
+                        recognized_name,
+                    )
+            else:
+                logger.warning("[DIAG] LiveKit SIP participant had no caller phone metadata; client recognition skipped")
 
         # ── Answering Machine Detection (outbound only - async background execution) ──
         if AMD_ENABLED and not is_inbound and not ctx.room.name.startswith("test_"):

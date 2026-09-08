@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-08
+
+### LiveKit Caller Number For Client Recognition
+
+- **fix:** Inbound client recognition now resolves the organization from the dispatch DID, then waits for the remote LiveKit SIP participant before calling `recognize_client`.
+- **fix:** The MCP payload now uses the caller number from LiveKit SIP attributes or participant identity, so client recognition receives the caller's number rather than the organization's receiving number.
+- **diagnostics:** Added logs distinguishing the routing phone from the LiveKit caller phone.
+
 ## 2026-09-07
 
 ### Inbound Client Recognition Contract
