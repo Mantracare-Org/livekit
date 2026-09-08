@@ -92,7 +92,7 @@ from mantra.amd import detect_voicemail
 # Import knowledge base
 from mantra.knowledge_base import PostgresKnowledgeBase
 from mantra.retriever import KnowledgeRetriever
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
 
 VOICE_MAPPING = {
@@ -354,6 +354,35 @@ def _extract_livekit_caller_phone(participants) -> str:
     return ""
 
 
+def _extract_recognized_client_name(result: Any) -> str | None:
+    """Extract a client name from the MCP/backend response, including null results."""
+    if result is None:
+        return None
+
+    if isinstance(result, str):
+        value = result.strip()
+        if not value or value.lower() in {"null", "none", "{}", "[]"}:
+            return None
+        try:
+            result = json.loads(value)
+        except json.JSONDecodeError:
+            return value
+
+    if not isinstance(result, dict):
+        return None
+
+    for key in ("client_name", "name", "full_name"):
+        value = result.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+
+    for key in ("data", "result", "lead", "client"):
+        nested_name = _extract_recognized_client_name(result.get(key))
+        if nested_name:
+            return nested_name
+    return None
+
+
 async def recognize_inbound_client(phone_number: str, org_id: str | int) -> str | None:
     """Resolve a known client's display name before an inbound greeting.
 
@@ -373,14 +402,12 @@ async def recognize_inbound_client(phone_number: str, org_id: str | int) -> str 
                 {"org_id": org_id, "phone_number": format_e164_phone_number(phone_number)},
             )
 
-        if isinstance(result, dict):
-            data = result
+        client_name = _extract_recognized_client_name(result)
+        if client_name:
+            logger.info("Client recognition returned client_name=%s for org_id=%s", client_name, org_id)
         else:
-            data = json.loads(str(result))
-        if isinstance(data.get("data"), dict):
-            data = data["data"]
-        client_name = data.get("client_name") if isinstance(data, dict) else None
-        return str(client_name).strip() if client_name else None
+            logger.info("Client recognition returned no matching client for org_id=%s", org_id)
+        return client_name
     except asyncio.TimeoutError:
         logger.warning("Client recognition timed out for org_id=%s", org_id)
     except json.JSONDecodeError:

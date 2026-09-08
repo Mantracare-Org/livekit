@@ -2,6 +2,10 @@
 
 ## 2026-09-08
 
+### Client Recognition Response Handling
+
+- **fix:** Inbound MCP recognition now accepts direct or nested client/lead names (`client_name`, `name`, or `full_name`) and treats `null`, missing, or empty responses as anonymous callers without blocking the call.
+
 ### Docs: Remove `/api` Prefix From All Endpoints
 
 - **docs:** Replaced `/api/` with `/` across 26 files (198 occurrences) to match the `Endpoints Updated` commit (`59c3356`) which moved all routes from `/api/v1/*` to `/v1/*`, `/api/oauth/token` to `/oauth/token`, `/api/tools/call` to `/tools/call`, and `/api/telemetry/*` to `/telemetry/*`.
