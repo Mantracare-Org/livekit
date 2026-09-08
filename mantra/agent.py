@@ -2037,8 +2037,28 @@ Follow these specific instructions:
                     org_id=call_state["org_id"],
                 )
                 if recognized_name:
+                    client_name = recognized_name
                     if "payload" in locals() and isinstance(payload, dict):
                         payload["client_name"] = recognized_name
+                    try:
+                        await agent.update_instructions(
+                            agent.instructions
+                            + "\n\n--- VERIFIED CALLER IDENTITY ---\n"
+                            + f"The caller is a recognized client named {recognized_name}.\n"
+                            + f"Address the caller as {recognized_name} naturally when appropriate.\n"
+                            + "Do not ask for the caller's name. The inbound caller identity is already verified.\n"
+                            + "Do not describe or reveal the recognition lookup to the caller.\n"
+                        )
+                        logger.info(
+                            "[DIAG] Live agent instructions updated with recognized client=%s",
+                            recognized_name,
+                        )
+                    except Exception as instruction_error:
+                        logger.warning(
+                            "[DIAG] Could not update instructions with recognized client=%s: %s",
+                            recognized_name,
+                            instruction_error,
+                        )
                     logger.info(
                         "[DIAG] Client recognition succeeded — org_id=%s, client=%s",
                         call_state["org_id"],

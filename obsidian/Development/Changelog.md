@@ -16,13 +16,15 @@
 - **fix:** Inbound client recognition now resolves the organization from the dispatch DID, then waits for the remote LiveKit SIP participant before calling `recognize_client`.
 - **fix:** The MCP payload now uses the caller number from LiveKit SIP attributes or participant identity, so client recognition receives the caller's number rather than the organization's receiving number.
 - **diagnostics:** Added logs distinguishing the routing phone from the LiveKit caller phone.
+- **endpoint:** The MCP tool queries `GET /webhooks/mcp/lead?org_id={org_id}&phone={phone}` and accepts a client name or a null result.
+- **response:** Backend `name` values are normalized to `client_name` before returning through MCP.
 
 ## 2026-09-07
 
 ### Inbound Client Recognition Contract
 
 - **feat:** Added a bounded pre-greeting client recognition request for inbound calls in [mantra/agent.py](../../mantra/agent.py).
-- **contract:** The agent calls the `recognize_client` MCP tool, which sends `POST /v1/webhooks/client-recognition` with `org_id` and an E.164 `phone_number`.
+- **contract:** The agent calls the `recognize_client` MCP tool, which sends `GET /webhooks/mcp/lead?org_id={org_id}&phone={phone}` with the E.164 caller number.
 - **fallback:** A missing client name, non-200 response, timeout, or backend error leaves the caller anonymous and does not block the greeting.
 - **backend action:** MantraAssist backend should implement the endpoint and return `{"client_name": "..."}` or `{"client_name": null}`.
 
