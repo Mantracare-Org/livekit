@@ -14,7 +14,7 @@
 - [ ] Set up automated test suite (pytest for utils, integration test for call flow)
 - [ ] Add input validation to all webhook endpoints
 - [ ] Implement Redis Pub/Sub for dispatcher (replace 0.5s polling)
-- [ ] **KB: Backfill embeddings on prod** — run migration `006_kb_english_vector.py`/`.sql` then backfill via `docker run <image> backfill` or `POST /api/v1/kb/backfill-embeddings` on 52.7.20.203 (user's part). Code + scratch validation done 2026-08-09.
+- [ ] **KB: Backfill embeddings on prod** — run migration `006_kb_english_vector.py`/`.sql` then backfill via `docker run <image> backfill` or `POST /v1/kb/backfill-embeddings` on 52.7.20.203 (user's part). Code + scratch validation done 2026-08-09.
 - [ ] **KB: Add upfront prompt injection mode** — For small KBs, inject content into system prompt for zero-latency access
 
 ## Medium Priority

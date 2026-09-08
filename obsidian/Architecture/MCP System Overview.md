@@ -21,7 +21,7 @@ Instead of embedding proprietary backend logic or hardcoded REST URLs inside the
 │    • STT (Deepgram) ➔ LLM (DeepSeek/GPT-4o) ➔ TTS (Sonic-3)                 │
 │    • Calls MCP tool: `receive_doctor_availability`                          │
 └──────────────────────────────────────┬──────────────────────────────────────┘
-                                       │ 1. Executes MCP Tool (HTTP POST /api/tools/call)
+                                       │ 1. Executes MCP Tool (HTTP POST /tools/call)
                                        ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ 2. livekit-mcp (:8000) [THE MCP SERVER & GATEWAY]                           │
@@ -30,12 +30,12 @@ Instead of embedding proprietary backend logic or hardcoded REST URLs inside the
 │    • Timezone Converter: UTC ranges (04:30) ➔ Local 12h slots (10:00 AM)    │
 │    • Fallback: Direct PostgreSQL assist_db query if backend is unreachable  │
 └──────────────────────────────────────┬──────────────────────────────────────┘
-                                       │ 2. HTTP GET /api/v1/providers/availability
+                                       │ 2. HTTP GET /v1/providers/availability
                                        ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ 3. MantraAssist-backend (:5500) [CORE BACKEND API]                          │
 │    • Express.js / TypeScript REST Service                                   │
-│    • Endpoint: `GET /api/v1/providers/availability`                         │
+│    • Endpoint: `GET /v1/providers/availability`                         │
 │    • Queries PostgreSQL `user_availability` and `appointments`              │
 │    • Returns doctor list and open slots in standard UTC                     │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -56,9 +56,9 @@ sequenceDiagram
 
     Caller->>LKT: "Is Dr. Ananya Sharma available tomorrow for an appointment?"
     Note over LKT: LLM detects scheduling query<br/>Date: 2026-08-25, Doctor: Sharma
-    LKT->>MCP: POST /api/tools/call<br/>{ tool: "receive_doctor_availability", org_id: 68, date: "2026-08-25", caller_phone: "+12025550123" }
+    LKT->>MCP: POST /tools/call<br/>{ tool: "receive_doctor_availability", org_id: 68, date: "2026-08-25", caller_phone: "+12025550123" }
     
-    MCP->>Backend: HTTP GET /api/v1/providers/availability?org_id=68&date=2026-08-25&query=Dr.+Ananya+Sharma
+    MCP->>Backend: HTTP GET /v1/providers/availability?org_id=68&date=2026-08-25&query=Dr.+Ananya+Sharma
     Backend->>DB: Query user_availability & appointments
     DB-->>Backend: Return raw working hours & busy slots (UTC)
     Backend-->>MCP: HTTP 200: { providers: [{ name: "Dr. Ananya Sharma", available_slots: ["14:00 - 15:00", "16:00 - 17:00"] }] }
@@ -74,7 +74,7 @@ sequenceDiagram
 ## 3. Key Advantages of This Architecture
 
 1. **Clean Separation of Concerns**:
-   - Backend developers build simple, robust REST endpoints (`GET /api/v1/providers/availability`) in Node.js.
+   - Backend developers build simple, robust REST endpoints (`GET /v1/providers/availability`) in Node.js.
    - LiveKit MCP handles timezone parsing, phone parsing, LLM context formatting, and protocol normalization.
    - The Voice Agent receives pre-formatted, speech-optimized text.
 

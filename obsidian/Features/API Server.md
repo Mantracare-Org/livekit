@@ -41,7 +41,7 @@ Five provider-specific outbound endpoints, all sharing `_create_sip_outbound_tru
 - `/voice_link` — Supports on-the-fly trunk provisioning with the Voicelink proxied client
 
 Inbound trunk endpoints: CRUD + Voicelink variant with auto dispatch rule creation.
-End-to-end SIP inbound setup: `/api/v1/sip/inbound/setup` handles trunk + dispatch rule + provider forwarding.
+End-to-end SIP inbound setup: `/v1/sip/inbound/setup` handles trunk + dispatch rule + provider forwarding.
 
 ## Webhook Flow
 

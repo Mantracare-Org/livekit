@@ -120,9 +120,9 @@ Run the full local development stack (Voice Agent worker + UI dashboard):
 ./dev.sh
 ```
 
-- **Telephony Webhook:** `http://<local-ip>:8081/api/v1/webhooks/telephony`
+- **Telephony Webhook:** `http://<local-ip>:8081/v1/webhooks/telephony`
 - **Dashboard & Test Console:** `http://localhost:8081/dashboard`
-- **SIP Trunk Management:** `http://localhost:8081/api/v1/sip/trunks/outbound`
+- **SIP Trunk Management:** `http://localhost:8081/v1/sip/trunks/outbound`
 
 ---
 

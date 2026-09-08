@@ -31,7 +31,7 @@ No automated test suite exists. All testing is manual.
 - [ ] Verify trunk appears in LiveKit dashboard
 - [ ] List trunks returns correct data
 - [ ] Delete trunk removes configuration
-- [ ] Create inbound trunk + dispatch rule via `/api/v1/sip/inbound/setup`
+- [ ] Create inbound trunk + dispatch rule via `/v1/sip/inbound/setup`
 
 ### Dashboard Testing
 - [ ] Login with valid credentials → JWT token

@@ -9,7 +9,7 @@
 ### ────────────────────────────────────────────
 
 ### 1a. Create an inbound trunk (Plivo)
-POST http://localhost:8081/api/v1/sip/trunks/inbound
+POST http://localhost:8081/v1/sip/trunks/inbound
 Content-Type: application/json
 
 {
@@ -24,7 +24,7 @@ Content-Type: application/json
 }
 
 ### 1b. Create an inbound trunk (Twilio)
-POST http://localhost:8081/api/v1/sip/trunks/inbound
+POST http://localhost:8081/v1/sip/trunks/inbound
 Content-Type: application/json
 
 {
@@ -38,7 +38,7 @@ Content-Type: application/json
 }
 
 ### 1c. Create inbound trunk with multiple numbers
-POST http://localhost:8081/api/v1/sip/trunks/inbound
+POST http://localhost:8081/v1/sip/trunks/inbound
 Content-Type: application/json
 
 {
@@ -52,10 +52,10 @@ Content-Type: application/json
 }
 
 ### 1d. List all inbound trunks
-GET http://localhost:8081/api/v1/sip/trunks/inbound
+GET http://localhost:8081/v1/sip/trunks/inbound
 
 ### 1e. Update an inbound trunk (replace ST_xxxxx)
-PATCH http://localhost:8081/api/v1/sip/trunks/inbound/ST_xxxxx
+PATCH http://localhost:8081/v1/sip/trunks/inbound/ST_xxxxx
 Content-Type: application/json
 
 {
@@ -64,7 +64,7 @@ Content-Type: application/json
 }
 
 ### 1f. Delete an inbound trunk (replace ST_xxxxx)
-DELETE http://localhost:8081/api/v1/sip/trunks/inbound/ST_xxxxx
+DELETE http://localhost:8081/v1/sip/trunks/inbound/ST_xxxxx
 
 
 
@@ -74,7 +74,7 @@ DELETE http://localhost:8081/api/v1/sip/trunks/inbound/ST_xxxxx
 ### ────────────────────────────────────────────
 
 ### 2a. Create dispatch rule (minimal)
-POST http://localhost:8081/api/v1/sip/dispatch-rules
+POST http://localhost:8081/v1/sip/dispatch-rules
 Content-Type: application/json
 
 {
@@ -87,7 +87,7 @@ Content-Type: application/json
 }
 
 ### 2b. Create dispatch rule (Hindi-focused)
-POST http://localhost:8081/api/v1/sip/dispatch-rules
+POST http://localhost:8081/v1/sip/dispatch-rules
 Content-Type: application/json
 
 {
@@ -100,7 +100,7 @@ Content-Type: application/json
 }
 
 ### 2c. Create dispatch rule (custom model/voice)
-POST http://localhost:8081/api/v1/sip/dispatch-rules
+POST http://localhost:8081/v1/sip/dispatch-rules
 Content-Type: application/json
 
 {
@@ -113,10 +113,10 @@ Content-Type: application/json
 }
 
 ### 2d. List all dispatch rules
-GET http://localhost:8081/api/v1/sip/dispatch-rules
+GET http://localhost:8081/v1/sip/dispatch-rules
 
 ### 2e. Update a dispatch rule (replace SR_xxxxx)
-PATCH http://localhost:8081/api/v1/sip/dispatch-rules/SR_xxxxx
+PATCH http://localhost:8081/v1/sip/dispatch-rules/SR_xxxxx
 Content-Type: application/json
 
 {
@@ -127,7 +127,7 @@ Content-Type: application/json
 }
 
 ### 2f. Delete a dispatch rule (replace SR_xxxxx)
-DELETE http://localhost:8081/api/v1/sip/dispatch-rules/SR_xxxxx
+DELETE http://localhost:8081/v1/sip/dispatch-rules/SR_xxxxx
 
 
 
@@ -136,7 +136,7 @@ DELETE http://localhost:8081/api/v1/sip/dispatch-rules/SR_xxxxx
 ### ────────────────────────────────────────────
 
 ### 3a. Trigger outbound call via webhook
-POST http://localhost:8081/api/v1/webhooks/telephony
+POST http://localhost:8081/v1/webhooks/telephony
 Content-Type: application/json
 
 {
@@ -169,7 +169,7 @@ Content-Type: application/json
 }
 
 ### 3b. Outbound call with DeepSeek model
-POST http://localhost:8081/api/v1/webhooks/telephony
+POST http://localhost:8081/v1/webhooks/telephony
 Content-Type: application/json
 
 {
@@ -206,7 +206,7 @@ Content-Type: application/json
 ### ────────────────────────────────────────────
 
 ### 4a. Provision Plivo trunk + place call
-POST http://localhost:8081/api/v1/sip/trunks/outbound/plivo
+POST http://localhost:8081/v1/sip/trunks/outbound/plivo
 Content-Type: application/json
 
 {
@@ -225,7 +225,7 @@ Content-Type: application/json
 }
 
 ### 4b. Provision trunk only (no call)
-POST http://localhost:8081/api/v1/sip/trunks/outbound/plivo
+POST http://localhost:8081/v1/sip/trunks/outbound/plivo
 Content-Type: application/json
 
 {
@@ -241,7 +241,7 @@ Content-Type: application/json
 
 ### ────────────────────────────────────────────
 ### 4c. Voicelink trunk (provision only)
-POST http://localhost:8081/api/v1/sip/trunks/outbound/voicelink
+POST http://localhost:8081/v1/sip/trunks/outbound/voicelink
 Content-Type: application/json
 
 {
@@ -255,7 +255,7 @@ Content-Type: application/json
 }
 
 ### 4d. Voicelink trunk (flat payload)
-POST http://localhost:8081/api/v1/sip/trunks/outbound/voicelink
+POST http://localhost:8081/v1/sip/trunks/outbound/voicelink
 Content-Type: application/json
 
 {
@@ -267,7 +267,7 @@ Content-Type: application/json
 }
 
 ### 4e. Voicelink trunk (existing trunk_id)
-POST http://localhost:8081/api/v1/sip/trunks/outbound/voicelink
+POST http://localhost:8081/v1/sip/trunks/outbound/voicelink
 Content-Type: application/json
 
 {
@@ -280,7 +280,7 @@ Content-Type: application/json
 ### ────────────────────────────────────────────
 
 ### 5a. Create Zadarma outbound trunk
-POST http://localhost:8081/api/v1/sip/trunks/outbound/zadarma
+POST http://localhost:8081/v1/sip/trunks/outbound/zadarma
 Content-Type: application/json
 
 {
@@ -292,7 +292,7 @@ Content-Type: application/json
 }
 
 ### 5b. Create Twilio outbound trunk
-POST http://localhost:8081/api/v1/sip/trunks/outbound/twilio
+POST http://localhost:8081/v1/sip/trunks/outbound/twilio
 Content-Type: application/json
 
 {
@@ -304,10 +304,10 @@ Content-Type: application/json
 }
 
 ### 5c. List all outbound trunks
-GET http://localhost:8081/api/v1/sip/trunks/outbound
+GET http://localhost:8081/v1/sip/trunks/outbound
 
 ### 5d. Delete outbound trunk
-DELETE http://localhost:8081/api/v1/sip/trunks/outbound/ST_xxxxx
+DELETE http://localhost:8081/v1/sip/trunks/outbound/ST_xxxxx
 
 
 ### ────────────────────────────────────────────

@@ -25,4 +25,4 @@ Manual agent testing UI for development. Provides WebRTC room connection, microp
 
 ## Testing Inbound Calls
 
-Use `POST /api/v1/test/inbound-call` endpoint to simulate inbound calls — dispatches agent with `direction: inbound` metadata and triggers SIP outbound call to the tester's phone.
+Use `POST /v1/test/inbound-call` endpoint to simulate inbound calls — dispatches agent with `direction: inbound` metadata and triggers SIP outbound call to the tester's phone.

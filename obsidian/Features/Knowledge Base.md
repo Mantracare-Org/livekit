@@ -73,7 +73,7 @@ Embeddings are computed only if `GOOGLE_API_KEY` is set; otherwise the system de
 
 When an inbound call arrives, the agent resolves scope before the conversation starts (`agent.py:424-490`):
 
-1. `resolve_inbound_context(phone_number)` tries `MANTRAASSIST_BACKEND_URL/api/v1/telephony/resolve-inbound-call` first
+1. `resolve_inbound_context(phone_number)` tries `MANTRAASSIST_BACKEND_URL/v1/telephony/resolve-inbound-call` first
 2. **If backend fails** (or `LOCAL_INBOUND_MAPPINGS=1` is set), falls back to `inbound_mappings.json` in the repo root
 3. Backend (or local config) returns `org_id`, `kb_id`, `kb_tags`, `prompt`, `voice`, `model`, `process_id`, `transfer_numbers`, `client_name`
 4. KB scope is built:
@@ -90,10 +90,10 @@ Previously the call was **rejected** if the backend was unreachable; now it fall
 
 | Endpoint | Input | kb_id? |
 | -------- | ----- | ------ |
-| `POST /api/v1/kb/ingest` | File (`.pdf`, `.txt`, `.md`) + kb_id + optional `document_id` | Required |
-| `POST /api/v1/kb/ingest` (JSON) | `{kb_id, title, content}` | Required |
-| `POST /api/v1/kb/ingest` (URL) | `{kb_id, url}` | Required |
-| `DELETE /api/v1/kb/document` | `{kb_id, document_id}` | Required |
+| `POST /v1/kb/ingest` | File (`.pdf`, `.txt`, `.md`) + kb_id + optional `document_id` | Required |
+| `POST /v1/kb/ingest` (JSON) | `{kb_id, title, content}` | Required |
+| `POST /v1/kb/ingest` (URL) | `{kb_id, url}` | Required |
+| `DELETE /v1/kb/document` | `{kb_id, document_id}` | Required |
 
 Ingestion embeds each chunk up front (batched, via `gemini_embeddings.embed_texts`) and stores the vector; on any embedding failure it falls back to FTS-only so ingestion never blocks on the API.
 

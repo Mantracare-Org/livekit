@@ -10,7 +10,7 @@
 ## 📌 Executive Summary for Backend Engineers
 
 1. **What you need to build:** A webhook endpoint:  
-   `POST /api/v1/webhooks/mcp` (or `GET /api/v1/webhooks/mcp`)
+   `POST /v1/webhooks/mcp` (or `GET /v1/webhooks/mcp`)
 2. **What MCP sends to your endpoint (Always in UTC):**
    - **`org_id`**: Organization ID (e.g. `68`, `278`, or `""`)
    - **`date`**: UTC Date string in `YYYY-MM-DD` (e.g. `"2026-08-25"` or `""`)
@@ -24,7 +24,7 @@
 
 ## 🛠️ Endpoint Specification
 
-### `POST /api/v1/webhooks/mcp`
+### `POST /v1/webhooks/mcp`
 
 #### Query Parameters:
 

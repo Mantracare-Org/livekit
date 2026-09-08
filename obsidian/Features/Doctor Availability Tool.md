@@ -45,7 +45,7 @@ async def check_doctor_availability(
    ▼
 3. Agent extracts `org_id` and `caller_phone` from metadata / call state
    │
-   ▼ (HTTP POST to http://localhost:8000/api/tools/call with JWT Bearer auth)
+   ▼ (HTTP POST to http://localhost:8000/tools/call with JWT Bearer auth)
 4. `livekit-mcp` searches provider availability in `assist_db`
    • Auto-detects caller timezone via Google `phonenumbers` (e.g. +1... -> EDT, +91... -> IST)
    • Evaluates RFC 5545 recurrence rules

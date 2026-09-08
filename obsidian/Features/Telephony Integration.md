@@ -6,10 +6,10 @@
 
 | Provider | Routing | Outbound Endpoint | Notes |
 |----------|---------|----------|-------|
-| Twilio | Direct | `POST /api/v1/sip/trunks/outbound/twilio` | Default address `live-kit-mc.pstn.twilio.com` |
-| Plivo | Proxied (India) | `POST /api/v1/sip/trunks/outbound/plivo` | On-the-fly trunk provisioning; `destination_country="in"`; Zentrunk for inbound |
-| Zadarma | Direct | `POST /api/v1/sip/trunks/outbound/zadarma` | Backward-compatible with root endpoint |
-| VoiceLink | Proxied | `POST /api/v1/sip/trunks/outbound/voice_link` | `destination_country="in"`; LiveKit-native provider |
+| Twilio | Direct | `POST /v1/sip/trunks/outbound/twilio` | Default address `live-kit-mc.pstn.twilio.com` |
+| Plivo | Proxied (India) | `POST /v1/sip/trunks/outbound/plivo` | On-the-fly trunk provisioning; `destination_country="in"`; Zentrunk for inbound |
+| Zadarma | Direct | `POST /v1/sip/trunks/outbound/zadarma` | Backward-compatible with root endpoint |
+| VoiceLink | Proxied | `POST /v1/sip/trunks/outbound/voice_link` | `destination_country="in"`; LiveKit-native provider |
 
 ## SIP Trunk Resolution
 
@@ -51,7 +51,7 @@ The webhook awaits the SIP call and returns an empty `503` when it fails (matchi
 
 ## Inbound Setup
 
-`POST /api/v1/sip/inbound/setup` handles end-to-end provisioning:
+`POST /v1/sip/inbound/setup` handles end-to-end provisioning:
 1. Check for existing trunk/rule (Plivo: 409 + Zentrunk link verification)
 2. Create/reuse LiveKit inbound trunk
 3. Create/reuse LiveKit dispatch rule

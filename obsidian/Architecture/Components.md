@@ -31,25 +31,25 @@ The core real-time voice AI agent. ~1,629 lines.
 FastAPI-based HTTP server. ~3,613 lines.
 
 **Endpoints:**
-- `POST /api/v1/auth/login` — JWT authentication
-- `POST /api/v1/webhooks/telephony` — Primary outbound call trigger
-- `POST /api/v1/sip/trunks/outbound/{zadarma|twilio|plivo|voice_link}` — SIP trunk provisioning
-- `GET /api/v1/sip/trunks/outbound` — List trunks
-- `DELETE /api/v1/sip/trunks/outbound/{trunk_id}` — Delete trunks
-- `POST /api/v1/sip/trunks/inbound` / `GET` / `DELETE` — Inbound trunk CRUD
-- `POST /api/v1/sip/trunks/inbound/voicelink` — Voicelink inbound trunk
-- `PATCH /api/v1/sip/trunks/inbound/{trunk_id}` — Update inbound trunk
-- `POST /api/v1/sip/inbound/setup` — End-to-end inbound SIP provisioning (LiveKit trunk + dispatch rule + provider API)
-- `POST /api/v1/sip/dispatch-rules` / `GET` / `DELETE` / `PATCH` — Dispatch rule CRUD
+- `POST /v1/auth/login` — JWT authentication
+- `POST /v1/webhooks/telephony` — Primary outbound call trigger
+- `POST /v1/sip/trunks/outbound/{zadarma|twilio|plivo|voice_link}` — SIP trunk provisioning
+- `GET /v1/sip/trunks/outbound` — List trunks
+- `DELETE /v1/sip/trunks/outbound/{trunk_id}` — Delete trunks
+- `POST /v1/sip/trunks/inbound` / `GET` / `DELETE` — Inbound trunk CRUD
+- `POST /v1/sip/trunks/inbound/voicelink` — Voicelink inbound trunk
+- `PATCH /v1/sip/trunks/inbound/{trunk_id}` — Update inbound trunk
+- `POST /v1/sip/inbound/setup` — End-to-end inbound SIP provisioning (LiveKit trunk + dispatch rule + provider API)
+- `POST /v1/sip/dispatch-rules` / `GET` / `DELETE` / `PATCH` — Dispatch rule CRUD
 - `POST /dispatch-test` — Manual dispatch for testing
-- `POST /api/v1/test/inbound-call` — Simulated inbound call testing
-- `POST /api/v1/kb/**` — Knowledge base ingestion, chat, delete
-- `GET /api/v1/knowledge/**` — KB file/text/URL ingestion and listing
-- `GET/PUT/DELETE /api/v1/org-configs/**` — Organization config CRUD
-- `GET /api/v1/dashboard/stream` — SSE for real-time metrics
-- `GET /api/v1/dashboard/metrics` — Today's call metrics
-- `GET /api/v1/dashboard/calls` — Paginated call history
-- `GET /api/v1/dashboard/active-calls` — Active calls from Redis
+- `POST /v1/test/inbound-call` — Simulated inbound call testing
+- `POST /v1/kb/**` — Knowledge base ingestion, chat, delete
+- `GET /v1/knowledge/**` — KB file/text/URL ingestion and listing
+- `GET/PUT/DELETE /v1/org-configs/**` — Organization config CRUD
+- `GET /v1/dashboard/stream` — SSE for real-time metrics
+- `GET /v1/dashboard/metrics` — Today's call metrics
+- `GET /v1/dashboard/calls` — Paginated call history
+- `GET /v1/dashboard/active-calls` — Active calls from Redis
 - `GET /health` — Health check (per-provider + global capacity + all deps)
 
 **Key Details:**
@@ -89,9 +89,9 @@ Vectorless KB with PostgreSQL Full-Text Search. ~619 lines total.
 - Multi-KB per org via `kb_collections` table — each document = one collection per org
 
 **Endpoints (via `ui_server.py`):**
-- `POST /api/v1/kb/ingest` — File/text/URL ingestion
-- `POST /api/v1/kb/chat` — Test chat against KB
-- `DELETE /api/v1/kb/document` — Delete by document_id
+- `POST /v1/kb/ingest` — File/text/URL ingestion
+- `POST /v1/kb/chat` — Test chat against KB
+- `DELETE /v1/kb/document` — Delete by document_id
 
 See [[../Features/Knowledge Base.md|Knowledge Base feature doc]] for full details.
 
