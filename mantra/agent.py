@@ -589,8 +589,6 @@ class AssistantFunctions:
     async def _get_kb(self) -> PostgresKnowledgeBase:
         return get_global_kb()
 
-<<<<<<< HEAD
-=======
     async def warmup(self):
         try:
             kb = await self._get_kb()
@@ -612,7 +610,6 @@ class AssistantFunctions:
         except Exception as e:
             logger.warning(f"[KB] AssistantFunctions warmup error: {e}")
 
->>>>>>> 1d37a8d (feat: optimize DeepSeek latency via HTTP/2 socket pre-warming, upfront Knowledge Base injection, and dynamic turn endpointing)
     async def _get_retriever(self) -> KnowledgeRetriever:
         if self._retriever is None:
             kb = await self._get_kb()
@@ -848,9 +845,80 @@ class AssistantFunctions:
         self._disconnect_task = create_bg_task(graceful_disconnect())
         return ""
 
+    async def _load_department_options(self, org_id: int | str) -> list[str]:
+        """Load and remember the departments available for this organization."""
+        from mantra.mcp_client import get_mcp_client
+
+        try:
+            raw_departments = await get_mcp_client().call_tool(
+                "get_org_departments",
+                {"org_id": org_id},
+            )
+            departments = json.loads(raw_departments) if isinstance(raw_departments, str) else raw_departments
+            if isinstance(departments, dict):
+                departments = departments.get("departments") or departments.get("data") or []
+            if not isinstance(departments, list):
+                departments = []
+            normalized = []
+            for item in departments:
+                name = str(item).strip()
+                if name and name.casefold() not in {value.casefold() for value in normalized}:
+                    normalized.append(name)
+        except Exception as exc:
+            logger.warning(f"Failed to fetch departments for org_id={org_id}: {exc}")
+            normalized = []
+
+        if self.call_state is not None:
+            self.call_state["department_options"] = normalized
+        return normalized
+
+    @llm.function_tool(
+        description=(
+            "Use when the caller gives a broad medical symptom without a clear department or specialty, such as 'I have an eye problem'. "
+            "Fetch the organization's department list silently. Then reason over the caller's natural-language symptom and select exactly one department from that returned list. "
+            "Do not ask the caller to choose a department, do not mention department names aloud, and immediately call check_doctor_availability with the selected exact department."
+        )
+    )
+    async def clarify_medical_department(
+        self,
+        symptom: Annotated[str, "The caller's broad symptom or reason for the appointment."],
+    ) -> str:
+        org_id = self.call_state.get("org_id") if self.call_state else None
+        if not org_id and self.job_metadata:
+            try:
+                payload = json.loads(self.job_metadata) if isinstance(self.job_metadata, str) else self.job_metadata
+                org_id = payload.get("org_id") or (
+                    payload.get("metadata", {}).get("org_id")
+                    if isinstance(payload.get("metadata"), dict)
+                    else None
+                )
+            except Exception as exc:
+                logger.warning(f"Could not parse job_metadata in clarify_medical_department: {exc}")
+
+        if not org_id:
+            return "Ask the caller which specific eye or medical specialty they need, then continue without guessing a department."
+
+        departments = await self._load_department_options(org_id)
+
+        if self.call_state is not None:
+            self.call_state["department_clarification_symptom"] = symptom.strip()
+
+        if not departments:
+            return "Department discovery returned no options. Do not guess or ask the caller to name a department. Ask for the appointment details and offer a general callback."
+
+        return (
+            f"INTERNAL ROUTING CONTEXT ONLY. Caller symptom: {symptom.strip()}. "
+            f"Allowed departments: {json.dumps(departments)}. "
+            "Select the single best department using the full conversation context, then call check_doctor_availability with that exact value. "
+            "Do not say the department list, ask the caller to choose, or explain the routing."
+        )
+
     @llm.function_tool(
         description=(
             "Check doctor and healthcare provider availability, working hours, and open appointment slots on a specific date. "
+            "Before calling this tool, the caller's department must match one of the organization's departments. "
+            "Never invent a generic department such as Ophthalmology. If the department is unknown or does not match "
+            "the organization list, call clarify_medical_department first. Never ask the caller to choose a department by name. "
             "ALWAYS use this tool whenever the caller asks about doctor availability, open consultation times, "
             "scheduling an appointment, or doctor working hours on a given day. "
             "If the caller mentions or asks about a specific medical department or specialty (e.g. 'Cardiology', 'Dermatology', 'Orthopedics', 'Pediatrics', 'Dental'), extract and pass it in department."
@@ -890,6 +958,30 @@ class AssistantFunctions:
                     )
             except Exception as e:
                 logger.warning(f"Could not parse job_metadata in check_doctor_availability: {e}")
+
+        department_options = self.call_state.get("department_options", []) if self.call_state else []
+        if not department_options and org_id:
+            department_options = await self._load_department_options(org_id)
+
+        requested_department = str(department).strip() if department else ""
+        matched_department = next(
+            (
+                option
+                for option in department_options
+                if option.casefold() == requested_department.casefold()
+            ),
+            None,
+        )
+        if not matched_department:
+            if self.call_state is not None:
+                self.call_state["department_clarification_symptom"] = requested_department
+            return (
+                "Department selection is invalid. Call clarify_medical_department, choose one exact value from its "
+                "returned allowed departments, and retry availability. Do not ask the caller to choose a department."
+            )
+
+        if self.call_state is not None:
+            self.call_state["selected_department"] = matched_department
 
         logger.info(f"Agent requesting doctor availability via MCP: org_id={org_id}, date={date}, doctor={doctor_name}, department={department}, phone={caller_phone}")
 
@@ -1109,6 +1201,9 @@ async def entrypoint(ctx: JobContext):
         kb_tags=kb_tags_list,
         call_state=call_state,
     )
+    if call_state.get("org_id"):
+        create_bg_task(fnc_ctx._load_department_options(call_state["org_id"]))
+    create_bg_task(fnc_ctx.warmup())
 
     # Session ID for S3 key naming
     session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1379,14 +1474,9 @@ Follow these specific instructions:
             logger.warning("DEEPSEEK_API_KEY not set, falling back to OpenAI")
             llm_engine = openai.LLM(model="gpt-4o-mini")
         else:
-<<<<<<< HEAD
-            logger.info("Using DeepSeek LLM")
-            import openai as openai_client
-            client = openai_client.AsyncClient(
-                api_key=deepseek_key,
-                base_url="https://api.deepseek.com",
-=======
             logger.info("Using DeepSeek LLM (Optimized Low-Latency HTTP/2)")
+            import httpx
+            import openai as openai_client
 
             try:
                 http_client = httpx.AsyncClient(
@@ -1405,15 +1495,11 @@ Follow these specific instructions:
                 api_key=deepseek_key,
                 base_url=deepseek_base,
                 http_client=http_client,
->>>>>>> 1d37a8d (feat: optimize DeepSeek latency via HTTP/2 socket pre-warming, upfront Knowledge Base injection, and dynamic turn endpointing)
             )
             llm_engine = openai.LLM(
                 model="deepseek-v4-flash",
                 client=client,
-<<<<<<< HEAD
-=======
                 timeout=httpx.Timeout(connect=10.0, read=45.0, write=15.0, pool=15.0),
->>>>>>> 1d37a8d (feat: optimize DeepSeek latency via HTTP/2 socket pre-warming, upfront Knowledge Base injection, and dynamic turn endpointing)
             )
 
             # Fire background socket pre-warming ping to eliminate initial SSL/TCP handshake latency
@@ -1589,6 +1675,7 @@ Follow these specific instructions:
     agent_tools = [
         fnc_ctx.end_call,
         fnc_ctx.search_knowledge_base,
+        fnc_ctx.clarify_medical_department,
         fnc_ctx.check_doctor_availability,
     ]
 
