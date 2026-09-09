@@ -383,8 +383,35 @@ def _extract_recognized_client_name(result: Any) -> str | None:
     return None
 
 
-async def recognize_inbound_client(phone_number: str, org_id: str | int) -> str | None:
-    """Resolve a known client's display name before an inbound greeting.
+def _extract_recognized_client_metadata(result: Any) -> dict[str, list]:
+    """Extract structured client metadata while tolerating nested MCP responses."""
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except json.JSONDecodeError:
+            return {"ai_summaries": [], "custom_fields": []}
+
+    if not isinstance(result, dict):
+        return {"ai_summaries": [], "custom_fields": []}
+
+    for key in ("data", "result", "lead", "client"):
+        nested = result.get(key)
+        if isinstance(nested, dict):
+            metadata = _extract_recognized_client_metadata(nested)
+            if any(metadata.values()):
+                return metadata
+
+    metadata = result.get("client_metadata")
+    if not isinstance(metadata, dict):
+        return {"ai_summaries": [], "custom_fields": []}
+    return {
+        "ai_summaries": metadata.get("ai_summaries", []) if isinstance(metadata.get("ai_summaries"), list) else [],
+        "custom_fields": metadata.get("custom_fields", []) if isinstance(metadata.get("custom_fields"), list) else [],
+    }
+
+
+async def recognize_inbound_client(phone_number: str, org_id: str | int) -> dict[str, Any] | None:
+    """Resolve a known client's identity and metadata before an inbound greeting.
 
     Use the actual caller's phone number to identify the client, scoped by org_id.
     The org-bound DID is only used for routing and should not be sent to the
@@ -403,11 +430,17 @@ async def recognize_inbound_client(phone_number: str, org_id: str | int) -> str 
             )
 
         client_name = _extract_recognized_client_name(result)
+        client_metadata = _extract_recognized_client_metadata(result)
         if client_name:
             logger.info("Client recognition returned client_name=%s for org_id=%s", client_name, org_id)
         else:
             logger.info("Client recognition returned no matching client for org_id=%s", org_id)
-        return client_name
+        if not client_name:
+            return None
+        return {
+            "client_name": client_name,
+            "client_metadata": client_metadata,
+        }
     except asyncio.TimeoutError:
         logger.warning("Client recognition timed out for org_id=%s", org_id)
     except json.JSONDecodeError:
@@ -2021,19 +2054,40 @@ Follow these specific instructions:
                     livekit_caller_phone,
                     call_state["org_id"],
                 )
-                recognized_name = await recognize_inbound_client(
+                recognized_client = await recognize_inbound_client(
                     phone_number=livekit_caller_phone,
                     org_id=call_state["org_id"],
                 )
-                if recognized_name:
+                if recognized_client:
+                    recognized_name = recognized_client["client_name"]
+                    client_metadata = recognized_client["client_metadata"]
                     client_name = recognized_name
                     if "payload" in locals() and isinstance(payload, dict):
                         payload["client_name"] = recognized_name
+                        payload["client_metadata"] = client_metadata
+                    metadata_lines = []
+                    for summary in client_metadata["ai_summaries"]:
+                        if isinstance(summary, dict):
+                            date = summary.get("date", "")
+                            text = summary.get("summary", "")
+                            metadata_lines.append(f"- {date}: {text}" if date else f"- {text}")
+                    custom_fields = client_metadata["custom_fields"]
+                    if custom_fields:
+                        metadata_lines.append("Custom fields:")
+                        for field in custom_fields:
+                            if isinstance(field, dict):
+                                field_name = field.get("custom_field_name", "field")
+                                field_value = field.get("custom_field_value", "")
+                                metadata_lines.append(f"- {field_name}: {field_value}")
+                    metadata_context = "\n".join(metadata_lines) or "No additional client metadata provided."
                     try:
                         await agent.update_instructions(
                             agent.instructions
                             + "\n\n--- VERIFIED CALLER IDENTITY ---\n"
                             + f"The caller is a recognized client named {recognized_name}.\n"
+                            + "The following private client metadata is available as call context. Use it only when relevant and never mention the lookup or metadata source.\n"
+                            + metadata_context
+                            + "\n"
                             + f"Address the caller as {recognized_name} naturally when appropriate.\n"
                             + "Do not ask for the caller's name. The inbound caller identity is already verified.\n"
                             + "Do not describe or reveal the recognition lookup to the caller.\n"

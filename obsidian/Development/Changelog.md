@@ -2,6 +2,11 @@
 
 ## 2026-09-09
 
+### Inbound Client Recognition Metadata
+
+- **feat:** Expanded the `recognize_client` MCP response beyond `client_name` to include `client_metadata.ai_summaries` and `client_metadata.custom_fields` from the MantraAssist lead endpoint.
+- **agent:** Injects recognized caller summaries and custom fields into the live inbound call context while preserving anonymous-caller fallback when no client is found.
+
 ### Fast Voice Barge-In
 
 - **fix:** Switched agent interruption handling from adaptive ML detection to LiveKit VAD mode so caller speech stops agent TTS promptly instead of waiting for the full response.

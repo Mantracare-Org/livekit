@@ -84,6 +84,24 @@ The full implementation (when re-enabled): department-based transfer number reso
 }
 ```
 
+Inbound client recognition returns the following context when the caller is found:
+
+```json
+{
+  "client_name": "Amit Bhati",
+  "client_metadata": {
+    "ai_summaries": [
+      {"date": "2026-05-01", "summary": "No summary provided"}
+    ],
+    "custom_fields": [
+      {"custom_field_name": "doctor", "custom_field_value": ""}
+    ]
+  }
+}
+```
+
+The agent uses this metadata as private call context and does not disclose the recognition lookup to the caller.
+
 ## Post-Call Processing
 
 See [[Post-Call Processing.md]].
