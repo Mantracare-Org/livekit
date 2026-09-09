@@ -359,10 +359,13 @@ class LanguageManager:
             detected_lang = self.tracker.current_language
             confidence = 0.5
 
-        return self.tracker.evaluate_transition(
+        language, switched = self.tracker.evaluate_transition(
             detected_lang=detected_lang,
             confidence=confidence,
         )
+        if switched and language in SUPPORTED_LANGUAGES:
+            self.response_mode = language
+        return language, switched
 
     @property
     def current_language(self) -> str:

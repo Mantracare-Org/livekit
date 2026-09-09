@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-09-09
+
+### Fast Voice Barge-In
+
+- **fix:** Switched agent interruption handling from adaptive ML detection to LiveKit VAD mode so caller speech stops agent TTS promptly instead of waiting for the full response.
+- **tuning:** Reduced interruption speech threshold to `0.15s`, enabled buffered-audio discard during uninterruptible speech, and tightened Silero VAD speech/silence detection.
+
 ## 2026-09-08
 
 ### Client Recognition Response Handling

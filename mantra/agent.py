@@ -1131,20 +1131,7 @@ CORE BEHAVIOR:
 - KNOWLEDGE BASE USAGE: If the user asks a factual question or inquires about policies, services, or locations, you MUST use the `search_knowledge_base` tool to find the accurate answer.
 
 <!-- LANGUAGE_DIRECTIVE_START -->
-LANGUAGE RULE (HINGLISH — CRITICAL):
-- ALWAYS speak in natural Hinglish (Hindi + English mixed the way Indians speak on phone calls).
-- Default style: Mix Hindi words + English words in the same sentence. Prefer Hindi sentence structure with English nouns/verbs where it feels natural.
-- Good examples:
-  - "Haan ji, main aapki madad kar sakta hoon. Aapko appointment book karni hai kya?"
-  - "Theek hai, aapko kis location pe prefer karenge — Paschim Vihar ya Noida?"
-  - "Got it. Aapka naam kya hai?"
-  - "Sure, main check karta hoon... aapka preferred time morning hai ya evening?"
-- Avoid pure English sentences and avoid pure Hindi (Devanagari-only) sentences.
-- Use simple everyday words. Prefer Roman script for Hindi words (Hinglish style) so the TTS sounds natural.
-- Fillers that sound natural in Hinglish: "Haan", "Theek hai", "Achha", "Bilkul", "Got it", "Sure", "Okay ji".
-- STRICT: Never switch to any other language (no Marathi, Kannada, Telugu, etc.). Only Hinglish / Hindi-English mix.
-- If the caller speaks pure English, still reply in light Hinglish (do not switch to pure English).
-- If the caller speaks pure Hindi, reply in Hinglish (do not go full Devanagari).
+The response language is controlled by the runtime language directive below. Follow it exactly.
 <!-- LANGUAGE_DIRECTIVE_END -->
 
 KNOWLEDGE BASE & SEARCH DIRECTIVES:
@@ -1434,7 +1421,7 @@ Follow these specific instructions:
         if requested_lang in {"hi", "hindi", "hi-in"}
         else "en"
         if requested_lang in {"en", "english", "en-us", "en-in", "en-gb"}
-        else "hinglish"
+        else "en"
     )
     language_mgr = LanguageManager(initial_language=raw_lang, response_mode=response_mode)
     language = language_mgr.get_current_language()
@@ -1541,19 +1528,21 @@ Follow these specific instructions:
                 "max_delay": 0.80,
             },
             interruption={
-                "mode": "adaptive",
-                "min_words": 2,
-                "min_duration": 0.40,
+                "mode": "vad",
+                "enabled": True,
+                "discard_audio_if_uninterruptible": True,
+                "min_words": 1,
+                "min_duration": 0.15,
                 "resume_false_interruption": True,
-                "false_interruption_timeout": 1.5,
-                "backchannel_boundary": (1.0, 1.0),
+                "false_interruption_timeout": 1.0,
+                "backchannel_boundary": None,
             },
             preemptive_generation={
                 "preemptive_tts": True,
             },
         ),
         vad=silero.VAD.load(
-            min_speech_duration=0.10,
+            min_speech_duration=0.08,
             min_silence_duration=0.25,
             prefix_padding_duration=0.10,
         ),
