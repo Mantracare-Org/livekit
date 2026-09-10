@@ -9,6 +9,12 @@
 - **fix:** Delete LiveKit dispatch rules associated with an inbound trunk before deleting the trunk, then remove the matching `org_configs` rows.
 - **Files:** [mantra/ui_server.py](../../mantra/ui_server.py).
 
+### Organization-Agnostic Symptom Clarification
+
+- **fix:** Broad symptom routing no longer forces a department guess from one keyword or uses hardcoded specialty mappings.
+- **fix:** The agent may ask up to two targeted questions about onset, progression, severity, and associated symptoms before checking availability, using only the organization's returned department options.
+- **Files:** `mantra/agent.py`.
+
 ## 2026-09-09
 
 ### Broad Symptom Department Clarification

@@ -1,8 +1,11 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)
-> **Last Updated:** 2026-09-04
-> **Status:** DeepSeek Extreme Low-Latency (<1s) Optimization, Active maintenance, Doctor Availability Tool Integration, Org Processes & Stages MCP Tool, Inbound Post-Call Integration
+> **Last Updated:** 2026-09-10
+> **Status:** Active maintenance, Doctor Availability Tool Integration, Org Processes & Stages MCP Tool, Inbound Post-Call Integration, Inbound SIP Lifecycle
+
+- [x] **Inbound SIP Trunk and Dispatch Rule Lifecycle (2026-09-10):** Required an explicit provider with no primary default, validated it before inbound LiveKit provisioning, rolled back newly-created trunk/rule resources when provider forwarding failed, and made inbound trunk deletion remove associated LiveKit dispatch rules and `org_configs` mappings.
+- [x] **Organization-Agnostic Symptom Clarification (2026-09-10):** Broad medical symptoms no longer force a department selection from a single keyword or hardcoded specialty mapping; the agent can ask up to two targeted routing questions before checking availability.
 
 - [x] **LiveKit Caller Number For Client Recognition (2026-09-08):** Inbound recognition now resolves `org_id` from the dispatch DID, waits for the LiveKit SIP participant, extracts the actual caller number from SIP attributes or identity, and sends that number to `recognize_client`.
 - [x] **Client Recognition Lead Endpoint (2026-09-08):** MCP client recognition queries `GET /webhooks/mcp/lead?org_id={org_id}&phone={phone}` and accepts a client name or null result.

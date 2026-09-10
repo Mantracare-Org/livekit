@@ -875,8 +875,12 @@ class AssistantFunctions:
     @llm.function_tool(
         description=(
             "Use when the caller gives a broad medical symptom without a clear department or specialty, such as 'I have an eye problem'. "
-            "Fetch the organization's department list silently. Then reason over the caller's natural-language symptom and select exactly one department from that returned list. "
-            "Do not ask the caller to choose a department, do not mention department names aloud, and immediately call check_doctor_availability with the selected exact department."
+            "Fetch the organization's department list silently, but do not guess a department from one vague symptom. "
+            "Ask up to two concise clinical-routing questions before selecting a department. Ask about the symptom's onset, progression, severity, and any associated symptoms that distinguish the available specialties. "
+            "Use the caller's answers and the full conversation to select the best exact value from the returned list. "
+            "Do not ask the caller to choose a department or mention department names aloud. "
+            "Do not use fixed symptom-to-department mappings or assume that a symptom always belongs to a particular specialty. "
+            "Only call check_doctor_availability after the caller answers the necessary routing question(s)."
         )
     )
     async def clarify_medical_department(
@@ -909,8 +913,9 @@ class AssistantFunctions:
         return (
             f"INTERNAL ROUTING CONTEXT ONLY. Caller symptom: {symptom.strip()}. "
             f"Allowed departments: {json.dumps(departments)}. "
-            "Select the single best department using the full conversation context, then call check_doctor_availability with that exact value. "
-            "Do not say the department list, ask the caller to choose, or explain the routing."
+            "Do not select a department yet if the symptom could reasonably match more than one option. Ask up to two concise questions about onset, progression, severity, and associated symptoms, choosing the questions that best distinguish the returned options. "
+            "After the caller answers, select the single best exact department using the full conversation context and the clinical evidence provided by the caller. "
+            "Do not use a fixed symptom-to-department mapping, infer a department solely from one keyword, say the department list, ask the caller to choose a department, or explain the internal routing."
         )
 
     @llm.function_tool(
