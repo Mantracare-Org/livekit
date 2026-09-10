@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-10
+
+### Inbound SIP Trunk and Dispatch Rule Lifecycle
+
+- **fix:** Require an explicit inbound provider before creating LiveKit resources; there is no primary/default provider, and unsupported values cannot leave an inbound SIP trunk or dispatch rule behind.
+- **fix:** Roll back newly-created inbound trunks and dispatch rules when provider forwarding fails.
+- **fix:** Delete LiveKit dispatch rules associated with an inbound trunk before deleting the trunk, then remove the matching `org_configs` rows.
+- **Files:** [mantra/ui_server.py](../../mantra/ui_server.py).
+
 ## 2026-09-09
 
 ### Broad Symptom Department Clarification

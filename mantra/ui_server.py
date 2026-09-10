@@ -1620,21 +1620,84 @@ async def list_sip_inbound_trunks():
 @app.delete("/v1/sip/trunks/inbound/{trunk_id}")
 async def delete_sip_inbound_trunk(trunk_id: str):
     """
-    Delete a SIP Inbound Trunk by its ID.
+    Delete a SIP Inbound Trunk and all associated dispatch rules by ID.
     """
     if not trunk_id:
         return JSONResponse({"status_code": 400, "status": "error", "error": "Trunk ID is required"}, status_code=400)
-    
+
     try:
+        conn = await get_db_connection()
+        try:
+            db_rule_rows = await conn.fetch(
+                """
+                SELECT DISTINCT dispatch_rule_id
+                FROM org_configs
+                WHERE sip_trunk_id = $1 AND dispatch_rule_id IS NOT NULL
+                """,
+                trunk_id,
+            )
+        finally:
+            await conn.close()
+
+        rule_ids = {str(row["dispatch_rule_id"]) for row in db_rule_rows}
+        rule_response = await lk_client.sip.list_dispatch_rule(
+            api.ListSIPDispatchRuleRequest(trunk_ids=[trunk_id])
+        )
+        rule_ids.update(
+            item.sip_dispatch_rule_id
+            for item in rule_response.items
+            if item.sip_dispatch_rule_id
+        )
+
+        rule_errors = []
+        for rule_id in rule_ids:
+            try:
+                await lk_client.sip.delete_dispatch_rule(
+                    api.DeleteSIPDispatchRuleRequest(sip_dispatch_rule_id=rule_id)
+                )
+                logger.info(f"Deleted SIP dispatch rule {rule_id} for trunk {trunk_id}")
+            except Exception as e:
+                rule_errors.append(f"{rule_id}: {e}")
+
+        if rule_errors:
+            return JSONResponse(
+                {
+                    "status_code": 500,
+                    "status": "error",
+                    "error": "Failed to delete associated SIP dispatch rules",
+                    "dispatch_rule_errors": rule_errors,
+                },
+                status_code=500,
+            )
+
         await lk_client.sip.delete_trunk(
             api.DeleteSIPTrunkRequest(sip_trunk_id=trunk_id)
         )
         logger.info(f"Successfully deleted SIP Inbound Trunk: {trunk_id}")
+
+        conn = await get_db_connection()
+        try:
+            await conn.execute(
+                "DELETE FROM org_configs WHERE sip_trunk_id = $1",
+                trunk_id,
+            )
+        finally:
+            await conn.close()
+
+        if redis_client:
+            try:
+                await redis_client.delete(
+                    f"trunk:provider:{trunk_id}",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to clear trunk cache for {trunk_id}: {e}")
         
         return JSONResponse({
             "status_code": 200,
             "status": "success",
-            "message": f"SIP inbound trunk {trunk_id} deleted successfully"
+            "message": f"SIP inbound trunk {trunk_id} and associated dispatch rules deleted successfully",
+            "sip_trunk_id": trunk_id,
+            "deleted_dispatch_rule_ids": sorted(rule_ids),
         })
     except Exception as e:
         logger.error(f"Failed to delete SIP inbound trunk {trunk_id}: {e}")
@@ -2337,7 +2400,7 @@ async def setup_inbound_sip(request: Request):
     Payload:
     - number (required): Phone number in E.164 format (e.g., +918031321203)
     - org_id (required): Organization ID
-    - provider (optional): SIP provider - "zadarma", "twilio", or "plivo" (default: "zadarma")
+    - provider (required): SIP provider - "zadarma", "twilio", "plivo", or "voice_link"
     - name (optional): Trunk name (default: "{provider} {number}")
     - prompt (optional): Agent prompt
     - voice (optional): Agent voice
@@ -2390,7 +2453,15 @@ async def _setup_inbound_sip_process(payload: dict | None) -> JSONResponse:
     if not number:
         return JSONResponse({"status_code": 400, "status": "error", "error": "number is required"}, status_code=400)
 
-    provider = payload.get("provider").lower().strip()
+    raw_provider = payload.get("provider")
+    if not isinstance(raw_provider, str) or not raw_provider.strip():
+        return JSONResponse({
+            "status_code": 400,
+            "status": "error",
+            "error": "provider is required",
+        }, status_code=400)
+
+    provider = raw_provider.lower().strip()
     name = payload.get("name", f"{provider} {number}")
     prompt = payload.get("prompt", "You are a helpful voice assistant.")
     voice = payload.get("voice", "arushi")
@@ -2404,6 +2475,15 @@ async def _setup_inbound_sip_process(payload: dict | None) -> JSONResponse:
     transfer_numbers = payload.get("transfer_numbers", {})
     client_name = payload.get("client_name", "User")
     process_id = payload.get("process_id")
+
+    supported_providers = {"zadarma", "twilio", "plivo", "voice_link", "voicelink"}
+    if provider not in supported_providers:
+        return JSONResponse({
+            "status_code": 400,
+            "status": "error",
+            "error": "unsupported_provider",
+            "message": f"Unsupported provider: {provider}. Supported providers: zadarma, twilio, plivo, voice_link",
+        }, status_code=400)
     
     logger.info(f"Starting end-to-end SIP setup for number: {number}, org_id: {org_id}, provider: {provider}")
     
@@ -2412,6 +2492,8 @@ async def _setup_inbound_sip_process(payload: dict | None) -> JSONResponse:
         clean_number = number.replace("+", "")
         existing_trunk_id = None
         existing_rule_id = None
+        created_trunk = False
+        created_rule = False
         
         force_new = payload.get("force_new", False)
         
@@ -2487,6 +2569,7 @@ async def _setup_inbound_sip_process(payload: dict | None) -> JSONResponse:
                 )
             )
             trunk_id = trunk.sip_trunk_id
+            created_trunk = True
             logger.info(f"Created LiveKit SIP Inbound Trunk: {trunk_id}")
         
         # Store SIP trunk mapping in Redis for webhooks lookup
@@ -2539,6 +2622,7 @@ async def _setup_inbound_sip_process(payload: dict | None) -> JSONResponse:
             
             rule = await lk_client.sip.create_sip_dispatch_rule(rule_req)
             rule_id = rule.sip_dispatch_rule_id
+            created_rule = True
             logger.info(f"Created LiveKit SIP Dispatch Rule: {rule_id}")
         
         # 4. Generate SIP URI
@@ -2555,6 +2639,22 @@ async def _setup_inbound_sip_process(payload: dict | None) -> JSONResponse:
             # If provider fails (e.g., number not in provider account), return clear error.
             # org_configs has not been saved yet, so a retry will complete the setup
             # instead of being rejected as "already configured".
+            if created_rule:
+                try:
+                    await lk_client.sip.delete_dispatch_rule(
+                        api.DeleteSIPDispatchRuleRequest(sip_dispatch_rule_id=rule_id)
+                    )
+                    logger.info(f"Rolled back SIP dispatch rule {rule_id}")
+                except Exception as cleanup_error:
+                    logger.error(f"Failed to roll back SIP dispatch rule {rule_id}: {cleanup_error}")
+            if created_trunk:
+                try:
+                    await lk_client.sip.delete_trunk(
+                        api.DeleteSIPTrunkRequest(sip_trunk_id=trunk_id)
+                    )
+                    logger.info(f"Rolled back SIP inbound trunk {trunk_id}")
+                except Exception as cleanup_error:
+                    logger.error(f"Failed to roll back SIP inbound trunk {trunk_id}: {cleanup_error}")
             return JSONResponse({
                 "status_code": 400,
                 "status": "error",
