@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-07
+
+### Inbound Client Recognition Contract
+
+- **feat:** Added a bounded pre-greeting client recognition request for inbound calls in [mantra/agent.py](../../mantra/agent.py).
+- **contract:** The agent calls the `recognize_client` MCP tool, which sends `POST /api/v1/webhooks/client-recognition` with `org_id` and an E.164 `phone_number`.
+- **fallback:** A missing client name, non-200 response, timeout, or backend error leaves the caller anonymous and does not block the greeting.
+- **backend action:** MantraAssist backend should implement the endpoint and return `{"client_name": "..."}` or `{"client_name": null}`.
+
 ## 2026-09-10
 
 ### Inbound SIP Trunk and Dispatch Rule Lifecycle

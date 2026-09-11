@@ -308,6 +308,38 @@ async def resolve_inbound_context(phone_number: str) -> dict | None:
     return config
 
 
+async def recognize_inbound_client(phone_number: str, org_id: str | int) -> str | None:
+    """Resolve a known client's display name before an inbound greeting."""
+    if not phone_number or org_id in (None, ""):
+        return None
+
+    try:
+        from mantra.mcp_client import get_mcp_client
+
+        async with asyncio.timeout(3):
+            result = await get_mcp_client().call_tool(
+                "recognize_client",
+                {"org_id": org_id, "phone_number": format_e164_phone_number(phone_number)},
+            )
+
+        if isinstance(result, dict):
+            data = result
+        else:
+            data = json.loads(str(result))
+        if isinstance(data.get("data"), dict):
+            data = data["data"]
+        client_name = data.get("client_name") if isinstance(data, dict) else None
+        return str(client_name).strip() if client_name else None
+    except asyncio.TimeoutError:
+        logger.warning("Client recognition timed out for org_id=%s", org_id)
+    except json.JSONDecodeError:
+        logger.warning("Client recognition returned malformed MCP data for org_id=%s", org_id)
+    except Exception as error:
+        logger.warning("Client recognition via MCP failed for org_id=%s: %s", org_id, error)
+
+    return None
+
+
 async def resolve_outbound_context(org_id: str) -> dict | None:
     """
     Resolves outbound call KB context from PostgreSQL using org_id.
@@ -902,6 +934,17 @@ async def entrypoint(ctx: JobContext):
                         meta_payload.update(resolved_context)
                         if resolved_context.get("org_id"):
                             call_state["org_id"] = resolved_context.get("org_id")
+                            recognized_name = await recognize_inbound_client(
+                                phone_number=phone_number,
+                                org_id=resolved_context["org_id"],
+                            )
+                            if recognized_name:
+                                meta_payload["client_name"] = recognized_name
+                                logger.info(
+                                    "[DIAG] Client recognition succeeded — org_id=%s, client=%s",
+                                    resolved_context["org_id"],
+                                    recognized_name,
+                                )
                         logger.info(f"[DIAG] Inbound context merged: org_id={resolved_context.get('org_id')}")
                     else:
                         logger.warning(f"[DIAG] Inbound resolution failed for {phone_number} — using dispatch rule defaults, call WILL connect")
