@@ -2,6 +2,12 @@
 
 ## 2026-09-07
 
+### Appointment Cancellation and Rescheduling MCP Tool
+
+- **feat:** Added the provisional `manage_appointments` MCP tool with `list`, `availability`, `cancel`, and `reschedule` actions for recognized inbound callers.
+- **contract:** Added provisional backend route `/v1/webhooks/appointments`; the route is isolated in `MantraAssistBackendClient.manage_appointments()` for later replacement.
+- **event:** Inbound post-call payloads now preserve `APPOINTMENT_CANCELLED` or `APPOINTMENT_RESCHEDULED` in both `user_intent` and `call_intent`, with selected appointment details in `appointment_change`.
+
 ### Inbound Client Recognition Contract
 
 - **feat:** Added a bounded pre-greeting client recognition request for inbound calls in [mantra/agent.py](../../mantra/agent.py).

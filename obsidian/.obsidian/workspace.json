@@ -38,17 +38,14 @@
             "id": "210cf3ad49e340a6",
             "type": "leaf",
             "state": {
-              "type": "canvas",
+              "type": "markdown",
               "state": {
-                "file": "MCP Architecture.canvas",
-                "viewState": {
-                  "x": -401.6928791476845,
-                  "y": -615.5899848480851,
-                  "zoom": -0.6050883150856595
-                }
+                "file": "Knowledge/Coding Standards.md",
+                "mode": "source",
+                "source": false
               },
-              "icon": "lucide-layout-dashboard",
-              "title": "MCP Architecture"
+              "icon": "lucide-file",
+              "title": "Coding Standards"
             }
           }
         ],
@@ -72,9 +69,7 @@
               "type": "file-explorer",
               "state": {
                 "sortOrder": "alphabetical",
-                "autoReveal": false,
-                "showSearch": false,
-                "searchQuery": ""
+                "autoReveal": false
               },
               "icon": "lucide-folder-closed",
               "title": "Files"
@@ -215,6 +210,7 @@
   },
   "active": "210cf3ad49e340a6",
   "lastOpenFiles": [
+    "MCP Architecture.canvas",
     "Outbound Call Walkthrough.canvas",
     "Untitled.canvas",
     "Features/API Server.md",

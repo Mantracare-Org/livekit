@@ -1,6 +1,7 @@
 import logging
 import json
 import asyncio
+from typing import Any
 import os
 import datetime
 import aiohttp
@@ -308,8 +309,8 @@ async def resolve_inbound_context(phone_number: str) -> dict | None:
     return config
 
 
-async def recognize_inbound_client(phone_number: str, org_id: str | int) -> str | None:
-    """Resolve a known client's display name before an inbound greeting."""
+async def recognize_inbound_client(phone_number: str, org_id: str | int) -> dict[str, Any] | None:
+    """Resolve a known client's display name and user ID before an inbound greeting."""
     if not phone_number or org_id in (None, ""):
         return None
 
@@ -328,8 +329,18 @@ async def recognize_inbound_client(phone_number: str, org_id: str | int) -> str 
             data = json.loads(str(result))
         if isinstance(data.get("data"), dict):
             data = data["data"]
-        client_name = data.get("client_name") if isinstance(data, dict) else None
-        return str(client_name).strip() if client_name else None
+        if not isinstance(data, dict):
+            return None
+
+        client_name = data.get("client_name")
+        user_id = data.get("user_id")
+        if not client_name and user_id in (None, ""):
+            return None
+
+        return {
+            "client_name": str(client_name).strip() if client_name else None,
+            "user_id": user_id,
+        }
     except asyncio.TimeoutError:
         logger.warning("Client recognition timed out for org_id=%s", org_id)
     except json.JSONDecodeError:
@@ -810,6 +821,68 @@ class AssistantFunctions:
                     pass
         return result
 
+    @llm.function_tool(
+        description=(
+            "Manage appointments for a recognized inbound caller. Use action=list to retrieve appointments, "
+            "action=availability to check rescheduling slots, action=cancel to cancel an appointment, or "
+            "action=reschedule to submit a new date and time. Never use this tool for an anonymous caller."
+        )
+    )
+    async def manage_appointments(
+        self,
+        action: Annotated[str, "One of: list, availability, cancel, reschedule"],
+        appointment_id: Annotated[Optional[str], "Selected appointment ID"] = None,
+        appointment_title: Annotated[Optional[str], "Selected appointment title"] = None,
+        requested_date: Annotated[Optional[str], "Date for rescheduling availability in YYYY-MM-DD format"] = None,
+        new_datetime: Annotated[Optional[str], "New appointment date/time in UTC ISO-8601 format"] = None,
+    ) -> str:
+        """Manage appointments through MCP and retain post-call change details."""
+        if not self.call_state or not self.call_state.get("is_inbound"):
+            return "Appointment changes are available only for inbound calls."
+
+        org_id = self.call_state.get("org_id")
+        user_id = self.call_state.get("user_id")
+        if org_id in (None, "") or user_id in (None, ""):
+            return "I could not verify the caller's account, so I cannot access appointments."
+
+        normalized_action = str(action).strip().lower()
+        if normalized_action not in {"list", "availability", "cancel", "reschedule"}:
+            return "Unsupported appointment action."
+        if normalized_action in {"cancel", "reschedule"} and not appointment_id:
+            return "Please identify the appointment before changing it."
+        if normalized_action == "reschedule" and not new_datetime:
+            return "Please provide the new appointment date and time."
+
+        from mantra.mcp_client import get_mcp_client
+
+        result = await get_mcp_client().call_tool(
+            "manage_appointments",
+            {
+                "action": normalized_action,
+                "org_id": org_id,
+                "user_id": user_id,
+                "appointment_id": appointment_id,
+                "appointment_title": appointment_title,
+                "requested_date": requested_date,
+                "new_datetime": new_datetime,
+            },
+        )
+
+        if normalized_action in {"cancel", "reschedule"}:
+            self.call_state["appointment_intent"] = (
+                "APPOINTMENT_CANCELLED"
+                if normalized_action == "cancel"
+                else "APPOINTMENT_RESCHEDULED"
+            )
+            self.call_state["appointment_change"] = {
+                "appointment_id": appointment_id,
+                "appointment_title": appointment_title,
+                "preferred_datetime": normalize_datetime(new_datetime) if new_datetime else None,
+                "user_id": user_id,
+            }
+
+        return result
+
     # Removed query_knowledge_base tool as per user request to inject KB directly into the main job
 
     # @llm.ai_callable(description="Transfer the call to a human assistant when requested or if the issue is too complex.")
@@ -869,6 +942,8 @@ async def entrypoint(ctx: JobContext):
         "farewell_triggered": False,
         "original_instructions": None,
         "is_inbound": False,
+        "appointment_intent": None,
+        "appointment_change": None,
     }
 
     tos_task_id = None
@@ -934,16 +1009,21 @@ async def entrypoint(ctx: JobContext):
                         meta_payload.update(resolved_context)
                         if resolved_context.get("org_id"):
                             call_state["org_id"] = resolved_context.get("org_id")
-                            recognized_name = await recognize_inbound_client(
+                            recognized_client = await recognize_inbound_client(
                                 phone_number=phone_number,
                                 org_id=resolved_context["org_id"],
                             )
-                            if recognized_name:
-                                meta_payload["client_name"] = recognized_name
+                            if recognized_client:
+                                if recognized_client.get("client_name"):
+                                    meta_payload["client_name"] = recognized_client["client_name"]
+                                if recognized_client.get("user_id") not in (None, ""):
+                                    meta_payload["user_id"] = recognized_client["user_id"]
+                                    call_state["user_id"] = recognized_client["user_id"]
                                 logger.info(
-                                    "[DIAG] Client recognition succeeded — org_id=%s, client=%s",
+                                    "[DIAG] Client recognition succeeded — org_id=%s, client=%s, user_id=%s",
                                     resolved_context["org_id"],
-                                    recognized_name,
+                                    recognized_client.get("client_name"),
+                                    recognized_client.get("user_id"),
                                 )
                         logger.info(f"[DIAG] Inbound context merged: org_id={resolved_context.get('org_id')}")
                     else:
@@ -2304,7 +2384,11 @@ Follow these specific instructions:
                                                     pass
                                 if items:
                                     kb_process_stage_data = items
-                                    logger.info(f"[INBOUND-MCP] Loaded {len(kb_process_stage_data)} processes via MCP for org_id={inbound_org_id}:\n{json.dumps(kb_process_stage_data, indent=2)}")
+                                    logger.info(
+                                        "[INBOUND-MCP] Loaded %d processes via MCP for org_id=%s",
+                                        len(kb_process_stage_data),
+                                        inbound_org_id,
+                                    )
                         except Exception as e:
                             logger.warning(f"Failed to fetch org processes via MCP for inbound call: {e}")
 
@@ -2526,6 +2610,11 @@ Follow these specific instructions:
                         },
                     }
                 }
+                if call_state.get("appointment_intent"):
+                    webhook_payload["data"]["user_intent"] = call_state["appointment_intent"]
+                    webhook_payload["data"]["call_intent"] = call_state["appointment_intent"]
+                if call_state.get("appointment_change"):
+                    webhook_payload["data"]["appointment_change"] = call_state["appointment_change"]
                 if appointment_metadata:
                     webhook_payload["data"]["appointment_metadata"] = appointment_metadata
             else:
