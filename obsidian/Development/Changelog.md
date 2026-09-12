@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-09-12
+
+### Agent STT Phone Fallback Cleanup
+
+- **fix:** Removed undefined legacy `call_data` and `call_payload` fallbacks from entrypoint phone-number resolution; finalize-time payload handling remains unchanged.
+- **Files:** `mantra/agent.py`.
+
 ## 2026-09-10
 
 ### Inbound SIP Trunk and Dispatch Rule Lifecycle

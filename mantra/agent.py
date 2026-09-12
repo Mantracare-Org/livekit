@@ -1604,8 +1604,6 @@ Follow these specific instructions:
         or (payload.get("client_phone") if "payload" in locals() and isinstance(payload, dict) else None)
         or (payload.get("caller_phone") if "payload" in locals() and isinstance(payload, dict) else None)
         or (payload.get("to_phone") if "payload" in locals() and isinstance(payload, dict) else None)
-        or (call_data.get("phone_number") if "call_data" in locals() and isinstance(call_data, dict) else None)
-        or (call_payload.get("client_phone_number") if "call_payload" in locals() and isinstance(call_payload, dict) else None)
         or (getattr(participant, "identity", None) if "participant" in locals() and participant else None)
     )
     country_val = (
