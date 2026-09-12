@@ -4,7 +4,7 @@
 
 - UI Server running: `http://localhost:8081`
 - Agent running separately (for end-to-end call test)
-- Plivo SIP trunk credentials (Auth ID + Auth Token + Phone Number)
+- Plivo SIP trunk credentials (Auth ID along with Auth Token and Phone Number)
 
 ---
 
