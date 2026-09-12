@@ -10,7 +10,7 @@
 
 ## Quick Test: Call Yourself (No Plivo Setup Needed)
 
-The fastest way to test inbound behavior — the system calls your phone and the agent treats it as an inbound call.
+The fastest way to test the inbound behavior — the system calls your phone and the agent treats it as an inbound call.
 
 ```bash
 curl -X POST http://localhost:8081/v1/test/inbound-call \
