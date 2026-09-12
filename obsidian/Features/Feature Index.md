@@ -3,7 +3,7 @@
 | Feature | Module | Description |
 |---------|--------|-------------|
 | Voice Agent | `mantra/agent.py` | Real-time STT→LLM→TTS voice pipeline with KB search and end_call tools |
-| API Server | `mantra/ui_server.py` | FastAPI HTTP server: webhooks, SIP trunks, per-provider capacity gating, KB ingestion, dashboard |
+| API Server | `mantra/ui_server.py` | FastAPI HTTP server: webhooks, SIP trunks, per-trunk capacity gating, KB ingestion, dashboard |
 | Dispatcher | `mantra/dispatcher.py` | Redis queue consumer for legacy call dispatch |
 | MCP Server | `mcp/server.py` | 13 PostgreSQL tools: patients, doctors, hospitals, appointments, call logs |
 | Dashboard | `static/dashboard.html` + `dashboard.js` | OpsCraft dark theme operations dashboard with SSE |

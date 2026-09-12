@@ -1,9 +1,9 @@
 # Mantra Voice Agent — Knowledge Base
 
-> **Version:** 0.4.0  
+> **Version:** 0.5.0  
 > **Package:** `livekit-agent`  
 > **Repository:** `git@github.com:FardeenSK004/livekit.git` (fork of Mantracare-Org/livekit)  
-> **Last Updated:** 2026-08-03
+> **Last Updated:** 2026-09-10
 
 ---
 
@@ -38,21 +38,28 @@ Telephony Provider → Webhook → FastAPI → Agent Dispatch → LiveKit Cloud 
 
 ## Key Stats
 
-| Metric             | Value                                  |
-| ------------------ | -------------------------------------- |
-| Python modules     | 7 (`mantra/`)                          |
-| Frontend files     | 5 (`static/`)                          |
-| MCP server         | 1 (`mcp/server.py`)                    |
-| Total source lines | ~8,800                                 |
-| Core agent file    | `mantra/agent.py` — 1,629 lines        |
-| API server file    | `mantra/ui_server.py` — 3,613 lines    |
-| MCP server file    | `mcp/server.py` — 1,073 lines          |
-| KB module          | `mantra/knowledge_base.py` — 561 lines |
+| Metric             | Value                                     |
+| ------------------ | ----------------------------------------- |
+| Python modules     | 14 (`mantra/` incl. `call_duration`, `positive_intent`, `mcp_client`) |
+| Frontend files     | 9 (`static/` incl. `redis.html`, `network.html`, `kb_chat.html`) |
+| MCP server         | 1 (`mcp/server.py`, legacy local) + remote `livekit-mcp` (SSE, OAuth) |
+| Total source lines | ~12,500                                   |
+| Core agent file    | `mantra/agent.py` — 3,007 lines           |
+| API server file    | `mantra/ui_server.py` — 4,489 lines       |
+| MCP server file    | `mcp/server.py` — 1,073 lines             |
+| KB module          | `mantra/knowledge_base.py` — 1,120 lines  |
 
 ---
 
 ## Recent Changelog
 
+- **2026-09-10:** Inbound SIP trunk lifecycle — explicit `provider` required (no default), rollback of newly-created trunk/dispatch-rule on provider-forwarding failure, cascading delete (dispatch rules → trunk → `org_configs` → Redis `trunk:provider`)
+- **2026-09-09:** `clarify_medical_department` + availability MCP routing (KB excluded for scheduling, failed department discovery no longer blocks MCP), VAD barge-in (`vad` mode, 0.15s), inbound client recognition metadata (`ai_summaries` + `custom_fields`)
+- **2026-09-08:** Inbound client recognition via LiveKit SIP participant caller number → `recognize_client` (`GET /webhooks/mcp/lead`); `/api/*` → `/v1/*` route prefix migration
+- **2026-09-04/05:** Hinglish telesales prompt, `en-IN`/`hi`/Deepgram keyterm memory (per-call, 80 terms), endpointing 100ms, code-switching stability
+- **2026-09-03:** Live process/stage context injection into agent instructions; outbound call extension to 5 min on positive intent
+- **2026-09-02:** MCP Cloudflare WAF bypass (`NO_PROXY` + browser UA headers); AuthMiddleware public paths (`/sitemap.xml`, `/robots.txt`)
+- **2026-09-01:** MCP SSE transport fix + `check_doctor_availability` re-enable
 - **2026-08-03:** Trunk-based capacity gating (Plivo=2, Zadarma=3, VoiceLink=5, Twilio=3 per trunk), zombie room cleanup, DB migration for caller/called/trunk fields, kb_collections process/stage descriptions
 - **2026-08-02:** Inbound webhook `org_id`/`process_id`/`new_stage_id` string→int coercion; language matching + STT `multi`
 - **2026-08-01:** Per-provider call capacity gating (Plivo=2, Zadarma=3, VoiceLink=5, Twilio=2), Plivo Zentrunk trunk reuse & retry self-healing, SIP failure → 503 response, health gate per-provider rejection logging, Voicelink SIP inbound/outbound integration

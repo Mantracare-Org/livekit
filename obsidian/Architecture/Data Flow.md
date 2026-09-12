@@ -4,7 +4,7 @@
 
 ```
 Step 1: TRIGGER
-  External system → POST /api/v1/webhooks/telephony
+  External system → POST /v1/webhooks/telephony
   Payload: { client_phone, prompt, client_name, call_id, lead_id, trunk_id, ... }
 
 Step 2: WEBHOOK HANDLER (ui_server.py)

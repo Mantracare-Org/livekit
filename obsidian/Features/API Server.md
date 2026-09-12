@@ -1,6 +1,6 @@
 # API Server
 
-**File:** `mantra/ui_server.py` (3,613 lines)
+**File:** `mantra/ui_server.py` (4,489 lines)
 
 ## Overview
 
@@ -14,8 +14,8 @@ FastAPI HTTP server that handles:
 - Real-time SSE streams
 - Knowledge base ingestion (file, text, URL, chat, document delete)
 - Organization config CRUD
-- Per-provider capacity gating middleware
-- Health checks (dependencies + per-provider capacity)
+- Per-trunk capacity gating middleware
+- Health checks (dependencies + per-trunk capacity)
 
 ## Architecture
 
@@ -41,7 +41,7 @@ Five provider-specific outbound endpoints, all sharing `_create_sip_outbound_tru
 - `/voice_link` — Supports on-the-fly trunk provisioning with the Voicelink proxied client
 
 Inbound trunk endpoints: CRUD + Voicelink variant with auto dispatch rule creation.
-End-to-end SIP inbound setup: `/api/v1/sip/inbound/setup` handles trunk + dispatch rule + provider forwarding.
+End-to-end SIP inbound setup: `/v1/sip/inbound/setup` handles trunk + dispatch rule + provider forwarding.
 
 ## Webhook Flow
 
@@ -55,8 +55,8 @@ webhook_handler() → create_dispatch() + await trigger_sip()
 
 ## Capacity Gating
 
-Per-provider concurrency limits enforced via middleware on POST dispatch paths:
-- Plivo: 2, Zadarma: 3, VoiceLink: 5, Twilio: 2, Global: 5
-- Provider detected from trunk → tracked via room name prefix (`call_{provider}_{call_id}`)
+Per-trunk concurrency limits enforced via middleware on POST dispatch paths:
+- Plivo trunks: 2, Zadarma: 3, VoiceLink: 5, Twilio: 3, Global: 5
+- Trunk tracked via room name (`call_{trunk_id}_{call_id}`) + Redis `trunk:provider:{id}` cache
 - Blocked calls logged as `Busy` to `call_logs` with reason `provider_at_concurrency_limit`
-- `/health` returns `false` when any provider or global pool is saturated
+- `/health` returns `false` when any trunk or global pool is saturated

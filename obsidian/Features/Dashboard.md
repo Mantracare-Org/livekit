@@ -12,7 +12,7 @@ Operations dashboard for monitoring call activity in real time. OpsCraft dark th
 - Today's calls (total, completed, busy, no answer, error, incomplete)
 - Answer rate percentage
 - Average call duration
-- Refreshes every 30 seconds via `GET /api/v1/dashboard/metrics`
+- Refreshes every 30 seconds via `GET /v1/dashboard/metrics`
 
 ### Queue Gauge
 - Pending call count from Redis SSE stream
@@ -22,12 +22,12 @@ Operations dashboard for monitoring call activity in real time. OpsCraft dark th
 ### Active Calls
 - Real-time card display of active calls via SSE (2s updates)
 - Each card shows: call_id, room_name, status
-- Data from `GET /api/v1/dashboard/active-calls` + SSE
+- Data from `GET /v1/dashboard/active-calls` + SSE
 
 ### Call History
 - Paginated table of recent calls
 - Columns: call_id, status, client, phone, duration, recording, summary, purpose
-- Data from `GET /api/v1/dashboard/calls?limit=20&offset=0`
+- Data from `GET /v1/dashboard/calls?limit=20&offset=0`
 
 ### Authentication
 - JWT login page (`login.html`)
@@ -37,7 +37,7 @@ Operations dashboard for monitoring call activity in real time. OpsCraft dark th
 
 ## SSE Stream
 
-Endpoint: `GET /api/v1/dashboard/stream` (Server-Sent Events)
+Endpoint: `GET /v1/dashboard/stream` (Server-Sent Events)
 - 2s interval updates
 - Payload: `{ pending_calls, active_calls, max_concurrency, active_call_details, timestamp }`
 - Reads from Redis: `queue:pending` (ZCARD), `calls:active` (HGETALL), `calls:status:{id}` (GET)

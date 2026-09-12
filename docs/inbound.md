@@ -66,15 +66,15 @@ Caller dials +911234567890
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
-| `POST` | `/api/v1/sip/trunks/inbound` | Create inbound trunk |
-| `PATCH` | `/api/v1/sip/trunks/inbound/{trunk_id}` | Partial-update inbound trunk fields |
-| `GET` | `/api/v1/sip/trunks/inbound` | List all inbound trunks |
-| `DELETE` | `/api/v1/sip/trunks/inbound/{trunk_id}` | Delete inbound trunk |
+| `POST` | `/v1/sip/trunks/inbound` | Create inbound trunk |
+| `PATCH` | `/v1/sip/trunks/inbound/{trunk_id}` | Partial-update inbound trunk fields |
+| `GET` | `/v1/sip/trunks/inbound` | List all inbound trunks |
+| `DELETE` | `/v1/sip/trunks/inbound/{trunk_id}` | Delete inbound trunk |
 
 #### Create Inbound Trunk
 
 ```json
-POST /api/v1/sip/trunks/inbound
+POST /v1/sip/trunks/inbound
 {
   "name": "plivo-inbound-trunk",
   "numbers": ["+911234567890"],
@@ -115,7 +115,7 @@ POST /api/v1/sip/trunks/inbound
 #### Update Inbound Trunk (PATCH)
 
 ```json
-PATCH /api/v1/sip/trunks/inbound/ST_9crXjawUyeJp
+PATCH /v1/sip/trunks/inbound/ST_9crXjawUyeJp
 {
   "allowed_addresses": ["203.0.113.0/24"],
   "name": "updated-trunk-name"
@@ -142,15 +142,15 @@ Only provided fields are updated. Supported: `name`, `numbers`, `allowed_address
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
-| `POST` | `/api/v1/sip/dispatch-rules` | Create dispatch rule with auto-agent |
-| `PATCH` | `/api/v1/sip/dispatch-rules/{rule_id}` | Partial-update dispatch rule fields |
-| `GET` | `/api/v1/sip/dispatch-rules` | List all dispatch rules |
-| `DELETE` | `/api/v1/sip/dispatch-rules/{rule_id}` | Delete dispatch rule |
+| `POST` | `/v1/sip/dispatch-rules` | Create dispatch rule with auto-agent |
+| `PATCH` | `/v1/sip/dispatch-rules/{rule_id}` | Partial-update dispatch rule fields |
+| `GET` | `/v1/sip/dispatch-rules` | List all dispatch rules |
+| `DELETE` | `/v1/sip/dispatch-rules/{rule_id}` | Delete dispatch rule |
 
 #### Create Dispatch Rule
 
 ```json
-POST /api/v1/sip/dispatch-rules
+POST /v1/sip/dispatch-rules
 {
   "name": "plivo-inbound-rule",
   "trunk_id": "ST_9crXjawUyeJp",
@@ -203,7 +203,7 @@ POST /api/v1/sip/dispatch-rules
 #### Update Dispatch Rule (PATCH)
 
 ```json
-PATCH /api/v1/sip/dispatch-rules/SR_xxxxx
+PATCH /v1/sip/dispatch-rules/SR_xxxxx
 {
   "name": "updated-rule-name",
   "attributes": {
@@ -220,12 +220,12 @@ Supported fields: `name`, `metadata`, `attributes`, `trunk_ids`, `rule` (room_pr
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
-| `POST` | `/api/v1/test/inbound-call` | Simulate inbound by calling your phone |
+| `POST` | `/v1/test/inbound-call` | Simulate inbound by calling your phone |
 
 #### Call Yourself (Quick Test)
 
 ```bash
-curl -X POST http://localhost:8081/api/v1/test/inbound-call \
+curl -X POST http://localhost:8081/v1/test/inbound-call \
   -H "Content-Type: application/json" \
   -d '{
     "phone": "1234567890",
@@ -295,8 +295,8 @@ if ivr_block:
 
 ## Setup Checklist
 
-- [ ] **Create inbound trunk** — `POST /api/v1/sip/trunks/inbound`
-- [ ] **Create dispatch rule** — `POST /api/v1/sip/dispatch-rules` with the trunk ID
+- [ ] **Create inbound trunk** — `POST /v1/sip/trunks/inbound`
+- [ ] **Create dispatch rule** — `POST /v1/sip/dispatch-rules` with the trunk ID
 - [ ] **Configure provider** — Set Plivo/Twilio number's SIP endpoint to `sip:ST_xxx@<livekit-domain>`
 - [ ] **Restart agent** if it was already running (to pick up code changes)
 - [ ] **Test** by calling the number

@@ -13,17 +13,17 @@ No automated test suite exists. All testing is manual.
 - [ ] Bilingual: Verify English → Hindi switching
 - [ ] end_call: Verify LLM calls end_call and disconnects room
 - [ ] search_knowledge_base: Verify KB search returns relevant content
-- [ ] Inactivity monitor: Verify 5s prompt → 10s disconnect
+- [ ] Inactivity monitor: Verify 15s nudge → 30s disconnect
 - [ ] Farewell safety net: Verify goodbye detection → force disconnect
-- [ ] Call limiter: Verify 2m30s farewell → 3m hard kill
+- [ ] Call limiter: Verify 150s farewell → 180s hard kill (outbound positive-intent → 270s/300s)
 
 ### Webhook Testing
 - [ ] Valid payload: Verify agent dispatch + SIP call initiation
 - [ ] Missing phone: Verify appropriate error response
 - [ ] Invalid trunk: Verify error handling
 - [ ] SIP failure: Verify 503 response and room cleanup
-- [ ] Duplicate webhook: Verify repeated `call_id` is processed immediately (no dedup lock rejection)
-- [ ] Per-provider capacity: Verify 503 when Plivo/Zadarma/VoiceLink/Twilio at limit
+- [ ] Duplicate webhook: Verify repeated `call_id` within 30s is rejected as `ignored` (Redis `lock:call:{call_id}`), cleared on finalize/failure
+- [ ] Per-trunk capacity: Verify 503 when the trunk is at limit
 - [ ] Global capacity: Verify 503 when total calls = MAX_CONCURRENCY
 
 ### SIP Trunk Testing
@@ -31,7 +31,7 @@ No automated test suite exists. All testing is manual.
 - [ ] Verify trunk appears in LiveKit dashboard
 - [ ] List trunks returns correct data
 - [ ] Delete trunk removes configuration
-- [ ] Create inbound trunk + dispatch rule via `/api/v1/sip/inbound/setup`
+- [ ] Create inbound trunk + dispatch rule via `/v1/sip/inbound/setup`
 
 ### Dashboard Testing
 - [ ] Login with valid credentials → JWT token

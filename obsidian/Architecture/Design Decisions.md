@@ -7,9 +7,9 @@
 | 3 | **In-memory audio recording** | Avoids disk I/O in container; mixed via numpy → pydub → MP3 in-memory | 2025 |
 | 4 | **HMAC-signed webhooks** | Ensures authenticity of post-call data to MantraAssist backend | 2025 |
 | 5 | **LiveKit native sonic-3 TTS** | Removed Cartesia dependency entirely — TTS runs natively via LiveKit Inference, zero external API keys needed | 2026-07 |
-| 6 | **Multilingual STT + language matching** | Deepgram Nova-3 `language=multi` + prompt rules so agent mirrors caller language each turn (avoids sticking in Hindi after one Hindi filler) | 2026-08 |
-| 7 | **Per-provider capacity gating** | Plivo=2, Zadarma=3, VoiceLink=5, Twilio=2 with global cap=5; provider embedded in room name for zero-Redis tracking | 2026-08 |
-| 8 | **3-minute call limiter** | Prevents runaway costs; soft farewell at 2m30s, hard kill at 3m | 2025 |
+| 6 | **Multilingual STT + language matching** | Deepgram Nova-3 dynamic locale (`en-IN`/`en-US`/`hi`/`multi`) + per-call keyterm memory + Hinglish prompt directives so agent mirrors caller language each turn | 2026-09 |
+| 7 | **Per-trunk capacity gating** | Plivo=2, Zadarma=3, VoiceLink=5, Twilio=3 with global cap=5; trunk embedded in room name (`call_{trunk_id}_{call_id}`); explicit provider required on inbound setup with rollback + cascading delete | 2026-08/09 |
+| 8 | **Call limiter + outbound extension** | Base 150s farewell / 180s hard kill; outbound positive-intent extends to 270s / 300s (`call_duration.py` + `positive_intent.py`) | 2026-09 |
 | 9 | **Farewell safety net** | LLMs sometimes say goodbye without calling `end_call`; async monitor catches this | 2025 |
 | 10 | **SIP error status in Redis** | UI server detects SIP failures and writes status; agent reads it for accurate call outcome | 2025 |
 | 11 | **Automatic crash emails with memes** | Admin recipients get humorous memes with crash alerts (low-priority but morale-boosting) | 2025 |

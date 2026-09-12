@@ -12,7 +12,7 @@
 6. **LLM analysis** — `analyze_call()` generates summary, process_id, stage transition, sentiment, appointment data (with IST timezone conversion). Uses KB-tracked `process_stage_data` for process-aware analysis. Runs for `Completed` status (all inbound connected calls, outbound only when the user spoke); skipped for Busy/No Answer/Failed. Engine resolves as `target_llm = post_call_llm or llm_engine`, so the dedicated post-call model (DeepSeek Pro) is preferred, falling back to the live-call engine or `gpt-4o-mini` when no key is set. `ai_summary` is guaranteed non-empty via a transcript-snippet fallback (else `"Call completed."`).
 7. **Build webhook payload** — Direction-aware: `CALL_DATA_INBOUND_UPDATE` (inbound) or `CALL_DATA_UPDATE` (outbound), with **`CALL_RETRY`** override when `call_status` is `No Answer`, `Busy`, `Incomplete`, or `Failed` (same payload, different event). Inbound numeric fields (`org_id`, `process_id`, `new_stage_id`) are coerced string→int via `_as_int()`; missing values stay `null`.
 8. **Save to PostgreSQL** — `save_call_log_to_db()` upsert
-9. **Send to backend** — HMAC-signed POST to MantraAssist `/api/v1/webhooks/n8n` with 3 retries
+9. **Send to backend** — HMAC-signed POST to MantraAssist `/v1/webhooks/n8n` with 3 retries
 10. **TOS telemetry** — Post-call summary with call_status, duration, S3 status, transcript flag
 
 ## SessionRecorder (`utils.py`)

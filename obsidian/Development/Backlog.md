@@ -4,11 +4,11 @@
 
 | Item | Priority | Notes |
 |------|----------|-------|
-| `agent.py` is 1,629 lines, monolithic | High | Extract tools, prompts, config |
+| `agent.py` is 3,007 lines, monolithic | High | Extract tools, prompts, config |
 | No automated tests | High | Regression risk on refactors |
 | Dispatcher uses 0.5s polling | Medium | Replace with Redis Pub/Sub |
 | Post-call webhook reliability | Medium | No retry after 3 attempts |
-| MCP server broken (upstream API change) | Blocker | `CstdioServerParameters` attribute missing |
+| MCP SSE transport fix shipped 2026-09-01 | Done | Was stdio-only; `check_doctor_availability` re-enabled |
 | S3 bucket not configured | High | Recordings silently dropped |
 | Handoff TTS glitch | High | Race condition with tool return |
 

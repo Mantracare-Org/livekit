@@ -2,6 +2,69 @@
 
 ## 2026-09-10
 
+### Organization-Agnostic Symptom Clarification
+
+- **fix:** Broad symptom routing no longer forces a department guess from one keyword or uses hardcoded specialty mappings.
+- **fix:** The agent may ask up to two targeted questions about onset, progression, severity, and associated symptoms before checking availability, using only the organization's returned department options.
+- **Files:** `mantra/agent.py`.
+
+## 2026-09-09
+
+### Appointment Availability MCP Routing
+
+- **fix:** Appointment and doctor-schedule questions are now explicitly excluded from upfront KB answers and the KB tool contract.
+- **fix:** A failed optional department discovery request no longer blocks the real-time `check_doctor_availability` MCP call; department validation remains active when the organization returns a department list.
+- **Files:** `mantra/agent.py`.
+
+### Broad Symptom Department Clarification
+
+- **feat:** Added `clarify_medical_department` to fetch organization-specific department options through MCP, retain them in per-call state, and force one targeted follow-up before doctor availability is checked.
+- **fix:** Added a deterministic availability gate that fetches `get_org_departments` when the model skips clarification and rejects invented departments such as `Ophthalmology` unless they exactly match the organization's department list.
+- **fix:** Kept department names internal, supplied the MA department list as model context for LLM-based routing, preloaded options after org resolution, and rejected departments outside the returned list.
+- **Files:** `mantra/agent.py`, `livekit-mcp/src/livekit_mcp/tools/department_list.py`, `livekit-mcp/src/livekit_mcp/clients/backend_client.py`.
+
+## 2026-09-09
+
+### Inbound Client Recognition Metadata
+
+- **feat:** Expanded the `recognize_client` MCP response beyond `client_name` to include `client_metadata.ai_summaries` and `client_metadata.custom_fields` from the MantraAssist lead endpoint.
+- **agent:** Injects recognized caller summaries and custom fields into the live inbound call context while preserving anonymous-caller fallback when no client is found.
+
+### Fast Voice Barge-In
+
+- **fix:** Switched agent interruption handling from adaptive ML detection to LiveKit VAD mode so caller speech stops agent TTS promptly instead of waiting for the full response.
+- **tuning:** Reduced interruption speech threshold to `0.15s`, enabled buffered-audio discard during uninterruptible speech, and tightened Silero VAD speech/silence detection.
+
+## 2026-09-08
+
+### Client Recognition Response Handling
+
+- **fix:** Inbound MCP recognition now accepts direct or nested client/lead names (`client_name`, `name`, or `full_name`) and treats `null`, missing, or empty responses as anonymous callers without blocking the call.
+
+### Docs: Remove `/api` Prefix From All Endpoints
+
+- **docs:** Replaced `/api/` with `/` across 26 files (198 occurrences) to match the `Endpoints Updated` commit (`59c3356`) which moved all routes from `/api/v1/*` to `/v1/*`, `/api/oauth/token` to `/oauth/token`, `/api/tools/call` to `/tools/call`, and `/api/telemetry/*` to `/telemetry/*`.
+- **scope:** `obsidian/` vault docs + canvases, `docs/`, `README.md`, `dev.sh`, `docs/test-payloads.http`. External `https://api.*` provider URLs left untouched.
+
+### LiveKit Caller Number For Client Recognition
+
+- **fix:** Inbound client recognition now resolves the organization from the dispatch DID, then waits for the remote LiveKit SIP participant before calling `recognize_client`.
+- **fix:** The MCP payload now uses the caller number from LiveKit SIP attributes or participant identity, so client recognition receives the caller's number rather than the organization's receiving number.
+- **diagnostics:** Added logs distinguishing the routing phone from the LiveKit caller phone.
+- **endpoint:** The MCP tool queries `GET /webhooks/mcp/lead?org_id={org_id}&phone={phone}` and accepts a client name or a null result.
+- **response:** Backend `name` values are normalized to `client_name` before returning through MCP.
+
+## 2026-09-07
+
+### Inbound Client Recognition Contract
+
+- **feat:** Added a bounded pre-greeting client recognition request for inbound calls in [mantra/agent.py](../../mantra/agent.py).
+- **contract:** The agent calls the `recognize_client` MCP tool, which sends `GET /webhooks/mcp/lead?org_id={org_id}&phone={phone}` with the E.164 caller number.
+- **fallback:** A missing client name, non-200 response, timeout, or backend error leaves the caller anonymous and does not block the greeting.
+- **backend action:** MantraAssist backend should implement the endpoint and return `{"client_name": "..."}` or `{"client_name": null}`.
+
+## 2026-09-10
+
 ### Inbound SIP Trunk and Dispatch Rule Lifecycle
 
 - **fix:** Require an explicit inbound provider before creating LiveKit resources; there is no primary/default provider, and unsupported values cannot leave an inbound SIP trunk or dispatch rule behind.
@@ -35,12 +98,11 @@
 - **feat:** Updated `initial_instructions` in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py) with full natural Hinglish guidelines tailored for Indian female telesales executive personas (short 1-2 sentence turns, active listening, context retention, search directives, handoff rules, flat prosody, and brand single-word pronunciation guards).
 - **fix:** Updated `LanguageManager.get_prompt_directive()` in [mantra/language_manager.py](file:///home/fardeen/lkt/mantra/language_manager.py) to return Hinglish prompt directives matching `<!-- LANGUAGE_DIRECTIVE_START --> ... <!-- LANGUAGE_DIRECTIVE_END -->`. Prevents dynamic `llm_node` language updates from overwriting Hinglish instructions with pure Devanagari Hindi or pure Latin English.
 
-
 ### Deepgram STT Indian English (`en-IN`) Locale Resolution & Devanagari Script Fix
 
 - **fix:** Updated `resolve_stt_language()` in [mantra/language_manager.py](file:///home/fardeen/lkt/mantra/language_manager.py) so Indian calls (country code `IN`, `+91` prefix, 10-digit Indian numbers starting `6-9`, landlines starting `0`) strictly use Deepgram Nova-3's **`en-IN`** locale, while US and international calls retain **`en-US`**.
-- **fix:** Fixed `NativeLanguageDetector.detect()` in [mantra/language_manager.py](file:///home/fardeen/lkt/mantra/language_manager.py): any utterance containing Devanagari script (e.g., *"Hello आप"*, *"नहीं मेरा नाम व्यात्या sir."*) strictly evaluates to Hindi (`hi`), preventing false language switches to English (`hi -> en`).
-- **fix:** Updated initial language initialization in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py) to automatically inspect `initial_instructions` for Devanagari script when `payload` lacks an explicit language field. Initializes `initial_language="hi"` (Hindi) so initial Hindi agent greetings (*"नमस्ते..."*) start with `language="hi"` STT/TTS rather than default English (`en-IN`).
+- **fix:** Fixed `NativeLanguageDetector.detect()` in [mantra/language_manager.py](file:///home/fardeen/lkt/mantra/language_manager.py): any utterance containing Devanagari script (e.g., _"Hello आप"_, _"नहीं मेरा नाम व्यात्या sir."_) strictly evaluates to Hindi (`hi`), preventing false language switches to English (`hi -> en`).
+- **fix:** Updated initial language initialization in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py) to automatically inspect `initial_instructions` for Devanagari script when `payload` lacks an explicit language field. Initializes `initial_language="hi"` (Hindi) so initial Hindi agent greetings (_"नमस्ते..."_) start with `language="hi"` STT/TTS rather than default English (`en-IN`).
 - **fix:** Updated dynamic STT language switching in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py) (`stt_engine.update_options`) to run through `resolve_stt_language()` when `new_lang == 'en'`, preserving the `en-IN` regional locale for Indian phone calls instead of falling back to US English (`en-US`).
 
 ## 2026-09-03
@@ -71,11 +133,11 @@
 
 ## 2026-08-30
 
-
 ### Dynamic OAuth Token Acquisition & Hardcoded JWT Removal
 
-- **feat:** Updated `MantraMCPClient` in [mantra/mcp_client.py](file:///home/fardeen/lkt/mantra/mcp_client.py) to dynamically acquire OAuth access tokens from Auth Server (`POST ${AUTH_SERVER_URL}/api/oauth/token`) using `OAUTH_CLIENT_ID` and `OAUTH_CLIENT_SECRET`.
+- **feat:** Updated `MantraMCPClient` in [mantra/mcp_client.py](file:///home/fardeen/lkt/mantra/mcp_client.py) to dynamically acquire OAuth access tokens from Auth Server (`POST ${AUTH_SERVER_URL}/oauth/token`) using `OAUTH_CLIENT_ID` and `OAUTH_CLIENT_SECRET`.
 - **refactor:** Removed static `LIVEKIT_MCP_JWT_TOKEN` from [.env.prod](file:///home/fardeen/lkt/.env.prod) in favor of clean OAuth client credentials authentication.
+
 ## 2026-08-29
 
 ### DeepSeek TTFT Resiliency & LLM Streaming Read Timeout Hardening
@@ -99,12 +161,11 @@
 ### Organization Processes & Stages MCP Tool (`fetch_org_processes`) & Inbound Post-Call Integration
 
 - **feat:** Added `fetch_org_processes` (and alias `receive_org_processes`) tool to `livekit-mcp`:
-
-  - Queries `MantraAssist-backend` (`GET /api/v1/processes?org_id={org_id}`) with standard webhook headers (`x-client-id`, `x-client-secret`, `ngrok-skip-browser-warning`).
-=======
-  - Queries `MantraAssist-backend` (`GET /api/v1/processes?org_id={org_id}`).
+  - # Queries `MantraAssist-backend` (`GET /v1/processes?org_id={org_id}`) with standard webhook headers (`x-client-id`, `x-client-secret`, `ngrok-skip-browser-warning`).
+  - Queries `MantraAssist-backend` (`GET /v1/processes?org_id={org_id}`).
   - Normalizes processes and stages along with their descriptions and stage IDs into structured format `[{"process_id": 317, "process_name": "...", "process_description": "...", "stage_ids": [1155, 1156, ...], "stages": [...]}]`.
   - Implemented an in-memory TTL cache (10-minute expiry) in `MantraAssistBackendClient` to avoid redundant network queries for the same organization.
+
 - **feat:** Integrated MCP process stage retrieval into inbound call post-call analysis in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py):
   - When an inbound call completes in `finalize()`, if `org_id` is present, it invokes `fetch_org_processes` via `MantraMCPClient`.
   - Injects the retrieved `process_stage_data` into `SessionRecorder.analyze_call()`, enabling LLM post-call analysis to accurately assign `derived_process_id` and `new_stage_id` for CRM webhooks.
@@ -114,7 +175,7 @@
   - Deleted `src/livekit_mcp/templates/` directory.
 - **fix:** Corrected database connection configuration in `livekit-mcp`:
   - Mapped `DATABASE_URL` and `MCP_EVENTS_DB_URL` to point to `postgresql://postgres:password@localhost:5442/mcp_logs_db` (from the active `lkdb` Docker `postgres_mcp` container).
-  - Fixed health check endpoint `/api/dev/check-db` to return `200 OK` (healthy).
+  - Fixed health check endpoint `/dev/check-db` to return `200 OK` (healthy).
 - **feat:** Added provider `user_id` injection to doctor availability tool and post-call analysis:
   - Formatted provider list in `doctor_availability.py` to include `(User ID: <id>)` (e.g. `Anshul (User ID: 345)`).
   - Captured `provider_user_id` in `check_doctor_availability` and auto-injected into `appointment_metadata.provider_user_id` in `finalize()` in `mantra/agent.py`.
@@ -141,7 +202,7 @@
   - Added active `LIVEKIT_MCP_URL` and `LIVEKIT_MCP_JWT_TOKEN` in `lkt/.env`.
   - `MantraMCPClient` sends `Authorization: Bearer <jwt>` and `?token=<jwt>` over SSE transport.
   - `livekit-mcp` `AuthMiddleware` verifies token signature using shared `JWT_SECRET` (`sub: lkt-voice-agent`).
-- **feat:** Cleaned `livekit-mcp` $\rightarrow$ `MantraAssist-backend` client to query `GET /api/v1/webhooks/mcp` directly using webhook headers (`x-client-id`, `x-client-secret`, `ngrok-skip-browser-warning`).
+- **feat:** Cleaned `livekit-mcp` $\rightarrow$ `MantraAssist-backend` client to query `GET /v1/webhooks/mcp` directly using webhook headers (`x-client-id`, `x-client-secret`, `ngrok-skip-browser-warning`).
 - **feat:** Injected dynamic live date, time, and current year (`2026`) directly into `initial_instructions` in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py), eliminating LLM 2024/2025 pre-training cutoff bias on appointment date calculations.
 - **feat:** Added past-year auto-roll forward in `livekit-mcp` (`resolve_date_string` in `src/livekit_mcp/utils/timezone.py`) to automatically update any past-year dates to the current calendar year.
 - **feat:** Updated `backend_client.py` and `timezone.py` in `livekit-mcp` to preserve the target calendar date (`date = 2026-08-31`) and default `datetime` to `YYYY-MM-DDT00:00:00.000Z` when time is not specified by the user.
@@ -153,14 +214,14 @@
 
 - **feat:** Added `department` parameter extraction across `lkt` and `livekit-mcp`:
   - **`mantra/agent.py`:** Updated `check_doctor_availability` tool to accept `department: Optional[str]` and dynamically extract medical specialty/department (e.g. `'Cardiology'`, `'Dermatology'`, `'Retina'`, `'Orthopedics'`) from caller transcripts.
-  - **`livekit-mcp`:** Updated `receive_doctor_availability` and `search_provider_availability` tools to accept `department` and query `GET /api/v1/providers/availability` with standard UTC params (`org_id`, `date`, `datetime`, `doc_name`, `department`).
+  - **`livekit-mcp`:** Updated `receive_doctor_availability` and `search_provider_availability` tools to accept `department` and query `GET /v1/providers/availability` with standard UTC params (`org_id`, `date`, `datetime`, `doc_name`, `department`).
 - **fix:** Fixed dynamic `org_id` resolution for inbound telephony calls in `mantra/agent.py`:
   - Inbound calls now look up dialed DID in PostgreSQL `org_configs` and pass the registered `org_id` (e.g. `68`, `278`) directly into `call_state["org_id"]` and `AssistantFunctions`.
   - Removed incorrect fallback to `kb_ids` vector collection UUIDs.
 - **fix:** Hardened `livekit-mcp` and `mantra/mcp_client.py`:
   - Added seamless dev-mode anonymous auth in `livekit_mcp/auth/middleware.py`.
   - Added relative date resolver (`resolve_date_string`) handling `'today'`, `'tomorrow'`, `'yesterday'`.
-  - Added resilient HTTP fallback (`POST /api/tools/call` via `httpx`) in `mantra/mcp_client.py` if SSE transport fails.
+  - Added resilient HTTP fallback (`POST /tools/call` via `httpx`) in `mantra/mcp_client.py` if SSE transport fails.
   - Fixed logging format string `%d` → `%s` and normalized 10-digit Indian phone numbers.
 - Files: [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py), [mantra/mcp_client.py](file:///home/fardeen/lkt/mantra/mcp_client.py), `livekit-mcp/src/livekit_mcp/tools/doctor_availability.py`, `livekit-mcp/src/livekit_mcp/clients/backend_client.py`.
 
@@ -229,7 +290,7 @@
 
 - **feat:** Added `check_doctor_availability` function tool to `AssistantFunctions` in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py):
   - Allows LLM voice agent to dynamically check real-time doctor working hours, open consultation times, and scheduling mid-call for both inbound and outbound calls.
-  - Automatically queries `livekit-mcp` HTTP endpoint (`/api/tools/call`) with caller's phone number, organization ID, requested date, and optional doctor name.
+  - Automatically queries `livekit-mcp` HTTP endpoint (`/tools/call`) with caller's phone number, organization ID, requested date, and optional doctor name.
   - Returns localized open appointment slots tailored to the caller's timezone (EDT, GMT, IST, GST).
 - **feat:** Registered `fnc_ctx.check_doctor_availability` in `agent_tools` in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py).
 - **feat:** Added `LIVEKIT_MCP_URL` and `LIVEKIT_MCP_JWT_TOKEN` configuration to [.env](file:///home/fardeen/lkt/.env).
@@ -301,16 +362,16 @@
 ### Multi-Attempt Call Retry Storage & Dashboard Timeline UI
 
 - **feat:** Updated `save_call_log_to_db()` in [mantra/utils.py](file:///home/fardeen/lkt/mantra/utils.py#L48-L125) to auto-create and append retry attempt objects into the `attempts` `JSONB` column on `call_logs`. Preserves every attempt's timestamp (`attempted_at`), status, AI job ID, duration, summary, and payload without overwriting previous attempts.
-- **feat:** Updated `/api/v1/dashboard/calls` endpoint in [mantra/ui_server.py](file:///home/fardeen/lkt/mantra/ui_server.py#L3673-L3755) to return `attempts` array and `attempts_count` for each call record.
+- **feat:** Updated `/v1/dashboard/calls` endpoint in [mantra/ui_server.py](file:///home/fardeen/lkt/mantra/ui_server.py#L3673-L3755) to return `attempts` array and `attempts_count` for each call record.
 - **feat:** Updated Dashboard UI in [static/dashboard.html](file:///home/fardeen/lkt/static/dashboard.html) and [static/dashboard.js](file:///home/fardeen/lkt/static/dashboard.js): added attempt count badges on call history table rows and a detailed **Retry & Attempt History Timeline** modal section displaying exact attempt timestamps, status badges, durations, and AI summaries.
 - Files: [mantra/utils.py](file:///home/fardeen/lkt/mantra/utils.py), [mantra/ui_server.py](file:///home/fardeen/lkt/mantra/ui_server.py), [static/dashboard.html](file:///home/fardeen/lkt/static/dashboard.html), [static/dashboard.js](file:///home/fardeen/lkt/static/dashboard.js)
 
 ### KB Ingestion JSON & Form Payload Compatibility
 
-- **fix:** Fixed issue where HTTP `POST /api/v1/kb/ingest` failed with `400 Bad Request: org_id is required` when sending text KB payloads with `Content-Type: application/json`.
+- **fix:** Fixed issue where HTTP `POST /v1/kb/ingest` failed with `400 Bad Request: org_id is required` when sending text KB payloads with `Content-Type: application/json`.
 - **feat:** Updated `ingest_kb_data` in [mantra/ui_server.py](file:///home/fardeen/lkt/mantra/ui_server.py#L952-L985) to inspect request content type and seamlessly parse both `application/json` and `multipart/form-data` / `application/x-www-form-urlencoded` payloads.
 - **feat:** Updated `parse_list` helper to handle list data types directly when passed in JSON body payloads.
-- **fix:** Fixed `asyncpg.exceptions.UndefinedColumnError: column "embedding" of relation "kb_pages" does not exist` during KB ingestion (`POST /api/v1/kb/ingest`). `PostgresKnowledgeBase.add_page()` in [mantra/knowledge_base.py](file:///home/fardeen/lkt/mantra/knowledge_base.py#L270-L310) now checks `self._supports_embeddings(conn)` before attempting to insert into the `embedding` column, with automatic exception fallback to standard FTS insertion if the pgvector `embedding` column does not exist in the database.
+- **fix:** Fixed `asyncpg.exceptions.UndefinedColumnError: column "embedding" of relation "kb_pages" does not exist` during KB ingestion (`POST /v1/kb/ingest`). `PostgresKnowledgeBase.add_page()` in [mantra/knowledge_base.py](file:///home/fardeen/lkt/mantra/knowledge_base.py#L270-L310) now checks `self._supports_embeddings(conn)` before attempting to insert into the `embedding` column, with automatic exception fallback to standard FTS insertion if the pgvector `embedding` column does not exist in the database.
 - Files: [mantra/ui_server.py](file:///home/fardeen/lkt/mantra/ui_server.py), [mantra/knowledge_base.py](file:///home/fardeen/lkt/mantra/knowledge_base.py)
 
 ## 2026-08-14
@@ -346,14 +407,14 @@
 
 ### Outbound SIP Dispatch Latency Optimization
 
-- **perf:** Fixed 4-second API response latency on `/api/v1/sip/plivo/create-and-call` by setting `wait_until_answered=False` on `CreateSIPParticipantRequest`.
+- **perf:** Fixed 4-second API response latency on `/v1/sip/plivo/create-and-call` by setting `wait_until_answered=False` on `CreateSIPParticipantRequest`.
 - **behavior:** Previously, the HTTP POST request blocked for ~3.5 to 5 seconds waiting for the recipient's phone to physically ring and be picked up over the cellular network. With `wait_until_answered=False`, the API dispatches the SIP call asynchronously and returns `200 OK` (`status: success`) immediately in **<100ms**.
 - Files: `mantra/ui_server.py`
 
 ### Smart In-Progress Call Deduplication Rejection System
 
 - **feat:** Implemented fail-safe Smart In-Progress Call Deduplication (`lock:call:{call_id}`) across `mantra/ui_server.py` and `mantra/agent.py`:
-  - `handle_outbound_call_webhook` (`/api/v1/webhooks/telephony`) & `create_and_call_plivo` (`/api/v1/sip/plivo/create-and-call`) acquire a 30-second TTL lock (`ex=30`).
+  - `handle_outbound_call_webhook` (`/v1/webhooks/telephony`) & `create_and_call_plivo` (`/v1/sip/plivo/create-and-call`) acquire a 30-second TTL lock (`ex=30`).
   - Sub-second duplicate webhooks arriving while a call is currently in-progress are rejected with `{"status": "ignored", "message": "Duplicate request for call_id ... already in progress"}`.
   - When the call completes (or SIP fails), `finalize()` in `agent.py` and `_deliver_call_failure()` in `ui_server.py` delete `lock:call:{call_id}` immediately.
   - Updated Operations Dashboard UI (`static/dashboard.html`, `static/dashboard.js`): added styled status badges and filter dropdown options for `Ignored`, `Incomplete`, and `Busy` statuses.
@@ -442,7 +503,7 @@
 - **feat:** `mantra/knowledge_base.py` now performs tiered search: Tier A strict FTS (`english`) blended with pgvector cosine via Reciprocal Rank Fusion (`_blend_results`), soft-tag retry, Tier B loose OR query, Tier C tag-only, Tier D `list_available()` document listing. New query builders: `build_loose_search_query`, `build_vector_search_query`, `build_tag_search_query`, `build_list_docs_query`. `add_page()`/`ingest_text()` embed chunks up front with graceful FTS-only fallback when embeddings unavailable. Abstract `list_available` added.
 - **feat:** `mantra/retriever.py` rewritten — tiered `retrieve()` with session cache; when nothing matches, returns the list of available documents (with tags) instead of a bare "no results", so the LLM can ask a better follow-up or answer truthfully. `_format_no_results` builds the doc list.
 - **feat:** New `tools/backfill_embeddings.py` — idempotent/resumable backfill of `embedding` for existing rows (`--kb-id`, `--batch-size`, `--limit`, `--dry-run`). URL-encodes the DB password in the DSN.
-- **feat:** Backfill logic extracted into `PostgresKnowledgeBase.backfill_embeddings()` and exposed two ways for Docker-only deployments: `POST /api/v1/kb/backfill-embeddings` HTTP endpoint (`mantra/ui_server.py`, body JSON `kb_id`/`batch_size`/`limit`/`dry_run`) and a `backfill` mode in `entrypoint.sh` (`docker run <image> backfill [args]`). Also added `mantra/migrations/006_kb_english_vector.sql` (transactional SQL variant of the migration). Both paths verified against scratch DB.
+- **feat:** Backfill logic extracted into `PostgresKnowledgeBase.backfill_embeddings()` and exposed two ways for Docker-only deployments: `POST /v1/kb/backfill-embeddings` HTTP endpoint (`mantra/ui_server.py`, body JSON `kb_id`/`batch_size`/`limit`/`dry_run`) and a `backfill` mode in `entrypoint.sh` (`docker run <image> backfill [args]`). Also added `mantra/migrations/006_kb_english_vector.sql` (transactional SQL variant of the migration). Both paths verified against scratch DB.
 - **verified:** End-to-end scratch repro of the exact failure: org 77 page with `diagnostic code`, query "diagnostic codes" → page found; "diagnostics" → found (stemming); "what is there in your knowledge base" → truthful doc listing; "appointment booking" → doc listing (no hallucination). `get_kb_ids_for_org` / `get_collection_details_for_org` confirmed working. 1536-dim embedding stored + HNSW index validated.
 - **unchanged:** `mantra/agent.py` — the `search_knowledge_base` tool already flows through `retriever.retrieve()`, so no code change needed there. Prod DB (52.7.20.203) untouched — migration SQL + backfill commands provided to the user to run.
 - Files: `mantra/knowledge_base.py`, `mantra/retriever.py`, `mantra/ui_server.py`, `mantra/gemini_embeddings.py` (new), `mantra/migrations/006_kb_english_vector.py` (new), `mantra/migrations/006_kb_english_vector.sql` (new), `tools/backfill_embeddings.py` (new), `entrypoint.sh`
@@ -452,7 +513,7 @@
 ### KB Process & Stage Persistence for Inbound Webhooks
 
 - **feat:** Migration `005_kb_process_stage.py` — added `process_id`, `stage_id`, `stage_ids`, `process_assignments`, `process_description`, and `stage_description` columns to `kb_collections`, and `stage_id` to `org_configs`.
-- **feat:** Updated `/api/v1/kb/ingest` in `mantra/ui_server.py` to parse Zod-schema aligned `process_assignments` (`[{"process_id": int, "stage_ids": [int]}]`) as well as explicit `process_id` and `stage_id` parameters, storing them directly on `kb_collections` and `kb_pages.page_meta`.
+- **feat:** Updated `/v1/kb/ingest` in `mantra/ui_server.py` to parse Zod-schema aligned `process_assignments` (`[{"process_id": int, "stage_ids": [int]}]`) as well as explicit `process_id` and `stage_id` parameters, storing them directly on `kb_collections` and `kb_pages.page_meta`.
 - **fix:** Updated `normalize_datetime()` in `mantra/utils.py` to output ISO-8601 UTC timestamp format (`YYYY-MM-DDTHH:MM:SSZ`, e.g. `"2026-08-04T10:59:36Z"`), returning `null` when no callback is scheduled for both inbound and outbound webhooks.
 - **fix:** Updated `SessionRecorder.analyze_call()` in `mantra/utils.py` to evaluate `next_call_on` using a 3-tier priority: (1) User spoken callback time during the call, (2) Default stage callback delay instruction from `process_stage_data`/`stageDetails` in the call payload, (3) `null` if neither is present.
 - **fix:** Updated 5-second silence prompt in `mantra/agent.py` to use natural Hindi phrasing (`"हेलो, क्या आप लाइन पर हैं?"`).
@@ -483,14 +544,14 @@
 
 ### Operations Dashboard DB Sync & Search
 
-- **feat:** Updated `/api/v1/dashboard/calls` endpoint in `mantra/ui_server.py` to support `search` filtering (across call ID, caller/called phone numbers, and call log JSON text) and `status` filtering (`Completed`, `Busy`, `No Answer`, `Error`, `Incomplete`).
+- **feat:** Updated `/v1/dashboard/calls` endpoint in `mantra/ui_server.py` to support `search` filtering (across call ID, caller/called phone numbers, and call log JSON text) and `status` filtering (`Completed`, `Busy`, `No Answer`, `Error`, `Incomplete`).
 - **feat:** Updated `static/dashboard.html` and `static/dashboard.js` with search bar, status selector dropdown, manual "Sync DB" button, and auto-sync triggers on SSE call-end events and periodic 15s intervals.
 - **feat:** Enhanced Call Details Inspect Modal in `static/dashboard.html` and `static/dashboard.js` to parse and render full AI summaries and turn-by-turn conversation transcripts (with styled 🤖 AI Agent and 👤 Caller speech bubbles, unicode Hindi/English support, and raw JSON fallback).
 
 ### Redis Operations & Queue Monitor
 
 - **feat:** Created `/redis` route in `mantra/ui_server.py` serving `static/redis.html`.
-- **feat:** Added Redis API endpoints: `/api/v1/redis/info` (server info, memory, clients, queue count, active count), `/api/v1/redis/queue` (inspect `queue:pending` sorted set items & payloads), `/api/v1/redis/active-details` (inspect `calls:active` hash, status, lock TTLs), `/api/v1/redis/keys` (scan and list keys by pattern with type and TTL), `/api/v1/redis/key-detail` (full value inspector), `/api/v1/redis/key` (delete key).
+- **feat:** Added Redis API endpoints: `/v1/redis/info` (server info, memory, clients, queue count, active count), `/v1/redis/queue` (inspect `queue:pending` sorted set items & payloads), `/v1/redis/active-details` (inspect `calls:active` hash, status, lock TTLs), `/v1/redis/keys` (scan and list keys by pattern with type and TTL), `/v1/redis/key-detail` (full value inspector), `/v1/redis/key` (delete key).
 - **feat:** Created `static/redis.html` UI with summary metric cards, queue inspector table, active calls hash viewer, live key explorer, and JSON value inspector modal.
 
 ### Grafana-Style Network Telemetry Dashboard
@@ -499,7 +560,7 @@
 - **feat:** Added top control toolbar with time range selector (`Last 5m`, `15m`, `30m`), refresh interval selector (`2s`, `5s`, `10s`, `Off`), and manual refresh.
 - **feat:** Added single stat cards for Request Rate (RPS), Avg Response Latency (ms) + estimated p95, Error Rate %, RAM Memory usage, and CPU seconds.
 - **feat:** Added time-series line charts for Throughput (RPS), Latency Distribution (Avg/p95), HTTP Status Code Breakdown over time (`2xx`, `3xx`, `4xx`, `5xx`), and Top API Endpoints volume bar chart.
-- **feat:** Added high-density Grafana endpoint metrics grid table with status code class filtering (`2xx`, `3xx`, `4xx`, `5xx`), live search filtering, and human-readable API endpoint labels (mapping raw technical paths like `/api/v1/stream` → **Real-Time SSE Stream** and `/api/v1/redis/active-details` → **Redis Active Calls Inspector**).
+- **feat:** Added high-density Grafana endpoint metrics grid table with status code class filtering (`2xx`, `3xx`, `4xx`, `5xx`), live search filtering, and human-readable API endpoint labels (mapping raw technical paths like `/v1/stream` → **Real-Time SSE Stream** and `/v1/redis/active-details` → **Redis Active Calls Inspector**).
 
 ### Redis Webhook Worker Failover & Read-Only Replica Reconnection Fix
 
@@ -569,7 +630,7 @@
 ### DB Migration — kb_collections Process/Stage Descriptions
 
 - **feat:** Added `process_description` (TEXT), `stage_description` (TEXT) to `kb_collections`.
-- **feat:** Ingest endpoint (`/api/v1/kb/ingest`) extracts first process's `description`/`name` and first stage's `description`/`name` from `process_stage_data` JSON.
+- **feat:** Ingest endpoint (`/v1/kb/ingest`) extracts first process's `description`/`name` and first stage's `description`/`name` from `process_stage_data` JSON.
 - **feat:** `get_or_create_collection()` (abstract + Postgres impl) accepts and upserts both columns.
 - **feat:** `list_collections()` returns the new columns.
 - Migration: `migrations/add_trunk_fields.sql`
@@ -596,7 +657,7 @@
 
 - **feat:** Per-provider concurrency limits in `ui_server.py` — `PROVIDER_MAX_CONCURRENCY` (`plivo: 2`, `zadarma: 3`, `voice_link: 5`), env-overridable via `PLIVO_MAX_CONCURRENCY` / `ZADARMA_MAX_CONCURRENCY` / `VOICELINK_MAX_CONCURRENCY`.
 - **feat:** `/health` now reports per-provider and global capacity — returns `{"healthy": false}` when any provider is at its limit or total live `call_*` rooms reach `MAX_CALL_CONCURRENCY` (5, `CARTESIA_MAX_CONCURRENCY` fallback). Health check keys: `provider_capacity_{provider}`, `capacity_max_concurrency`.
-- **feat:** Middleware `health_gate_middleware` (POST dispatch paths only) — per-provider gate for `/api/v1/webhooks/telephony` returns empty `503` when the call's provider is saturated; global gate returns `503` when live rooms ≥ `MAX_CALL_CONCURRENCY`; dependency gate still blocks `503` on infra failure. Provider saturation never blocks another provider's traffic.
+- **feat:** Middleware `health_gate_middleware` (POST dispatch paths only) — per-provider gate for `/v1/webhooks/telephony` returns empty `503` when the call's provider is saturated; global gate returns `503` when live rooms ≥ `MAX_CALL_CONCURRENCY`; dependency gate still blocks `503` on infra failure. Provider saturation never blocks another provider's traffic.
 - **feat:** Provider embedded in LiveKit room name for zero-Redis tracking — `call_{provider}_{call_id}` (e.g. `call_plivo_t1`, `call_voice_link_v1`); unknown trunks → `call_unknown_{id}` (not counted, not blocked).
 - **feat:** `_log_blocked_call()` → `save_call_log_to_db(status="Busy")` with structured JSON (provider, `blocked: true`, `reason: provider_at_concurrency_limit`, active/max, trunk, phone, timestamp) when the per-provider gate rejects a call.
 - **refactor:** Split `_run_dependency_checks()` (infra only, used by the coarse gate) from `_run_health_checks()` (deps + capacity, used by `/health`); `BYPASS_HEALTH_CHECKS` honored in both.
@@ -626,8 +687,8 @@
 
 - **feat:** Added `kb_collections` table — each row = one document = one KB collection for an org. `kb_pages.kb_id` now stores the collection UUID instead of `org_id`. New migration: `003_kb_collections.py`.
 - **feat:** `_resolve_from_db()` in `agent.py` now queries `kb_collections` to get all collection UUIDs for the org, plus the `org_id` as fallback for legacy data. Agent searches across all collections.
-- **feat:** `/api/v1/kb/ingest` endpoint now creates/finds a `kb_collection` by `(org_id, document_id)` and stores pages under the collection UUID. Old data with `kb_pages.kb_id = org_id` still works via fallback.
-- **feat:** New API endpoints: `GET /api/v1/kb-collections?org_id=X`, `GET /api/v1/kb-collections/{id}`, `DELETE /api/v1/kb-collections/{id}` for collection management.
+- **feat:** `/v1/kb/ingest` endpoint now creates/finds a `kb_collection` by `(org_id, document_id)` and stores pages under the collection UUID. Old data with `kb_pages.kb_id = org_id` still works via fallback.
+- **feat:** New API endpoints: `GET /v1/kb-collections?org_id=X`, `GET /v1/kb-collections/{id}`, `DELETE /v1/kb-collections/{id}` for collection management.
 - **feat:** `PostgresKnowledgeBase` gains 4 new methods: `get_or_create_collection`, `list_collections`, `delete_collection`, `get_kb_ids_for_org`.
 - **refactor:** `delete_by_document` now removes pages by `document_id` across all KBs (not filtered by `kb_id`), and also cleans up the `kb_collections` row.
 - **doc:** Updated `Database.md` with `kb_collections` table schema and KB resolution flow.
@@ -676,16 +737,16 @@
 
 ### TOS Telemetry & Health Gate
 
-- **feat:** Added `report_telemetry()` to `mantra/utils.py` — POSTs structured telemetry logs to TOS endpoint (`/api/telemetry/{task_id}/log`). Used across all three services.
+- **feat:** Added `report_telemetry()` to `mantra/utils.py` — POSTs structured telemetry logs to TOS endpoint (`/telemetry/{task_id}/log`). Used across all three services.
   - `AssistantFunctions.__init__` now parses `tos_task_id` from `job_metadata` and provides `_telemetry()` helper for tool callbacks.
   - Agent `entrypoint()` now reports: `agent_started`, `room_connected`, `participant_joined`, `voice_engine_initialized`, `post_processing_started`, `data_sent_to_backend`, `call_complete`.
   - Dispatcher reports: `call_dequeued`, `call_dispatched`, `dispatch_failed`.
   - UI server reports: `webhook_received`, `agent_dispatched`, `sip_call_initiating`, `sip_call_connected`, `sip_call_failed`.
-- **feat:** Added `health_gate_middleware` to `ui_server.py` — blocks dispatch requests (`POST /dispatch-test`, `/api/v1/webhooks/telephony`, SIP trunk endpoints) with HTTP 503 if any critical service is down.
+- **feat:** Added `health_gate_middleware` to `ui_server.py` — blocks dispatch requests (`POST /dispatch-test`, `/v1/webhooks/telephony`, SIP trunk endpoints) with HTTP 503 if any critical service is down.
 - **feat:** Comprehensive startup healthcheck — runs parallel checks on LiveKit, Redis, Deepgram, TTS (LiveKit native sonic-3), MantraAssist backend, PostgreSQL, S3 on server start.
 - **feat:** Redis deduplication lock (`lock:call:{call_id}`, TTL 600s) on `handle_outbound_call_webhook` and `create_and_call_plivo` to prevent concurrent duplicate webhooks.
 - **feat:** Room participant check in SIP failure handler — before cleanup, verifies SIP participant isn't already in room (duplicate guard from race condition fix v2).
-- **fix:** `send_to_backend` URL corrected from `/webhooks/n8n` to `/api/v1/webhooks/n8n`.
+- **fix:** `send_to_backend` URL corrected from `/webhooks/n8n` to `/v1/webhooks/n8n`.
 - **refactor:** Removed Redis concurrency management (`calls:active`, `calls:status`) from `agent.py` — call tracking responsibility shifted to dispatcher + telemetry.
 - **refactor:** Added persistent `httpx.AsyncClient` to UI server lifespan for all health checks.
 - **refactor:** `get_db_connection` now prefers `DATABASE_URL` env var over individual PG env vars.
@@ -716,7 +777,7 @@
 
 ## 2026-07-23
 
-- **fix:** Plivo inbound call — migrated from Plivo Application XML to Plivo Zentrunk SIP trunking. `_update_plivo_sip_forwarding` now creates Zentrunk origination URI → inbound trunk → links number via Plivo API. Deprecated `_build_plivo_xml`, `/api/v1/sip/plivo-xml`, `/api/v1/sip/plivo-dial-status`. Root cause: Plivo `<User>` Dial sends SIP INVITE that LiveKit rejects (UNALLOCATED_NUMBER); Zentrunk sends authenticated INVITE directly to LiveKit's SIP domain, matching the inbound trunk's numbers array.
+- **fix:** Plivo inbound call — migrated from Plivo Application XML to Plivo Zentrunk SIP trunking. `_update_plivo_sip_forwarding` now creates Zentrunk origination URI → inbound trunk → links number via Plivo API. Deprecated `_build_plivo_xml`, `/v1/sip/plivo-xml`, `/v1/sip/plivo-dial-status`. Root cause: Plivo `<User>` Dial sends SIP INVITE that LiveKit rejects (UNALLOCATED_NUMBER); Zentrunk sends authenticated INVITE directly to LiveKit's SIP domain, matching the inbound trunk's numbers array.
 - **doc:** Updated Obsidian vault: Current Sprint, Changelog
 
 ## 2026-07-22
@@ -741,10 +802,10 @@
 
 ## 2026-07-18
 
-- **feat:** DB Inbound Context Resolution: Added `org_configs` table and integration in `/api/v1/sip/inbound/setup` to map incoming phone numbers to organizations in the database. The agent now queries this DB first for context (prompt, voice, KB scope), supplementing the MantraAssist API. Added `/api/v1/org-configs` CRUD endpoints for backend management.
+- **feat:** DB Inbound Context Resolution: Added `org_configs` table and integration in `/v1/sip/inbound/setup` to map incoming phone numbers to organizations in the database. The agent now queries this DB first for context (prompt, voice, KB scope), supplementing the MantraAssist API. Added `/v1/org-configs` CRUD endpoints for backend management.
 - **feat:** Add color-coded logging for inbound SIP setup requests/responses in `mantra/ui_server.py`
 - **fix:** Knowledge Ingestion Encoding: Stripped null bytes (`\x00`) recursively from metadata and text inputs in `PostgresKnowledgeBase.add_page` and `delete_by_document` to prevent `CharacterNotInRepertoireError` (invalid byte sequence for UTF8).
-- **feat:** Ingestion Logger: Added request parameters logging at the start of `/api/v1/kb/ingest` in `mantra/ui_server.py`.
+- **feat:** Ingestion Logger: Added request parameters logging at the start of `/v1/kb/ingest` in `mantra/ui_server.py`.
 - **refactor:** Env Loading: Updated `ui_server.py`, `dispatcher.py`, and migrations to load `.env` first and override with `.env.local` using `override=True` to resolve environment conflicts (e.g., Redis host/port).
 
 ## 2026-07-16

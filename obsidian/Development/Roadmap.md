@@ -2,7 +2,7 @@
 
 ## Short Term (Next)
 
-- [ ] Fix MCP server — upstream API change (`CstdioServerParameters`)
+- [x] Fix MCP server transport (SSE) — done 2026-09-01
 - [ ] Ingest KB data for org 66
 - [ ] Fix post-call webhook 404
 - [ ] Configure S3 bucket for recordings

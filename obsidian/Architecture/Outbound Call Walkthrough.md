@@ -8,7 +8,7 @@
 
 ## Phase 0: Trigger — Payload Arrives
 
-An external system sends a `POST /api/v1/webhooks/telephony` with this payload shape:
+An external system sends a `POST /v1/webhooks/telephony` with this payload shape:
 
 ```json
 {

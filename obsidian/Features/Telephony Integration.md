@@ -6,10 +6,10 @@
 
 | Provider | Routing | Outbound Endpoint | Notes |
 |----------|---------|----------|-------|
-| Twilio | Direct | `POST /api/v1/sip/trunks/outbound/twilio` | Default address `live-kit-mc.pstn.twilio.com` |
-| Plivo | Proxied (India) | `POST /api/v1/sip/trunks/outbound/plivo` | On-the-fly trunk provisioning; `destination_country="in"`; Zentrunk for inbound |
-| Zadarma | Direct | `POST /api/v1/sip/trunks/outbound/zadarma` | Backward-compatible with root endpoint |
-| VoiceLink | Proxied | `POST /api/v1/sip/trunks/outbound/voice_link` | `destination_country="in"`; LiveKit-native provider |
+| Twilio | Direct | `POST /v1/sip/trunks/outbound/twilio` | Default address `live-kit-mc.pstn.twilio.com` |
+| Plivo | Proxied (India) | `POST /v1/sip/trunks/outbound/plivo` | On-the-fly trunk provisioning; `destination_country="in"`; Zentrunk for inbound |
+| Zadarma | Direct | `POST /v1/sip/trunks/outbound/zadarma` | Backward-compatible with root endpoint |
+| VoiceLink | Proxied | `POST /v1/sip/trunks/outbound/voice_link` | `destination_country="in"`; LiveKit-native provider |
 
 ## SIP Trunk Resolution
 
@@ -19,18 +19,18 @@
 
 ## Call Capacity Gating
 
-Per-provider concurrency limits guard dispatch (middleware, POST dispatch paths):
+Per-trunk concurrency limits guard dispatch (middleware, POST dispatch paths):
 
-| Provider | Limit | Env override |
+| Provider (per trunk) | Limit | Env override |
 |----------|-------|--------------|
 | Plivo | 2 | `PLIVO_MAX_CONCURRENCY` |
 | Zadarma | 3 | `ZADARMA_MAX_CONCURRENCY` |
 | VoiceLink | 5 | `VOICELINK_MAX_CONCURRENCY` |
-| Twilio | 2 | `TWILIO_MAX_CONCURRENCY` |
-| Global (agent pool) | 5 | `MAX_CONCURRENCY` / `CARTESIA_MAX_CONCURRENCY` |
+| Twilio | 3 | `TWILIO_MAX_CONCURRENCY` |
+| Global (agent pool) | 5 | `MAX_CONCURRENCY` |
 
-- Provider embedded in LiveKit room name — `call_{provider}_{call_id}` (e.g. `call_plivo_t1`) — enables zero-Redis active-count via LiveKit room list; unknown trunks → `call_unknown_{id}` (not counted, not blocked)
-- Per-provider gate (webhook path only) → empty `503` when the call's provider is saturated; other providers keep dispatching
+- Trunk embedded in LiveKit room name — `call_{trunk_id}_{call_id}` (e.g. `call_ST_xxx_abc123`) — enables zero-Redis active-count via LiveKit room list; trunk→provider resolved via `_resolve_trunk_limit` (cache → LiveKit API → Redis fallback)
+- Per-trunk gate (webhook path only) → empty `503` when the call's trunk is saturated; other trunks keep dispatching
 - Global gate (all dispatch paths) → `503` when live `call_*` rooms ≥ `MAX_CALL_CONCURRENCY`
 - Rejected calls → `call_logs` row with status `Busy`, reason `provider_at_concurrency_limit` (provider, active/max, trunk, phone)
 - `/health` returns `{"healthy": false}` when any provider or the global pool is at capacity
@@ -51,7 +51,7 @@ The webhook awaits the SIP call and returns an empty `503` when it fails (matchi
 
 ## Inbound Setup
 
-`POST /api/v1/sip/inbound/setup` handles end-to-end provisioning:
+`POST /v1/sip/inbound/setup` handles end-to-end provisioning:
 1. Check for existing trunk/rule (Plivo: 409 + Zentrunk link verification)
 2. Create/reuse LiveKit inbound trunk
 3. Create/reuse LiveKit dispatch rule

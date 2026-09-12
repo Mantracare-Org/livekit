@@ -47,12 +47,12 @@ curl -X POST http://localhost:8081/dispatch-test \
   -d '{"client_name":"Test","prompt":"Hello"}'
 
 # Trigger webhook call (outbound)
-curl -X POST http://localhost:8081/api/v1/webhooks/telephony \
+curl -X POST http://localhost:8081/v1/webhooks/telephony \
   -H "Content-Type: application/json" \
   -d '{"client_phone":"+919876543210","client_country_code":"91","prompt":"Hi","trunk_id":"ST_xxx"}'
 
 # Trigger simulated inbound call
-curl -X POST http://localhost:8081/api/v1/test/inbound-call \
+curl -X POST http://localhost:8081/v1/test/inbound-call \
   -H "Content-Type: application/json" \
   -d '{"phone":"+919876543210","trunk_id":"ST_xxx","direction":"inbound"}'
 

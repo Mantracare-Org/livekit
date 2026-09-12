@@ -13,7 +13,7 @@ Professional care support and automated outbound follow-up calls for MantraCare/
 - **Bilingual:** Flawless English/Hindi switching
 - **Telephony-first:** Tuned VAD for cellular/background noise
 - **Multi-provider:** Twilio, Plivo (India proxy + Zentrunk), Zadarma, VoiceLink
-- **Self-healing:** Zombie cleanup, capacity management, per-provider gating, crash alerts with memes
+- **Self-healing:** Zombie cleanup, capacity management, per-trunk gating, crash alerts with memes
 - **Inbound + outbound:** Supports both call directions with DB-based context resolution
 - **Multi-KB per org:** Each org can have multiple KB collections loaded from documents
 

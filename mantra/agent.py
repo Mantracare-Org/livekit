@@ -104,7 +104,7 @@ from mantra.amd import detect_voicemail
 # Import knowledge base
 from mantra.knowledge_base import PostgresKnowledgeBase
 from mantra.retriever import KnowledgeRetriever
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
 
 VOICE_MAPPING = {
@@ -245,7 +245,7 @@ async def _resolve_from_db(phone_number: str) -> dict | None:
                 "process_id": process_id,
                 "stage_id": stage_id,
                 "transfer_numbers": result.get("transfer_numbers", {}),
-                "client_name": result.get("client_name")
+                "client_name": result.get("client_name"),
             }
         return None
     except Exception as e:
@@ -308,6 +308,161 @@ async def resolve_inbound_context(phone_number: str) -> dict | None:
     return config
 
 
+def _extract_inbound_caller_phone(meta_payload: dict | None, fallback_phone: str | None = None) -> str:
+    """Prefer the true caller number over the org-bound inbound DID."""
+    candidates: list[str] = []
+    if isinstance(meta_payload, dict):
+        for key in (
+            "call_from",
+            "caller_number",
+            "client_phone_number",
+            "client_phone",
+            "from_number",
+            "source_number",
+            "phone_number",
+        ):
+            value = meta_payload.get(key)
+            if value:
+                candidates.append(str(value))
+    if fallback_phone:
+        candidates.insert(0, str(fallback_phone))
+
+    for candidate in candidates:
+        value = str(candidate).strip()
+        if not value:
+            continue
+        if value.lower().startswith("sip_"):
+            value = value[4:]
+        normalized = format_e164_phone_number(value)
+        if normalized:
+            return normalized
+    return ""
+
+
+def _extract_livekit_caller_phone(participants) -> str:
+    """Extract the inbound caller number from LiveKit SIP participant metadata."""
+    attribute_keys = (
+        "sip.phoneNumber",
+        "sip.from",
+        "sip.callerNumber",
+        "sip.sourceNumber",
+        "phone_number",
+        "caller_number",
+        "from_number",
+    )
+    for participant in participants:
+        attributes = getattr(participant, "attributes", {}) or {}
+        for key in attribute_keys:
+            value = attributes.get(key)
+            if value:
+                normalized = _extract_inbound_caller_phone({"phone_number": value})
+                if normalized:
+                    return normalized
+
+        identity = getattr(participant, "identity", "")
+        normalized = _extract_inbound_caller_phone({"phone_number": identity})
+        if normalized:
+            return normalized
+    return ""
+
+
+def _extract_recognized_client_name(result: Any) -> str | None:
+    """Extract a client name from the MCP/backend response, including null results."""
+    if result is None:
+        return None
+
+    if isinstance(result, str):
+        value = result.strip()
+        if not value or value.lower() in {"null", "none", "{}", "[]"}:
+            return None
+        try:
+            result = json.loads(value)
+        except json.JSONDecodeError:
+            return value
+
+    if not isinstance(result, dict):
+        return None
+
+    for key in ("client_name", "name", "full_name"):
+        value = result.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+
+    for key in ("data", "result", "lead", "client"):
+        nested_name = _extract_recognized_client_name(result.get(key))
+        if nested_name:
+            return nested_name
+    return None
+
+
+def _extract_recognized_client_metadata(result: Any) -> dict[str, list]:
+    """Extract structured client metadata while tolerating nested MCP responses."""
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except json.JSONDecodeError:
+            return {"ai_summaries": [], "custom_fields": []}
+
+    if not isinstance(result, dict):
+        return {"ai_summaries": [], "custom_fields": []}
+
+    for key in ("data", "result", "lead", "client"):
+        nested = result.get(key)
+        if isinstance(nested, dict):
+            metadata = _extract_recognized_client_metadata(nested)
+            if any(metadata.values()):
+                return metadata
+
+    metadata = result.get("client_metadata")
+    if not isinstance(metadata, dict):
+        return {"ai_summaries": [], "custom_fields": []}
+    return {
+        "ai_summaries": metadata.get("ai_summaries", []) if isinstance(metadata.get("ai_summaries"), list) else [],
+        "custom_fields": metadata.get("custom_fields", []) if isinstance(metadata.get("custom_fields"), list) else [],
+    }
+
+
+async def recognize_inbound_client(phone_number: str, org_id: str | int) -> dict[str, Any] | None:
+    """Resolve a known client's identity and metadata before an inbound greeting.
+
+    Use the actual caller's phone number to identify the client, scoped by org_id.
+    The org-bound DID is only used for routing and should not be sent to the
+    client-recognition tool.
+    """
+    if not phone_number or org_id in (None, ""):
+        return None
+
+    try:
+        from mantra.mcp_client import get_mcp_client
+
+        async with asyncio.timeout(3):
+            result = await get_mcp_client().call_tool(
+                "recognize_client",
+                {"org_id": org_id, "phone_number": format_e164_phone_number(phone_number)},
+            )
+
+        client_name = _extract_recognized_client_name(result)
+        client_metadata = _extract_recognized_client_metadata(result)
+        if client_name:
+            logger.info("Client recognition returned client_name=%s for org_id=%s", client_name, org_id)
+        else:
+            logger.info("Client recognition returned no matching client for org_id=%s", org_id)
+        if not client_name:
+            return None
+        return {
+            "client_name": client_name,
+            "client_metadata": client_metadata,
+        }
+    except asyncio.TimeoutError:
+        logger.warning("Client recognition timed out for org_id=%s", org_id)
+    except json.JSONDecodeError:
+        logger.warning("Client recognition returned malformed MCP data for org_id=%s", org_id)
+    except Exception as error:
+        logger.warning("Client recognition via MCP failed for org_id=%s: %s", org_id, error)
+
+    return None
+
+
 async def resolve_outbound_context(org_id: str) -> dict | None:
     """
     Resolves outbound call KB context from PostgreSQL using org_id.
@@ -365,7 +520,7 @@ def format_upfront_kb_context(pages: list) -> str:
             break
         text += entry
         total_len += len(entry)
-    text += "\nDIRECTIVE: Use the pre-loaded Knowledge Base information above to answer caller questions directly and instantly without calling search_knowledge_base whenever possible.\n<!-- UPFRONT_KB_END -->"
+    text += "\nDIRECTIVE: Use the pre-loaded Knowledge Base information above for general informational questions only. Never use it for doctor availability, appointment slots, booking, rescheduling, cancellation, or doctor working hours; those requests must use the dedicated MCP availability tool.\n<!-- UPFRONT_KB_END -->"
     return text
 
 
@@ -671,9 +826,11 @@ class AssistantFunctions:
 
     @llm.function_tool(
         description=(
-            "Search the knowledge base for factual information, doctor profiles, availability, working hours, pricing, services, "
+            "Search the knowledge base for general factual information, doctor profiles, pricing, services, "
             "policies, and any entity or topic asked by the caller. Call this tool silently without saying search fillers "
-            "(e.g., do NOT say 'Let me check' or 'Let me look that up'). Speak the retrieved answer directly."
+            "(e.g., do NOT say 'Let me check' or 'Let me look that up'). Speak the retrieved answer directly. "
+            "NEVER use this tool for doctor availability, open appointment slots, booking, rescheduling, cancellation, "
+            "or doctor working hours; always use the dedicated MCP availability tool for those requests."
         )
     )
     async def search_knowledge_base(
@@ -706,9 +863,90 @@ class AssistantFunctions:
         self._disconnect_task = create_bg_task(graceful_disconnect())
         return ""
 
+    async def _load_department_options(self, org_id: int | str) -> list[str]:
+        """Load and remember the departments available for this organization."""
+        from mantra.mcp_client import get_mcp_client
+
+        try:
+            raw_departments = await get_mcp_client().call_tool(
+                "get_org_departments",
+                {"org_id": org_id},
+            )
+            departments = json.loads(raw_departments) if isinstance(raw_departments, str) else raw_departments
+            if isinstance(departments, dict):
+                departments = departments.get("departments") or departments.get("data") or []
+            if not isinstance(departments, list):
+                departments = []
+            normalized = []
+            for item in departments:
+                name = str(item).strip()
+                if name and name.casefold() not in {value.casefold() for value in normalized}:
+                    normalized.append(name)
+        except Exception as exc:
+            logger.warning(f"Failed to fetch departments for org_id={org_id}: {exc}")
+            normalized = []
+
+        if self.call_state is not None:
+            self.call_state["department_options"] = normalized
+        return normalized
+
+    @llm.function_tool(
+        description=(
+            "Use when the caller gives a broad medical symptom without a clear department or specialty, such as 'I have an eye problem'. "
+            "Fetch the organization's department list silently, but do not guess a department from one vague symptom. "
+            "Ask up to two concise clinical-routing questions before selecting a department. Ask about the symptom's onset, progression, severity, and any associated symptoms that distinguish the available specialties. "
+            "Use the caller's answers and the full conversation to select the best exact value from the returned list. "
+            "Do not ask the caller to choose a department or mention department names aloud. "
+            "Do not use fixed symptom-to-department mappings or assume that a symptom always belongs to a particular specialty. "
+            "Only call check_doctor_availability after the caller answers the necessary routing question(s)."
+        )
+    )
+    async def clarify_medical_department(
+        self,
+        symptom: Annotated[str, "The caller's broad symptom or reason for the appointment."],
+    ) -> str:
+        org_id = self.call_state.get("org_id") if self.call_state else None
+        if not org_id and self.job_metadata:
+            try:
+                payload = json.loads(self.job_metadata) if isinstance(self.job_metadata, str) else self.job_metadata
+                org_id = payload.get("org_id") or (
+                    payload.get("metadata", {}).get("org_id")
+                    if isinstance(payload.get("metadata"), dict)
+                    else None
+                )
+            except Exception as exc:
+                logger.warning(f"Could not parse job_metadata in clarify_medical_department: {exc}")
+
+        if not org_id:
+            return "Ask the caller which specific eye or medical specialty they need, then continue without guessing a department."
+
+        departments = await self._load_department_options(org_id)
+
+        if self.call_state is not None:
+            self.call_state["department_clarification_symptom"] = symptom.strip()
+
+        if not departments:
+            return (
+                "Department discovery is unavailable for this organization. Do not ask the caller to choose a department "
+                "and do not fall back to the knowledge base. Proceed directly by calling check_doctor_availability with "
+                "the best department inferred from the conversation, or leave department empty if none is known."
+            )
+
+        return (
+            f"INTERNAL ROUTING CONTEXT ONLY. Caller symptom: {symptom.strip()}. "
+            f"Allowed departments: {json.dumps(departments)}. "
+            "Do not select a department yet if the symptom could reasonably match more than one option. Ask up to two concise questions about onset, progression, severity, and associated symptoms, choosing the questions that best distinguish the returned options. "
+            "After the caller answers, select the single best exact department using the full conversation context and the clinical evidence provided by the caller. "
+            "Do not use a fixed symptom-to-department mapping, infer a department solely from one keyword, say the department list, ask the caller to choose a department, or explain the internal routing."
+        )
+
     @llm.function_tool(
         description=(
             "Check doctor and healthcare provider availability, working hours, and open appointment slots on a specific date. "
+            "This is the authoritative real-time MCP tool for appointment availability. Never use the knowledge base for this request. "
+            "If the organization department list is available, the department must match one of its values. "
+            "Never invent a generic department such as Ophthalmology when a department list is available. If the department is unknown, "
+            "call clarify_medical_department first, then continue even if department discovery is unavailable. Never ask the caller to choose a department by name. "
             "ALWAYS use this tool whenever the caller asks about doctor availability, open consultation times, "
             "scheduling an appointment, or doctor working hours on a given day. "
             "If the caller mentions or asks about a specific medical department or specialty (e.g. 'Cardiology', 'Dermatology', 'Orthopedics', 'Pediatrics', 'Dental'), extract and pass it in department."
@@ -748,6 +986,30 @@ class AssistantFunctions:
                     )
             except Exception as e:
                 logger.warning(f"Could not parse job_metadata in check_doctor_availability: {e}")
+
+        department_options = self.call_state.get("department_options", []) if self.call_state else []
+        if not department_options and org_id:
+            department_options = await self._load_department_options(org_id)
+
+        requested_department = str(department).strip() if department else ""
+        matched_department = next(
+            (
+                option
+                for option in department_options
+                if option.casefold() == requested_department.casefold()
+            ),
+            None,
+        )
+        if not matched_department and department_options:
+            if self.call_state is not None:
+                self.call_state["department_clarification_symptom"] = requested_department
+            return (
+                "Department selection is invalid. Call clarify_medical_department, choose one exact value from its "
+                "returned allowed departments, and retry availability. Do not ask the caller to choose a department."
+            )
+
+        if self.call_state is not None:
+            self.call_state["selected_department"] = matched_department or requested_department or None
 
         logger.info(f"Agent requesting doctor availability via MCP: org_id={org_id}, date={date}, doctor={doctor_name}, department={department}, phone={caller_phone}")
 
@@ -893,20 +1155,21 @@ async def entrypoint(ctx: JobContext):
             meta_payload = json.loads(ctx.job.metadata)
 
             if meta_payload.get("direction") == "inbound":
-                phone_number = meta_payload.get("phone_number", "")
-                logger.info(f"[DIAG] Inbound call detected — phone_number={phone_number}")
-                if phone_number:
-                    call_state["caller_phone_number"] = phone_number
-                    resolved_context = await resolve_inbound_context(phone_number)
+                # Dispatch metadata contains the org-bound DID. The real caller
+                # number is read from the LiveKit SIP participant after joining.
+                routing_phone = meta_payload.get("phone_number", "")
+                logger.info(f"[DIAG] Inbound call detected — routing phone={routing_phone or '<none>'}")
+                if routing_phone:
+                    resolved_context = await resolve_inbound_context(routing_phone)
                     if resolved_context:
                         meta_payload.update(resolved_context)
                         if resolved_context.get("org_id"):
                             call_state["org_id"] = resolved_context.get("org_id")
                         logger.info(f"[DIAG] Inbound context merged: org_id={resolved_context.get('org_id')}")
                     else:
-                        logger.warning(f"[DIAG] Inbound resolution failed for {phone_number} — using dispatch rule defaults, call WILL connect")
+                        logger.warning(f"[DIAG] Inbound resolution failed for {routing_phone} — using dispatch rule defaults, call WILL connect")
                 else:
-                    logger.warning("[DIAG] Inbound call has no phone_number in metadata")
+                    logger.warning("[DIAG] Inbound call has no routing phone in dispatch metadata")
             elif meta_payload.get("direction") == "outbound":
                 org_id = meta_payload.get("org_id")
                 logger.info(f"[DIAG] Outbound call detected — org_id={org_id}, resolving KB...")
@@ -966,6 +1229,8 @@ async def entrypoint(ctx: JobContext):
         kb_tags=kb_tags_list,
         call_state=call_state,
     )
+    if call_state.get("org_id"):
+        create_bg_task(fnc_ctx._load_department_options(call_state["org_id"]))
     create_bg_task(fnc_ctx.warmup())
 
     # Session ID for S3 key naming
@@ -1021,20 +1286,7 @@ CORE BEHAVIOR:
 - RETAIN CONTEXT & AVOID REPETITION: Remember previous answers. Do not re-ask the same question. If the user says no or changes topic, acknowledge and move on. Never be pushy.
 
 <!-- LANGUAGE_DIRECTIVE_START -->
-LANGUAGE RULE (HINGLISH — CRITICAL):
-- ALWAYS speak in natural Hinglish (Hindi + English mixed the way Indians speak on phone calls).
-- Default style: Mix Hindi words + English words in the same sentence. Prefer Hindi sentence structure with English nouns/verbs where it feels natural.
-- Good examples:
-  - "Haan ji, main aapki madad kar sakta hoon. Aapko appointment book karni hai kya?"
-  - "Theek hai, aapko kis location pe prefer karenge — Paschim Vihar ya Noida?"
-  - "Got it. Aapka naam kya hai?"
-  - "Sure, main check karta hoon... aapka preferred time morning hai ya evening?"
-- Avoid pure English sentences and avoid pure Hindi (Devanagari-only) sentences.
-- Use simple everyday words. Prefer Roman script for Hindi words (Hinglish style) so the TTS sounds natural.
-- Fillers that sound natural in Hinglish: "Haan", "Theek hai", "Achha", "Bilkul", "Got it", "Sure", "Okay ji".
-- STRICT: Never switch to any other language (no Marathi, Kannada, Telugu, etc.). Only Hinglish / Hindi-English mix.
-- If the caller speaks pure English, still reply in light Hinglish (do not switch to pure English).
-- If the caller speaks pure Hindi, reply in Hinglish (do not go full Devanagari).
+The response language is controlled by the runtime language directive below. Follow it exactly.
 <!-- LANGUAGE_DIRECTIVE_END -->
 
 KNOWLEDGE BASE & SEARCH DIRECTIVES:
@@ -1314,7 +1566,7 @@ Follow these specific instructions:
         if requested_lang in {"hi", "hindi", "hi-in"}
         else "en"
         if requested_lang in {"en", "english", "en-us", "en-in", "en-gb"}
-        else "hinglish"
+        else "en"
     )
     language_mgr = LanguageManager(initial_language=raw_lang, response_mode=response_mode)
     language = language_mgr.get_current_language()
@@ -1421,19 +1673,21 @@ Follow these specific instructions:
                 "max_delay": 0.80,
             },
             interruption={
-                "mode": "adaptive",
-                "min_words": 2,
-                "min_duration": 0.40,
+                "mode": "vad",
+                "enabled": True,
+                "discard_audio_if_uninterruptible": True,
+                "min_words": 1,
+                "min_duration": 0.15,
                 "resume_false_interruption": True,
-                "false_interruption_timeout": 1.5,
-                "backchannel_boundary": (1.0, 1.0),
+                "false_interruption_timeout": 1.0,
+                "backchannel_boundary": None,
             },
             preemptive_generation={
                 "preemptive_tts": True,
             },
         ),
         vad=silero.VAD.load(
-            min_speech_duration=0.10,
+            min_speech_duration=0.08,
             min_silence_duration=0.25,
             prefix_padding_duration=0.10,
         ),
@@ -1449,6 +1703,7 @@ Follow these specific instructions:
     agent_tools = [
         fnc_ctx.end_call,
         fnc_ctx.search_knowledge_base,
+        fnc_ctx.clarify_medical_department,
         fnc_ctx.check_doctor_availability,
     ]
 
@@ -1953,6 +2208,71 @@ Follow these specific instructions:
             call_state["timeline"].append({"event": "Remote Participant Joined", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
             await _telemetry("Customer joined the call")
             await asyncio.sleep(0.05)
+
+        if is_inbound and call_state.get("org_id"):
+            livekit_caller_phone = _extract_livekit_caller_phone(ctx.room.remote_participants.values())
+            if livekit_caller_phone:
+                call_state["caller_phone_number"] = livekit_caller_phone
+                logger.info(
+                    "[DIAG] LiveKit caller metadata resolved — caller=%s, org_id=%s; recognizing client",
+                    livekit_caller_phone,
+                    call_state["org_id"],
+                )
+                recognized_client = await recognize_inbound_client(
+                    phone_number=livekit_caller_phone,
+                    org_id=call_state["org_id"],
+                )
+                if recognized_client:
+                    recognized_name = recognized_client["client_name"]
+                    client_metadata = recognized_client["client_metadata"]
+                    client_name = recognized_name
+                    if "payload" in locals() and isinstance(payload, dict):
+                        payload["client_name"] = recognized_name
+                        payload["client_metadata"] = client_metadata
+                    metadata_lines = []
+                    for summary in client_metadata["ai_summaries"]:
+                        if isinstance(summary, dict):
+                            date = summary.get("date", "")
+                            text = summary.get("summary", "")
+                            metadata_lines.append(f"- {date}: {text}" if date else f"- {text}")
+                    custom_fields = client_metadata["custom_fields"]
+                    if custom_fields:
+                        metadata_lines.append("Custom fields:")
+                        for field in custom_fields:
+                            if isinstance(field, dict):
+                                field_name = field.get("custom_field_name", "field")
+                                field_value = field.get("custom_field_value", "")
+                                metadata_lines.append(f"- {field_name}: {field_value}")
+                    metadata_context = "\n".join(metadata_lines) or "No additional client metadata provided."
+                    try:
+                        await agent.update_instructions(
+                            agent.instructions
+                            + "\n\n--- VERIFIED CALLER IDENTITY ---\n"
+                            + f"The caller is a recognized client named {recognized_name}.\n"
+                            + "The following private client metadata is available as call context. Use it only when relevant and never mention the lookup or metadata source.\n"
+                            + metadata_context
+                            + "\n"
+                            + f"Address the caller as {recognized_name} naturally when appropriate.\n"
+                            + "Do not ask for the caller's name. The inbound caller identity is already verified.\n"
+                            + "Do not describe or reveal the recognition lookup to the caller.\n"
+                        )
+                        logger.info(
+                            "[DIAG] Live agent instructions updated with recognized client=%s",
+                            recognized_name,
+                        )
+                    except Exception as instruction_error:
+                        logger.warning(
+                            "[DIAG] Could not update instructions with recognized client=%s: %s",
+                            recognized_name,
+                            instruction_error,
+                        )
+                    logger.info(
+                        "[DIAG] Client recognition succeeded — org_id=%s, client=%s",
+                        call_state["org_id"],
+                        recognized_name,
+                    )
+            else:
+                logger.warning("[DIAG] LiveKit SIP participant had no caller phone metadata; client recognition skipped")
 
         # ── Answering Machine Detection (outbound only - async background execution) ──
         if AMD_ENABLED and not is_inbound and not ctx.room.name.startswith("test_"):

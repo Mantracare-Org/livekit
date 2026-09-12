@@ -4,16 +4,16 @@
 
 - UI Server running: `http://localhost:8081`
 - Agent running separately (for end-to-end call test)
-- Plivo SIP trunk credentials (Auth ID + Auth Token + Phone Number)
+- Plivo SIP trunk credentials (Auth ID along with Auth Token and Phone Number)
 
 ---
 
 ## Quick Test: Call Yourself (No Plivo Setup Needed)
 
-The fastest way to test inbound behavior — the system calls your phone and the agent treats it as an inbound call.
+The fastest way to test the inbound behavior — the system calls your phone and the agent treats it as an inbound call.
 
 ```bash
-curl -X POST http://localhost:8081/api/v1/test/inbound-call \
+curl -X POST http://localhost:8081/v1/test/inbound-call \
   -H "Content-Type: application/json" \
   -d '{
     "phone": "1234567890",
@@ -46,7 +46,7 @@ You'll receive a call. Answer it — the agent will greet you as an inbound call
 
 Created trunk `plivo-inbound-trunk` with ID `ST_9crXjawUyeJp`.
 
-**Endpoint:** `POST /api/v1/sip/trunks/inbound`
+**Endpoint:** `POST /v1/sip/trunks/inbound`
 
 ```json
 {
@@ -77,7 +77,7 @@ Created trunk `plivo-inbound-trunk` with ID `ST_9crXjawUyeJp`.
 
 Links the inbound trunk to the agent. When a call arrives, LiveKit auto-creates a room and dispatches `mantra-agent`.
 
-**Endpoint:** `POST /api/v1/sip/dispatch-rules`
+**Endpoint:** `POST /v1/sip/dispatch-rules`
 
 ```json
 {
@@ -126,20 +126,20 @@ Alternatively, use Plivo's **Answer URL** pointing to a proxy that forwards to L
 ### List inbound trunks:
 
 ```
-GET /api/v1/sip/trunks/inbound
+GET /v1/sip/trunks/inbound
 ```
 
 ### List dispatch rules:
 
 ```
-GET /api/v1/sip/dispatch-rules
+GET /v1/sip/dispatch-rules
 ```
 
 ### Delete (if needed):
 
 ```
-DELETE /api/v1/sip/trunks/inbound/ST_xxxxx
-DELETE /api/v1/sip/dispatch-rules/SR_xxxxx
+DELETE /v1/sip/trunks/inbound/ST_xxxxx
+DELETE /v1/sip/dispatch-rules/SR_xxxxx
 ```
 
 ---
