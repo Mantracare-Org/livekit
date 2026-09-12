@@ -1,5 +1,60 @@
 # Changelog
 
+## 2026-09-10
+
+### Organization-Agnostic Symptom Clarification
+
+- **fix:** Broad symptom routing no longer forces a department guess from one keyword or uses hardcoded specialty mappings.
+- **fix:** The agent may ask up to two targeted questions about onset, progression, severity, and associated symptoms before checking availability, using only the organization's returned department options.
+- **fix:** Empty department discovery now fails closed: symptom-only availability requests send a null department, and literal model values such as `"null"` are normalized before MCP dispatch.
+- **Files:** `mantra/agent.py`.
+
+## 2026-09-09
+
+### Appointment Availability MCP Routing
+
+- **fix:** Appointment and doctor-schedule questions are now explicitly excluded from upfront KB answers and the KB tool contract.
+- **fix:** A failed optional department discovery request no longer blocks the real-time `check_doctor_availability` MCP call; department validation remains active when the organization returns a department list.
+- **Files:** `mantra/agent.py`.
+
+### Broad Symptom Department Clarification
+
+- **feat:** Added `clarify_medical_department` to fetch organization-specific department options through MCP, retain them in per-call state, and force one targeted follow-up before doctor availability is checked.
+- **fix:** Added a deterministic availability gate that fetches `get_org_departments` when the model skips clarification and rejects invented departments such as `Ophthalmology` unless they exactly match the organization's department list.
+- **fix:** Kept department names internal, supplied the MA department list as model context for LLM-based routing, preloaded options after org resolution, and rejected departments outside the returned list.
+- **Files:** `mantra/agent.py`, `livekit-mcp/src/livekit_mcp/tools/department_list.py`, `livekit-mcp/src/livekit_mcp/clients/backend_client.py`.
+
+## 2026-09-09
+
+### Inbound Client Recognition Metadata
+
+- **feat:** Expanded the `recognize_client` MCP response beyond `client_name` to include `client_metadata.ai_summaries` and `client_metadata.custom_fields` from the MantraAssist lead endpoint.
+- **agent:** Injects recognized caller summaries and custom fields into the live inbound call context while preserving anonymous-caller fallback when no client is found.
+
+### Fast Voice Barge-In
+
+- **fix:** Switched agent interruption handling from adaptive ML detection to LiveKit VAD mode so caller speech stops agent TTS promptly instead of waiting for the full response.
+- **tuning:** Reduced interruption speech threshold to `0.15s`, enabled buffered-audio discard during uninterruptible speech, and tightened Silero VAD speech/silence detection.
+
+## 2026-09-08
+
+### Client Recognition Response Handling
+
+- **fix:** Inbound MCP recognition now accepts direct or nested client/lead names (`client_name`, `name`, or `full_name`) and treats `null`, missing, or empty responses as anonymous callers without blocking the call.
+
+### Docs: Remove `/api` Prefix From All Endpoints
+
+- **docs:** Replaced `/api/` with `/` across 26 files (198 occurrences) to match the `Endpoints Updated` commit (`59c3356`) which moved all routes from `/api/v1/*` to `/v1/*`, `/api/oauth/token` to `/oauth/token`, `/api/tools/call` to `/tools/call`, and `/api/telemetry/*` to `/telemetry/*`.
+- **scope:** `obsidian/` vault docs + canvases, `docs/`, `README.md`, `dev.sh`, `docs/test-payloads.http`. External `https://api.*` provider URLs left untouched.
+
+### LiveKit Caller Number For Client Recognition
+
+- **fix:** Inbound client recognition now resolves the organization from the dispatch DID, then waits for the remote LiveKit SIP participant before calling `recognize_client`.
+- **fix:** The MCP payload now uses the caller number from LiveKit SIP attributes or participant identity, so client recognition receives the caller's number rather than the organization's receiving number.
+- **diagnostics:** Added logs distinguishing the routing phone from the LiveKit caller phone.
+- **endpoint:** The MCP tool queries `GET /webhooks/mcp/lead?org_id={org_id}&phone={phone}` and accepts a client name or a null result.
+- **response:** Backend `name` values are normalized to `client_name` before returning through MCP.
+
 ## 2026-09-07
 
 ### Appointment Cancellation and Rescheduling MCP Tool
@@ -59,12 +114,11 @@
 - **feat:** Updated `initial_instructions` in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py) with full natural Hinglish guidelines tailored for Indian female telesales executive personas (short 1-2 sentence turns, active listening, context retention, search directives, handoff rules, flat prosody, and brand single-word pronunciation guards).
 - **fix:** Updated `LanguageManager.get_prompt_directive()` in [mantra/language_manager.py](file:///home/fardeen/lkt/mantra/language_manager.py) to return Hinglish prompt directives matching `<!-- LANGUAGE_DIRECTIVE_START --> ... <!-- LANGUAGE_DIRECTIVE_END -->`. Prevents dynamic `llm_node` language updates from overwriting Hinglish instructions with pure Devanagari Hindi or pure Latin English.
 
-
 ### Deepgram STT Indian English (`en-IN`) Locale Resolution & Devanagari Script Fix
 
 - **fix:** Updated `resolve_stt_language()` in [mantra/language_manager.py](file:///home/fardeen/lkt/mantra/language_manager.py) so Indian calls (country code `IN`, `+91` prefix, 10-digit Indian numbers starting `6-9`, landlines starting `0`) strictly use Deepgram Nova-3's **`en-IN`** locale, while US and international calls retain **`en-US`**.
-- **fix:** Fixed `NativeLanguageDetector.detect()` in [mantra/language_manager.py](file:///home/fardeen/lkt/mantra/language_manager.py): any utterance containing Devanagari script (e.g., *"Hello आप"*, *"नहीं मेरा नाम व्यात्या sir."*) strictly evaluates to Hindi (`hi`), preventing false language switches to English (`hi -> en`).
-- **fix:** Updated initial language initialization in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py) to automatically inspect `initial_instructions` for Devanagari script when `payload` lacks an explicit language field. Initializes `initial_language="hi"` (Hindi) so initial Hindi agent greetings (*"नमस्ते..."*) start with `language="hi"` STT/TTS rather than default English (`en-IN`).
+- **fix:** Fixed `NativeLanguageDetector.detect()` in [mantra/language_manager.py](file:///home/fardeen/lkt/mantra/language_manager.py): any utterance containing Devanagari script (e.g., _"Hello आप"_, _"नहीं मेरा नाम व्यात्या sir."_) strictly evaluates to Hindi (`hi`), preventing false language switches to English (`hi -> en`).
+- **fix:** Updated initial language initialization in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py) to automatically inspect `initial_instructions` for Devanagari script when `payload` lacks an explicit language field. Initializes `initial_language="hi"` (Hindi) so initial Hindi agent greetings (_"नमस्ते..."_) start with `language="hi"` STT/TTS rather than default English (`en-IN`).
 - **fix:** Updated dynamic STT language switching in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py) (`stt_engine.update_options`) to run through `resolve_stt_language()` when `new_lang == 'en'`, preserving the `en-IN` regional locale for Indian phone calls instead of falling back to US English (`en-US`).
 
 ## 2026-09-03
@@ -95,11 +149,11 @@
 
 ## 2026-08-30
 
-
 ### Dynamic OAuth Token Acquisition & Hardcoded JWT Removal
 
 - **feat:** Updated `MantraMCPClient` in [mantra/mcp_client.py](file:///home/fardeen/lkt/mantra/mcp_client.py) to dynamically acquire OAuth access tokens from Auth Server (`POST ${AUTH_SERVER_URL}/api/oauth/token`) using `OAUTH_CLIENT_ID` and `OAUTH_CLIENT_SECRET`.
 - **refactor:** Removed static `LIVEKIT_MCP_JWT_TOKEN` from [.env.prod](file:///home/fardeen/lkt/.env.prod) in favor of clean OAuth client credentials authentication.
+
 ## 2026-08-29
 
 ### DeepSeek TTFT Resiliency & LLM Streaming Read Timeout Hardening
@@ -123,12 +177,11 @@
 ### Organization Processes & Stages MCP Tool (`fetch_org_processes`) & Inbound Post-Call Integration
 
 - **feat:** Added `fetch_org_processes` (and alias `receive_org_processes`) tool to `livekit-mcp`:
-
-  - Queries `MantraAssist-backend` (`GET /api/v1/processes?org_id={org_id}`) with standard webhook headers (`x-client-id`, `x-client-secret`, `ngrok-skip-browser-warning`).
-=======
+  - # Queries `MantraAssist-backend` (`GET /api/v1/processes?org_id={org_id}`) with standard webhook headers (`x-client-id`, `x-client-secret`, `ngrok-skip-browser-warning`).
   - Queries `MantraAssist-backend` (`GET /api/v1/processes?org_id={org_id}`).
   - Normalizes processes and stages along with their descriptions and stage IDs into structured format `[{"process_id": 317, "process_name": "...", "process_description": "...", "stage_ids": [1155, 1156, ...], "stages": [...]}]`.
   - Implemented an in-memory TTL cache (10-minute expiry) in `MantraAssistBackendClient` to avoid redundant network queries for the same organization.
+
 - **feat:** Integrated MCP process stage retrieval into inbound call post-call analysis in [mantra/agent.py](file:///home/fardeen/lkt/mantra/agent.py):
   - When an inbound call completes in `finalize()`, if `org_id` is present, it invokes `fetch_org_processes` via `MantraMCPClient`.
   - Injects the retrieved `process_stage_data` into `SessionRecorder.analyze_call()`, enabling LLM post-call analysis to accurately assign `derived_process_id` and `new_stage_id` for CRM webhooks.

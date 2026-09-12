@@ -749,9 +749,89 @@ class AssistantFunctions:
         self._disconnect_task = create_bg_task(graceful_disconnect())
         return ""
 
+    async def _load_department_options(self, org_id: int | str) -> list[str]:
+        """Load and remember the departments available for this organization."""
+        from mantra.mcp_client import get_mcp_client
+
+        try:
+            raw_departments = await get_mcp_client().call_tool(
+                "get_org_departments",
+                {"org_id": org_id},
+            )
+            departments = json.loads(raw_departments) if isinstance(raw_departments, str) else raw_departments
+            if isinstance(departments, dict):
+                departments = departments.get("departments") or departments.get("data") or []
+            if not isinstance(departments, list):
+                departments = []
+            normalized = []
+            for item in departments:
+                name = str(item).strip()
+                if name and name.casefold() not in {value.casefold() for value in normalized}:
+                    normalized.append(name)
+        except Exception as exc:
+            logger.warning(f"Failed to fetch departments for org_id={org_id}: {exc}")
+            normalized = []
+
+        if self.call_state is not None:
+            self.call_state["department_options"] = normalized
+        return normalized
+
+    @llm.function_tool(
+        description=(
+            "Use when the caller gives a broad medical symptom without a clear department or specialty, such as 'I have an eye problem'. "
+            "Fetch the organization's department list silently, but do not guess a department from one vague symptom. "
+            "Ask up to two concise clinical-routing questions before selecting a department. Ask about the symptom's onset, progression, severity, and any associated symptoms that distinguish the available specialties. "
+            "Use the caller's answers and the full conversation to select the best exact value from the returned list. "
+            "Do not ask the caller to choose a department or mention department names aloud. "
+            "Do not use fixed symptom-to-department mappings or assume that a symptom always belongs to a particular specialty. "
+            "Only call check_doctor_availability after the caller answers the necessary routing question(s)."
+        )
+    )
+    async def clarify_medical_department(
+        self,
+        symptom: Annotated[str, "The caller's broad symptom or reason for the appointment."],
+    ) -> str:
+        org_id = self.call_state.get("org_id") if self.call_state else None
+        if not org_id and self.job_metadata:
+            try:
+                payload = json.loads(self.job_metadata) if isinstance(self.job_metadata, str) else self.job_metadata
+                org_id = payload.get("org_id") or (
+                    payload.get("metadata", {}).get("org_id")
+                    if isinstance(payload.get("metadata"), dict)
+                    else None
+                )
+            except Exception as exc:
+                logger.warning(f"Could not parse job_metadata in clarify_medical_department: {exc}")
+
+        if not org_id:
+            return "Ask the caller which specific eye or medical specialty they need, then continue without guessing a department."
+
+        departments = await self._load_department_options(org_id)
+
+        if self.call_state is not None:
+            self.call_state["department_clarification_symptom"] = symptom.strip()
+
+        if not departments:
+            return (
+                "Department discovery is unavailable for this organization. Do not ask the caller to choose a department "
+                "and do not fall back to the knowledge base. Do not infer or invent a department from symptoms. "
+                "If the caller did not explicitly name a department, call check_doctor_availability with department omitted."
+            )
+
+        return (
+            f"INTERNAL ROUTING CONTEXT ONLY. Caller symptom: {symptom.strip()}. "
+            f"Allowed departments: {json.dumps(departments)}. "
+            "Do not select a department yet if the symptom could reasonably match more than one option. Ask up to two concise questions about onset, progression, severity, and associated symptoms, choosing the questions that best distinguish the returned options. "
+            "After the caller answers, select the single best exact department using the full conversation context and the clinical evidence provided by the caller. "
+            "Do not use a fixed symptom-to-department mapping, infer a department solely from one keyword, say the department list, ask the caller to choose a department, or explain the internal routing."
+        )
+
     @llm.function_tool(
         description=(
             "Check doctor and healthcare provider availability, working hours, and open appointment slots on a specific date. "
+            "This is the authoritative real-time MCP tool for appointment availability. Never use the knowledge base for this request. "
+            "If the organization department list is available, the department must match one of its values. "
+            "Never invent a generic department such as Ophthalmology when a department list is available. If the department is unknown or discovery returns no options, pass department as null and never infer one from symptoms. Never ask the caller to choose a department by name. "
             "ALWAYS use this tool whenever the caller asks about doctor availability, open consultation times, "
             "scheduling an appointment, or doctor working hours on a given day. "
             "If the caller mentions or asks about a specific medical department or specialty (e.g. 'Cardiology', 'Dermatology', 'Orthopedics', 'Pediatrics', 'Dental'), extract and pass it in department."
@@ -792,6 +872,37 @@ class AssistantFunctions:
             except Exception as e:
                 logger.warning(f"Could not parse job_metadata in check_doctor_availability: {e}")
 
+        department_options = self.call_state.get("department_options", []) if self.call_state else []
+        if not department_options and org_id:
+            department_options = await self._load_department_options(org_id)
+
+        requested_department = str(department).strip() if department else ""
+        if requested_department.casefold() in {"null", "none", "unknown", "n/a"}:
+            requested_department = ""
+
+        # An unavailable department catalog cannot validate an inferred specialty.
+        if not department_options:
+            requested_department = ""
+
+        matched_department = next(
+            (
+                option
+                for option in department_options
+                if option.casefold() == requested_department.casefold()
+            ),
+            None,
+        )
+        if not matched_department and department_options:
+            if self.call_state is not None:
+                self.call_state["department_clarification_symptom"] = requested_department
+            return (
+                "Department selection is invalid. Call clarify_medical_department, choose one exact value from its "
+                "returned allowed departments, and retry availability. Do not ask the caller to choose a department."
+            )
+
+        if self.call_state is not None:
+            self.call_state["selected_department"] = matched_department or requested_department or None
+
         logger.info(f"Agent requesting doctor availability via MCP: org_id={org_id}, date={date}, doctor={doctor_name}, department={department}, phone={caller_phone}")
 
         from mantra.mcp_client import get_mcp_client
@@ -805,8 +916,8 @@ class AssistantFunctions:
                 "query_date": str(date).strip(),
                 "name": str(doctor_name).strip() if doctor_name else None,
                 "doc_name": str(doctor_name).strip() if doctor_name else "",
-                "department": str(department).strip() if department else "",
-                "query": str(doctor_name).strip() if doctor_name else (str(department).strip() if department else None),
+                "department": requested_department or None,
+                "query": str(doctor_name).strip() if doctor_name else (requested_department or None),
                 "caller_phone": caller_phone,
             },
         )
