@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-12
+
+### Monolith Split — Modular Packages Refactor
+
+- **refactor:** Split `mantra/ui_server.py` (4,489 lines) into an app-assembly shim plus generated packages `mantra/dependencies/`, `mantra/services/`, and `mantra/routers/`; route table verified byte-identical to baseline (59 routes, sorted set diff clean).
+- **refactor:** Split `mantra/agent.py` (3,012 lines) into an orchestration shim backed by `mantra/core/` (`common`, `engines`, `inbound`, `assistant_functions`, `live_agent`, `call_monitors`, `finalize`, `room_control`) and `mantra/prompts.py`.
+- **key fix:** `ui_server.py` shim now runs `load_dotenv(".env.local")` before mantra imports so `JWT_SECRET` (defined in `.env.local`) is available to `dependencies.auth` at import time.
+- **key fix:** Route enumeration accounts for FastAPI's lazy `_IncludedRouter`; recursion into `original_router.routes` yields the exact 59-route baseline.
+- **behavior preserved:** OTEL suppression, PID-format logging, `base/dynamic` runtime prompt building (including the intentionally unused `context_header`/`context_body` block and literal-base no-metadata path), DeepSeek KV pre-warm, inbound context resolution, client recognition, AMD, all monitors (positive-intent, transcript+keyterm+language, inactivity, farewell safety net, call limiter), and shielded `finalize()`.
+- **verification:** `py_compile` passes for all modules; `import mantra.agent` and `import mantra.ui_server` boot cleanly; 59-route diff matches baseline.
+- **Files:** `mantra/ui_server.py`, `mantra/agent.py`, `mantra/prompts.py`, `mantra/core/*.py`, `mantra/{routers,services,dependencies}/*`.
+
 ## 2026-09-10
 
 ### Organization-Agnostic Symptom Clarification

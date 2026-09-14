@@ -1,8 +1,10 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)  
-> **Last Updated:** 2026-09-10  
-> **Status:** Active maintenance, Doctor Availability Tool Integration, Org Processes & Stages MCP Tool, Inbound Post-Call Integration, Inbound SIP Lifecycle
+> **Last Updated:** 2026-09-12  
+> **Status:** Active maintenance, Monolith Split (ui_server + agent → modular packages)
+
+- [x] **Monolith Split — `ui_server.py` & `agent.py` Refactor (2026-09-12):** Rebuilt `mantra/ui_server.py` (4,489 lines) as an app-assembly shim over generated `dependencies/`, `services/`, `routers/` packages — 59-route table verified identical to baseline. Rebuilt `mantra/agent.py` (3,012 lines) as an orchestration shim over new `mantra/core/` (`common`, `engines`, `inbound`, `assistant_functions`, `live_agent`, `call_monitors`, `finalize`, `room_control`) and `mantra/prompts.py`. Fixed `load_dotenv(".env.local")` ordering (must precede mantra imports for `JWT_SECRET`). Handled FastAPI lazy `_IncludedRouter` in route enumeration. All modules `py_compile` clean and both entrypoints import cleanly. Files: `mantra/ui_server.py`, `mantra/agent.py`, `mantra/prompts.py`, `mantra/core/*.py`, `mantra/{routers,services,dependencies}/*`.
 
 - [x] **Inbound SIP Trunk and Dispatch Rule Lifecycle (2026-09-10):** Required an explicit provider with no primary default, validated it before inbound LiveKit provisioning, rolled back newly-created trunk/rule resources when provider forwarding failed, and made inbound trunk deletion remove associated LiveKit dispatch rules and `org_configs` mappings.
 - [x] **Organization-Agnostic Symptom Clarification (2026-09-10):** Broad medical symptoms no longer force a department selection from a single keyword or hardcoded specialty mapping; the agent can ask up to two targeted routing questions before checking availability.
