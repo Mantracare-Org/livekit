@@ -12,7 +12,7 @@ import httpx
 import numpy as np
 import asyncpg
 from typing import Dict, List, Optional, Union
-from datetime import datetime, timezone
+from datetime import datetime as dt, timezone
 from livekit import rtc
 from livekit.agents import llm, APIConnectOptions
 import boto3
@@ -87,7 +87,7 @@ async def save_call_log_to_db(
         attempted_at = (
             log_data.get("called_on")
             or log_data.get("requested_at")
-            or datetime.now(tz=timezone.utc).isoformat()
+            or dt.now(tz=timezone.utc).isoformat()
         )
         ai_call_id = log_data.get("ai_call_id") or (log_data.get("data", {}) if isinstance(log_data, dict) else {}).get("ai_call_id") or ""
         duration = log_data.get("call_duration") or log_data.get("call_duration_seconds") or 0

@@ -105,6 +105,7 @@ load_dotenv()  # Load .env (OpenAI, etc.)
 load_dotenv(
     ".env.local", override=True
 )  # Load .env.local (LiveKit, etc.) and override if needed
+load_dotenv(".env.self", override=True)  # Self-host override (if present)
 
 
 AGENT_NAME = os.getenv("AGENT_NAME", "mantra-agent")

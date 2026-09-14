@@ -10,7 +10,7 @@ import httpx
 import openai as openai_client
 
 from livekit.agents import inference
-from livekit.plugins import deepgram, google, openai
+from livekit.plugins import cartesia, deepgram, google, openai
 
 from mantra.language_manager import (
     CallKeytermMemory,
@@ -181,14 +181,12 @@ def build_language_manager(payload: dict | None):
 
 
 def build_tts_engine(voice_id: str, language: str, voice_speed: float):
-    """TTS via LiveKit Inference — Cartesia provider."""
-    return inference.TTS(
-        model="cartesia/sonic-3",
+    """Direct Cartesia TTS plugin (self-host compatible)."""
+    return cartesia.TTS(
+        model="sonic-3",
         voice=voice_id,
         language=language,
-        extra_kwargs={
-            "speed": voice_speed,
-        }
+        speed=voice_speed,
     )
 
 

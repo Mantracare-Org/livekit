@@ -12,6 +12,7 @@ from mantra.utils import report_telemetry
 
 # Load environment variables
 load_dotenv(".env.local")
+load_dotenv(".env.self", override=True)  # Self-host override (if present)
 
 AGENT_NAME = os.getenv("AGENT_NAME", "mantra-agent")
 

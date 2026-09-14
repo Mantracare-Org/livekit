@@ -24,6 +24,7 @@ colorama_init(autoreset=True)
 
 # Load environment variables from .env.local
 load_dotenv(".env.local")
+load_dotenv(".env.self", override=True)  # Self-host override (if present)
 
 from mantra.email_alerts import send_crash_email
 from mantra.services import clients as _svc_clients

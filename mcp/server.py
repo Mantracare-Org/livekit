@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import logging
 
 load_dotenv()
+load_dotenv(".env.self", override=True)  # Self-host override (if present)
 
 logger = logging.getLogger(__name__)
 
