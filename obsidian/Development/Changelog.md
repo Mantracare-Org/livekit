@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-14
+
+### LiveKit Agent Workflows
+
+- **feat:** Implemented graph-based workflows natively inside LiveKit using the `AgentTask` primitive. Provides an architecture analogous to the Dograh template while staying entirely within the LiveKit ecosystem.
+- **feat:** Created `mantra/core/workflow.py` featuring `LivekitWorkflowEngine` and native `AgentTask` subclasses (`StartCallTask`, `AgentNodeTask`, `EndCallExtractionTask`).
+- **feat:** Workflows define a sequence of conversational states. The agent seamlessly updates its instructions dynamically via `AgentSession.update_agent(task)` as the caller progresses through the configured graph.
+- **feat:** The `endCall` extraction node dynamically translates graph-defined extraction prompts into a strict structured JSON extraction task, seamlessly moving into a webhook firing task using standard non-LLM Python async code.
+- **feat:** Updated `mantra/agent.py` entrypoint to detect `workflow` JSON in `job.metadata` and trigger background `run_workflow` execution alongside standard LiveKit sessions.
+- **Files:** `mantra/core/workflow.py`, `mantra/agent.py`.
+
 ## 2026-09-12
 
 ### Monolith Split — Modular Packages Refactor

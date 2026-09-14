@@ -546,7 +546,7 @@ class SessionRecorder:
     def __init__(self):
         self._tracks: Dict[str, List[bytes]] = {}
         self._recording_tasks: List[asyncio.Task] = []
-        self.start_time = datetime.datetime.now()
+        self.start_time = datetime.now()
         self.end_time = None
         self.recording_duration_seconds = 0.0
 
