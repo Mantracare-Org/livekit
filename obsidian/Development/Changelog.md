@@ -1,5 +1,79 @@
 # Changelog
 
+## 2026-09-15
+
+### MANTRAASSIST_BACKEND_URL Single Endpoint Standard
+
+- **refactor:** Simplified `send_to_backend` in `mantra/utils.py` to rely strictly on `MANTRAASSIST_BACKEND_URL` as the single authoritative backend webhook configuration variable.
+- **files:** `mantra/utils.py`, `obsidian/Development/Changelog.md`.
+
+### Redis Monitor Log Noise Reduction
+
+- **ops:** Moved successful `GET /v1/redis/*` monitor polling logs from INFO to DEBUG; Redis endpoint errors remain at ERROR.
+- **files:** `mantra/ui_server.py`.
+
+### Active Calls Badge Sync
+
+- **fix:** Updated the dashboard `Active Calls` badge from the Redis-backed live call list on every SSE refresh instead of leaving it at the initial `0`.
+- **files:** `static/dashboard.js`.
+
+### Health Status Detail Consistency Fix
+
+- **fix:** Unified `/health` and `/health/details` behind the same dependency and capacity checks, so degraded status details now identify the actual failing check.
+- **files:** `mantra/services/health.py`, `mantra/routers/pages.py`.
+
+### Dashboard Service Status Details
+
+- **ui:** Changed the system health indicator into a compact button that opens an inline popover when systems are degraded.
+- **api:** Added `/health/details` to return safe per-service pass/fail states without exposing error messages or navigating away.
+- **files:** `mantra/routers/pages.py`, `static/dashboard.html`, `static/dashboard.js`, `obsidian/Development/Changelog.md`.
+
+### Live Dashboard System Status
+
+- **ui:** Added a navigation status indicator backed by `/health`, showing operational, degraded, and unavailable states for service health and capacity checks.
+- **refresh:** Health status loads on dashboard startup and refreshes with the existing 15-second dashboard polling cycle.
+- **files:** `static/dashboard.html`, `static/dashboard.js`, `obsidian/Development/Changelog.md`.
+
+### Scrollable Dashboard Call History
+
+- **ui:** Bounded the dashboard call-history table and enabled vertical scrolling while keeping its column headings sticky.
+- **files:** `static/dashboard.html`, `obsidian/Development/Changelog.md`.
+
+### Dynamic Production & Cloud SIP Domain Resolution
+
+- **refactor:** Refactored `_get_sip_domain()` in `mantra/services/telephony.py` so that it first checks `LIVEKIT_SIP_DOMAIN` / `SIP_DOMAIN`, and if omitted, automatically derives the SIP domain from `LIVEKIT_URL` (e.g. `wss://mantraassist-0ek43ife.livekit.cloud` -> `mantraassist-0ek43ife.sip.livekit.cloud`, or `wss://livekit.domain.com` -> `sip.domain.com`), reserving `sip.localhost` strictly for local dev fallbacks.
+- **refactor:** Updated migration `008_inbound_sip_trunks_and_rules.py` to populate `sip_trunks.address` dynamically using `_get_sip_domain()` instead of hardcoding `'sip.localhost'`.
+- **refactor:** Updated `req_host` fallback in `mantra/routers/sip.py` to check `PUBLIC_HOST` and `SERVER_HOST` env vars before fallback.
+- **refactor:** Updated centralized database helper `mantra/dependencies/database.py` (which serves all frontend UI dashboard, KB ingestion, org configs, and SIP management APIs), `mantra/utils.py`, `mantra/routers/knowledge.py`, and `mcp/server.py` to default database connection parameters to `livekit_db` (`redscarf`/`nowandforever` on port `5440`).
+- **files:** `mantra/dependencies/database.py`, `mantra/utils.py`, `mantra/routers/knowledge.py`, `mcp/server.py`, `obsidian/Development/Changelog.md`.
+
+### Self-Hosted TTS Fix — Direct Cartesia Plugin (cloud inference replaced)
+
+- **root cause:** Since 2026-07 the agent built TTS through LiveKit *native inference* (`inference.TTS`, `sonic-3`), which routes through the **LiveKit cloud inference gateway** (`wss://agent-gateway.livekit.cloud/v1/tts`). A **self-hosted** LiveKit instance (local dev keypair, `ws://localhost:7880`) cannot authenticate to that cloud gateway — every sync → **HTTP 401** → the outbound callee hears silence.
+- **fix:** `build_tts_engine()` in `mantra/core/engines.py` now returns `cartesia.TTS(model="sonic-3", voice=voice_id, language=language, speed=voice_speed)` — the direct `livekit-plugins-cartesia` plugin (`livekit-plugins-cartesia>=1.6.7` added to `pyproject.toml`/`uv.lock`), streaming from Cartesia's own API instead of the LiveKit gateway.
+- **key fix (2nd 401):** First direct-API attempt still 401'd — the active `CARTESIA_API_KEY` (`sk_car_wfCQVuNDVYY3v5orZykUn` in `.env.local`) is **invalid**. Verified via `POST https://api.cartesia.ai/tts/bytes`: that key → 401; `sk_car_QHrou…`, `sk_car_unoro…`, `sk_car_Xmwdg…`, `sk_car_45KeN…`, `sk_car_wfCQVuNDVYY3v5orZykUnW` (trailing `W`, `.env`), and `sk_car_Hhd28…` (`.env.self:46`) → **200**. Effective key (`.env.self`, override=True) is now valid, so a fresh `./dev.sh` should produce audible TTS. Audio verification call still pending.
+- **files:** `mantra/core/engines.py`, `pyproject.toml`, `uv.lock`, `.env.self`/`.env.local`/`.env` (gitignored keys).
+
+### Repo Recovery & `selfhost/` Reconstruction (git cleanup incident)
+
+- **incident:** On branch `migration/self-host` the user `git stash`ed the working tree (TTS fix + telephony rewrites), `rm -rf`'d untracked `selfhost/` and `mantra/migrations/007_sip_trunks.py`, moved to a new branch (`improv/self-host`), and popped the stash. A follow-up `git reset --hard HEAD && git clean -fd` then wiped the restored changes and removed an empty untracked `tests/`.
+- **recovery:** All 12 tracked modified files recovered from the orphaned stash object `d3c5648` (`backup-stash-selfhost` branch; branch later deleted on request). `tests/` was an empty dir — no data loss. Reconstructed `mantra/migrations/007_sip_trunks.py` from the live DB (`\d sip_trunks` + the seeded `MC-B2C-Plivo-LOCAL` row) and verified `py_compile`.
+- **selfhost/ files:** `livekit.yaml` was recovered byte-for-byte from the still-mounted file inside `lkt-selfhost-livekit`; `docker-compose.self.yml` reconstructed from `docker inspect` (labels, mounts, env, network host). A later Docker bind-mount turned `livekit.yaml` into a root-owned directory, and the `lkt-selfhost-livekit` container was deleted — the original file bytes are therefore **no longer recoverable**.
+- **current config (live):** `selfhost/livekit.yaml` → `port: 7880`, `keys:` map (`devkey_4b19b9896c7018e6`), RTC `tcp_port: 7881`, `udp_port: 7882`, `port_range_start: 50000` / `port_range_end: 52000`, redis `localhost:6379`. `selfhost/docker-compose.self.yml` → 2 services (`livekit-server` + `sip`), host networking, `SIP_CONFIG_BODY` with `ws_url ws://localhost:7880`, `sip_port: 5060`, `rtp_port: 10000-20000`, `use_external_ip: true`. Only `lkt-selfhost-sip` is currently running (the livekit-server container is gone).
+- **also:** Fixed Pylance `reportUndefinedVariable` — `llm` added to the `livekit.agents` import in `mantra/core/engines.py` (used by the `build_post_call_llm` annotation).
+- **files:** `mantra/*`, `mantra/migrations/007_sip_trunks.py`, `selfhost/livekit.yaml`, `selfhost/docker-compose.self.yml`, `mantra/core/engines.py`.
+
+### Unified Database Setup (`livekit_db`) & LiveKit Cloud Code Cleanup
+
+- **refactor:** Removed LiveKit Cloud proxy client initializations (`plivo_client`, `voicelink_client` proxies with HTTP proxy sessions) in `mantra/services/clients.py` and unified to a single self-hosted LiveKit API client (`lk_client`).
+- **refactor:** Cleaned up `_get_sip_domain()` in `mantra/services/telephony.py` to default to `LIVEKIT_SIP_DOMAIN` / `sip.localhost` without Cloud URL parsing.
+- **feat:** Provisioned new dedicated database `livekit_db` owned by role `redscarf` (password `nowandforever`) on PostgreSQL (port 5440) in `~/lkdb`.
+- **feat:** Migration `008_inbound_sip_trunks_and_rules.py` extended `sip_trunks` table with `direction`, `dispatch_rule_id`, `room_prefix`, and `metadata` columns.
+- **feat:** Inbound numbers now automatically persist both LiveKit Inbound Trunk ID (`livekit_trunk_id`) and Dispatch Rule ID (`dispatch_rule_id`) in PostgreSQL (`org_configs` and `sip_trunks`).
+- **feat:** Migrated complete schema and data from `call_logs_db` to `livekit_db` (`call_logs` [1304 rows], `org_configs` [2 rows], `kb_collections` [7 rows], `kb_pages` [127 rows], `sip_trunks` [3 rows], `call_events`, `webhook_events`).
+- **config:** Updated `.env.self`, `.env.local`, and `~/lkdb/.env` to default POSTGRES connection target to `livekit_db` with user `redscarf`.
+- **Files:** `mantra/services/clients.py`, `mantra/services/telephony.py`, `mantra/migrations/008_inbound_sip_trunks_and_rules.py`, `~/lkdb/.env`, `.env.self`, `.env.local`, `obsidian/Development/Changelog.md`.
+
 ## 2026-09-14
 
 ### Plivo 403 RESOLVED — Dedicated Self-Provisioned Outbound Trunk (E2E call placed)
@@ -20,7 +94,7 @@
 ### Self-Hosted LiveKit Transfer — Local Verification (env-only)
 
 - **feat:** Added `.env.self` (gitignored) as a highest-priority environment override: `LIVEKIT_URL=ws://localhost:7880`, dev keypair `devkey_4b19b9896c7018e6` / secret, `LIVEKIT_SIP_DOMAIN=sip.localhost`. Loaded with `override=True` after `.env`/`.env.local` in `mantra/agent.py`, `mantra/ui_server.py`, `mcp/server.py`, `mantra/dispatcher.py`. No behavioral change when the file is absent.
-- **infra:** LiveKit 1.13 split SIP out of `livekit-server`. Self-host stack is now 3 services sharing the host dev Redis — `selfhost/docker-compose.self.yml` runs `livekit/livekit-server:latest` (host networking, config `selfhost/livekit.yaml`, RTC UDP 64000-64999, TCP 7881) plus `livekit/sip:latest` (host networking, `SIP_CONFIG_BODY` with `ws_url ws://localhost:7880`, `sip_port 5060`, `rtp_port 10000-20000`, `use_external_ip`).
+- **infra:** LiveKit 1.13 split SIP out of `livekit-server`. Self-host stack is 2 services sharing the host dev Redis — `selfhost/docker-compose.self.yml` runs `livekit/livekit-server:latest` (host networking, config `selfhost/livekit.yaml`, RTC UDP 64000-64999 / TCP 7881 in the *original* config; the recreated config — see 2026-09-15 — uses UDP 50000-52000) plus `livekit/sip:latest` (host networking, `SIP_CONFIG_BODY` with `ws_url ws://localhost:7880`, `sip_port 5060`, `rtp_port 10000-20000`, `use_external_ip`).
 - **key fix:** Blanked `HTTPS_PROXY`/`HTTP_PROXY` in `.env.self`. The `livekit.agents` worker SDK forces the env proxy onto its WebSocket connection to LiveKit; routing `ws://localhost:7880` through the remote India egress proxy (13.234.222.62) returned 500 on the `/agent` handshake. aiohttp ignores `NO_PROXY` for an explicitly-passed proxy, so `NO_PROXY` could not save it. `PLIVO_PROXY` unchanged.
 - **key fix:** `mantra/utils.py` — the refactor's `from datetime import datetime, timezone` shadowed the `datetime` module (still relied on by `datetime.datetime` calls at lines 346/549/578/589/747/1068-1089), crashing every job at `SessionRecorder()`. Re-aliased to `from datetime import datetime as dt, timezone` with the one class-form call updated.
 - **verification:** All 7 startup dependency checks green against self-hosted LiveKit (`redis`, `livekit`, `livekit_primary`, `postgres`, `stt_deepgram`, `mantraassist_backend`, `s3`); agent worker **registered** (`worker registered {agentName: mantra-agent-dev}`); `/dispatch-test` created a room and the server dispatched `JT_ROOM` to the worker; agent joined via WebRTC over the 64000 UDP range, warmed the KB, and spoke the greeting (`TRANSCRIPT | assistant: Hello, this is Arushi from MantraCare. How can I help you today?`); first job ended `JS_SUCCESS` with no error.

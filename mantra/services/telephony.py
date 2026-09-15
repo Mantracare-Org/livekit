@@ -99,12 +99,17 @@ def _get_sip_domain() -> str:
         return configured_domain
 
     lk_url = os.getenv("LIVEKIT_URL", "")
-    host_lk = lk_url.replace("wss://", "").replace("ws://", "").replace("https://", "").replace("http://", "")
-    if "livekit.cloud" in host_lk:
-        subdomain = host_lk.split(".")[0]
-        if subdomain and subdomain != "www":
-            return f"{subdomain}.sip.livekit.cloud"
-    return "sip.livekit.cloud"
+    if lk_url:
+        parsed = urlparse(lk_url)
+        host = parsed.netloc or parsed.path
+        host = host.split(":")[0]
+        if host and host not in ("localhost", "127.0.0.1", "0.0.0.0"):
+            if ".livekit.cloud" in host:
+                project_id = host.replace(".livekit.cloud", "")
+                return f"{project_id}.sip.livekit.cloud"
+            return host if host.startswith("sip.") else f"sip.{host}"
+
+    return "sip.localhost"
 
 
 
@@ -679,8 +684,7 @@ async def _setup_inbound_sip_process(payload: dict | None) -> JSONResponse:
                 "sip_uri": sip_uri
             }, status_code=400)
 
-        # 5.5 Create or update org_configs mapping (only after provider forwarding has
-        # succeeded, so the DB row reflects an actually-configured number)
+        # 5.5 Create or update org_configs and sip_trunks mapping in PostgreSQL
         try:
             conn = await get_db_connection()
             org_config_id = await conn.fetchval("""
@@ -712,10 +716,35 @@ async def _setup_inbound_sip_process(payload: dict | None) -> JSONResponse:
             str(org_id), clean_number, name, prompt, voice, model, 
             kb_tags, json.dumps(transfer_numbers), client_name, process_id, 
             trunk_id, rule_id)
+
+            # Store in durable sip_trunks registry as well
+            await conn.execute("""
+                INSERT INTO sip_trunks (
+                    name, provider, address, numbers, auth_username, auth_password,
+                    livekit_trunk_id, dispatch_rule_id, phone_number, direction,
+                    room_prefix, metadata, is_active
+                ) VALUES (
+                    $1, $2, $3, ARRAY[$4], '', '',
+                    $5, $6, $4, 'inbound',
+                    $7, $8::jsonb, true
+                )
+                ON CONFLICT (name, provider) DO UPDATE SET
+                    livekit_trunk_id = EXCLUDED.livekit_trunk_id,
+                    dispatch_rule_id = EXCLUDED.dispatch_rule_id,
+                    phone_number = EXCLUDED.phone_number,
+                    direction = 'inbound',
+                    room_prefix = EXCLUDED.room_prefix,
+                    metadata = EXCLUDED.metadata,
+                    is_active = true,
+                    updated_at = NOW();
+            """,
+            name, provider, sip_domain, clean_number,
+            trunk_id, rule_id, f"inbound_{trunk_id[-6:]}", json.dumps(metadata_dict))
+
             await conn.close()
-            logger.info(f"Successfully saved org_config for {clean_number} with ID: {org_config_id}")
+            logger.info(f"Successfully saved org_config and sip_trunks for {clean_number} (Trunk: {trunk_id}, Rule: {rule_id})")
         except Exception as e:
-            logger.error(f"Failed to save org_config to database: {e}")
+            logger.error(f"Failed to save org_config / sip_trunks to database: {e}")
             # We continue even if this fails, to not break existing functionality completely,
             # though the agent might fall back to MantraAssist.
             org_config_id = None

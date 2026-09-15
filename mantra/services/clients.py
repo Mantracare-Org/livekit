@@ -2,7 +2,6 @@
 import logging
 import os
 
-import aiohttp
 import httpx
 import redis.asyncio as redis
 from livekit import api
@@ -11,18 +10,12 @@ logger = logging.getLogger("mantra.clients")
 
 AGENT_NAME = os.getenv("AGENT_NAME", "mantra-agent")
 
-# Persistent LiveKit API clients
-lk_client: api.LiveKitAPI = (
-    None  # Direct — used for Twilio, Zadarma, and general operations
-)
-plivo_client: api.LiveKitAPI = None  # Proxied — used for Plivo (India routing)
-plivo_session: aiohttp.ClientSession = (
-    None  # Owned session for plivo_client; closed manually on shutdown
-)
-voicelink_client: api.LiveKitAPI = None  # Proxied — used for VoiceLink
-voicelink_session: aiohttp.ClientSession = (
-    None  # Owned session for voicelink_client; closed manually on shutdown
-)
+# Persistent LiveKit API client for self-hosted LiveKit server
+lk_client: api.LiveKitAPI = None
+# Backward compatibility aliases pointing to unified lk_client
+plivo_client: api.LiveKitAPI = None
+voicelink_client: api.LiveKitAPI = None
+
 redis_client: redis.Redis = None
 http_client: httpx.AsyncClient = None      # Persistent client for health checks
 
@@ -40,47 +33,26 @@ MAX_CALL_CONCURRENCY = int(
 
 async def init_clients():
     """Construct all persistent clients. Called once at app startup."""
-    global lk_client, plivo_client, plivo_session, voicelink_client, voicelink_session, redis_client, http_client
+    global lk_client, plivo_client, voicelink_client, redis_client, http_client
     api_key = os.getenv("LIVEKIT_API_KEY")
     api_secret = os.getenv("LIVEKIT_API_SECRET")
-    lk_url = os.getenv("LIVEKIT_URL")
+    lk_url = os.getenv("LIVEKIT_URL", "ws://localhost:7880")
 
-    if lk_url:
-        if lk_url.startswith("wss://"):
-            api_url = lk_url.replace("wss://", "https://")
-        elif lk_url.startswith("ws://"):
-            api_url = lk_url.replace("ws://", "http://")
-        else:
-            api_url = lk_url
+    if lk_url.startswith("wss://"):
+        api_url = lk_url.replace("wss://", "https://")
+    elif lk_url.startswith("ws://"):
+        api_url = lk_url.replace("ws://", "http://")
+    else:
+        api_url = lk_url
 
-        logger.info(f"Connecting to LiveKit API at {api_url}")
-
-        lk_client = api.LiveKitAPI(url=api_url, api_key=api_key, api_secret=api_secret)
-
-        plivo_proxy = os.getenv("PLIVO_PROXY")
-        if plivo_proxy:
-            logger.info(f"Creating Plivo LiveKit client with proxy: {plivo_proxy}")
-        else:
-            logger.info(
-                "Creating Plivo LiveKit client without proxy (PLIVO_PROXY not set)"
-            )
-        plivo_session = aiohttp.ClientSession(proxy=plivo_proxy)
-        plivo_client = api.LiveKitAPI(
-            url=api_url, api_key=api_key, api_secret=api_secret, session=plivo_session
-        )
-
-        voicelink_proxy = os.getenv("VOICELINK_PROXY") or plivo_proxy
-        if voicelink_proxy:
-            logger.info(f"Creating VoiceLink LiveKit client with proxy: {voicelink_proxy}")
-        else:
-            logger.info("Creating VoiceLink LiveKit client without proxy")
-        voicelink_session = aiohttp.ClientSession(proxy=voicelink_proxy)
-        voicelink_client = api.LiveKitAPI(
-            url=api_url, api_key=api_key, api_secret=api_secret, session=voicelink_session
-        )
+    logger.info(f"Connecting to self-hosted LiveKit API at {api_url}")
+    lk_client = api.LiveKitAPI(url=api_url, api_key=api_key, api_secret=api_secret)
+    # Set aliases for smooth backward compatibility
+    plivo_client = lk_client
+    voicelink_client = lk_client
 
     # Setup Redis
-    redis_url = os.getenv("REDIS_URL")
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
     try:
         redis_client = redis.from_url(redis_url, decode_responses=True)
         await redis_client.ping()
@@ -94,12 +66,7 @@ async def init_clients():
 
 async def close_clients():
     """Close all persistent clients. Called once at app shutdown."""
-    for client in [lk_client, plivo_client, voicelink_client]:
-        if client:
-            await client.aclose()
-    if plivo_session:
-        await plivo_session.close()
-    if voicelink_session:
-        await voicelink_session.close()
+    if lk_client:
+        await lk_client.aclose()
     if http_client:
         await http_client.aclose()
