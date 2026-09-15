@@ -2,6 +2,11 @@
 
 ## 2026-09-15
 
+### MANTRAASSIST_BACKEND_URL Single Endpoint Standard
+
+- **refactor:** Simplified `send_to_backend` in `mantra/utils.py` to rely strictly on `MANTRAASSIST_BACKEND_URL` as the single authoritative backend webhook configuration variable.
+- **files:** `mantra/utils.py`, `obsidian/Development/Changelog.md`.
+
 ### Redis Monitor Log Noise Reduction
 
 - **ops:** Moved successful `GET /v1/redis/*` monitor polling logs from INFO to DEBUG; Redis endpoint errors remain at ERROR.

@@ -339,7 +339,7 @@ async def send_to_backend(payload: dict, max_retries: int = 3, force: bool = Fal
     if not await _claim_backend_delivery(dedupe_key, force=is_retry_payload):
         return True  # already delivered (or in-flight) by the other path
 
-    url = f"{base_url}/v1/webhooks/n8n"
+    url = base_url if base_url.endswith("/v1/webhooks/n8n") else f"{base_url}/v1/webhooks/n8n"
 
     timestamp = str(int(time.time()))
 
