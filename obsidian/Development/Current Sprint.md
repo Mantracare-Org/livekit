@@ -4,6 +4,7 @@
 > **Last Updated:** 2026-09-15  
 > **Status:** Active maintenance, Self-Hosted LiveKit Database Migration Completed (`livekit_db` on port 5440)
 
+- [x] **Workflow Module Cleanup (2026-09-15):** Removed unused experimental `mantra/core/workflow.py` module. File: `mantra/core/workflow.py`.
 - [x] **Dashboard Service Status Details (2026-09-15):** Added a compact status button and inline popover listing failed services via `/health/details`, with no navigation. Files: `mantra/routers/pages.py`, `static/dashboard.html`, `static/dashboard.js`.
 - [x] **Health Status Detail Consistency Fix (2026-09-15):** Unified the badge and popover behind the same dependency and capacity checks so degraded status details identify the actual failing check. Files: `mantra/services/health.py`, `mantra/routers/pages.py`.
 - [x] **Active Calls Badge Sync (2026-09-15):** Synced the `Active Calls` badge with the Redis-backed live call list on every SSE refresh. File: `static/dashboard.js`.

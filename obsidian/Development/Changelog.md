@@ -2,6 +2,11 @@
 
 ## 2026-09-15
 
+### Workflow Module Cleanup
+
+- **chore:** Removed unused experimental `mantra/core/workflow.py` module.
+- **files:** `mantra/core/workflow.py`, `obsidian/Development/Changelog.md`.
+
 ### MANTRAASSIST_BACKEND_URL Single Endpoint Standard
 
 - **refactor:** Simplified `send_to_backend` in `mantra/utils.py` to rely strictly on `MANTRAASSIST_BACKEND_URL` as the single authoritative backend webhook configuration variable.
