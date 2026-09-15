@@ -17,9 +17,10 @@ DEEPGRAM_API_KEY=       # STT (Nova-3, language=multi)
 OPENAI_API_KEY=         # LLM (GPT-4o-mini)
 GOOGLE_API_KEY=         # LLM (Gemini 2.5 Flash)
 DEEPSEEK_API_KEY=       # LLM (DeepSeek v4 Flash)
+CARTESIA_API_KEY=       # TTS — ONLY required on the self-hosted path (direct livekit-plugins-cartesia in engines.py)
 ```
 
-**Note:** No Cartesia API key needed. TTS runs natively via LiveKit Inference (`sonic-3`).
+**Note:** LiveKit Cloud inferencing (native `sonic-3`) needs **no** Cartesia key. **Self-hosted** LiveKit (`ws://localhost:7880`) cannot authenticate to the cloud inference gateway (HTTP 401 → silent calls), so `engines.py` builds a direct `livekit-plugins-cartesia` `cartesia.TTS` and requires a **valid** `CARTESIA_API_KEY` (invalid keys return 401 from `api.cartesia.ai`).
 
 ### Database
 ```

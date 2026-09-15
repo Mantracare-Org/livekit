@@ -9,7 +9,7 @@ import os
 import httpx
 import openai as openai_client
 
-from livekit.agents import inference
+from livekit.agents import inference, llm
 from livekit.plugins import cartesia, deepgram, google, openai
 
 from mantra.language_manager import (

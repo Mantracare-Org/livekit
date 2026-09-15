@@ -99,12 +99,17 @@ def _get_sip_domain() -> str:
         return configured_domain
 
     lk_url = os.getenv("LIVEKIT_URL", "")
-    host_lk = lk_url.replace("wss://", "").replace("ws://", "").replace("https://", "").replace("http://", "")
-    if "livekit.cloud" in host_lk:
-        subdomain = host_lk.split(".")[0]
-        if subdomain and subdomain != "www":
-            return f"{subdomain}.sip.livekit.cloud"
-    return "sip.livekit.cloud"
+    if lk_url:
+        parsed = urlparse(lk_url)
+        host = parsed.netloc or parsed.path
+        host = host.split(":")[0]
+        if host and host not in ("localhost", "127.0.0.1", "0.0.0.0"):
+            if ".livekit.cloud" in host:
+                project_id = host.replace(".livekit.cloud", "")
+                return f"{project_id}.sip.livekit.cloud"
+            return host if host.startswith("sip.") else f"sip.{host}"
+
+    return "sip.localhost"
 
 
 

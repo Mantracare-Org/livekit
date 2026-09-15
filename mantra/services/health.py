@@ -147,15 +147,15 @@ async def _run_dependency_checks() -> tuple[bool, dict[str, bool | str]]:
 
     return all_ok, checks
 
-async def _run_health_checks() -> bool:
-    """Run all dependency + capacity checks. Returns False if any check fails."""
+async def _run_health_check_details() -> tuple[bool, dict[str, bool | str]]:
+    """Run all dependency and capacity checks and return their statuses."""
     if os.getenv("BYPASS_HEALTH_CHECKS") == "1":
         logger.warning("BYPASS_HEALTH_CHECKS is active. Skipping all service health checks.")
-        return True
+        return True, {}
 
     dep_ok, checks = await _run_dependency_checks()
     if not dep_ok:
-        return False
+        return False, checks
 
     rooms = []
     try:
@@ -195,7 +195,12 @@ async def _run_health_checks() -> bool:
             all_ok = False
             logger.warning(f"  - Healthcheck FAILED: {service} -> {status}")
 
-    return all_ok
+    return all_ok, checks
+
+async def _run_health_checks() -> bool:
+    """Run all dependency + capacity checks. Returns False if any check fails."""
+    healthy, _ = await _run_health_check_details()
+    return healthy
 
 async def health_gate_middleware(request: Request, call_next):
     """Per-provider capacity gate + coarse dependency gate. 503 on blocked dispatch."""

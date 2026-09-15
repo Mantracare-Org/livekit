@@ -143,6 +143,90 @@
 
         .nav-right { display: flex; align-items: center; gap: 16px; }
 
+        .system-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 7px 10px;
+            border: 1px solid transparent;
+            border-radius: 4px;
+            font-family: var(--font-mono);
+            font-size: 10px;
+            font-weight: var(--weight-semibold);
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            white-space: nowrap;
+            cursor: pointer;
+        }
+
+        .system-status::before {
+            content: '';
+            width: 7px;
+            height: 7px;
+            background: currentColor;
+            box-shadow: 0 0 6px currentColor;
+        }
+
+        .system-status.operational {
+            color: var(--success);
+            background: var(--success-subtle);
+            border-color: rgba(35, 165, 90, 0.25);
+        }
+
+        .system-status.degraded {
+            color: var(--warning);
+            background: var(--warning-subtle);
+            border-color: rgba(240, 178, 50, 0.25);
+        }
+
+        .system-status.unavailable {
+            color: var(--danger);
+            background: var(--danger-subtle);
+            border-color: rgba(218, 55, 60, 0.25);
+        }
+
+        .system-status:disabled {
+            cursor: default;
+        }
+
+        .system-status-popover {
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            width: 230px;
+            padding: 10px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-strong);
+            border-radius: 6px;
+            box-shadow: var(--shadow-md);
+            z-index: 200;
+        }
+
+        .system-status-popover[hidden] { display: none; }
+
+        .system-status-wrap {
+            position: relative;
+        }
+
+        .system-status-title {
+            color: var(--text-secondary);
+            font-size: var(--text-xs);
+            margin-bottom: 8px;
+        }
+
+        .system-status-check {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 5px 0;
+            color: var(--text-primary);
+            font-family: var(--font-mono);
+            font-size: 11px;
+        }
+
+        .system-status-check.failed { color: var(--danger); }
+
         .nav-user { font-size: var(--text-sm); color: var(--text-secondary); }
 
         .btn-logout {
@@ -312,7 +396,10 @@
         .status-dot-sm.error, .status-dot-sm.failed { background: var(--danger); }
         .status-dot-sm.no_answer, .status-dot-sm.unknown { background: var(--text-tertiary); }
 
-        .table-wrap { overflow-x: auto; }
+        .table-wrap {
+            max-height: min(62vh, 640px);
+            overflow: auto;
+        }
 
         table {
             width: 100%;
@@ -648,6 +735,10 @@
             </div>
         </div>
         <div class="nav-right">
+            <div class="system-status-wrap">
+                <button class="system-status degraded" id="system-status" type="button" aria-expanded="false" aria-controls="system-status-popover" title="Checking service health">Checking systems</button>
+                <div class="system-status-popover" id="system-status-popover" hidden></div>
+            </div>
             <span class="nav-user" id="nav-username"></span>
             <button class="btn-logout" id="logout-btn">Sign Out</button>
         </div>

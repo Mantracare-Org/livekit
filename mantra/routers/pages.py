@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 from fastapi.responses import FileResponse, JSONResponse
-from mantra.services.health import _run_health_checks
+from mantra.services.health import _run_health_check_details, _run_health_checks
 import os
 
 import logging
@@ -47,5 +47,19 @@ async def health():
     healthy = await _run_health_checks()
     return JSONResponse(
         content={"healthy": healthy}
+    )
+
+@router.get("/health/details")
+async def health_details():
+    """Return service health details for the dashboard status popover."""
+    healthy, checks = await _run_health_check_details()
+    return JSONResponse(
+        content={
+            "healthy": healthy,
+            "checks": {
+                service: status if status is True else False
+                for service, status in checks.items()
+            },
+        }
     )
 

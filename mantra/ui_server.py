@@ -163,8 +163,13 @@ async def log_requests(request: Request, call_next):
         response = await call_next(request)
         duration = time.time() - start
 
+        # Keep high-frequency read-only monitor polling out of normal logs.
+        if path.startswith("/v1/redis/") and request.method == "GET":
+            logger.debug(
+                f"{client_host} {request.method} {path} {response.status_code} in {duration * 1000:.0f}ms"
+            )
         # Suppress scanner junk at INFO level
-        if path.startswith(SCANNER_PATHS):
+        elif path.startswith(SCANNER_PATHS):
             logger.debug(
                 f"Scanner: {client_host} {request.method} {path} {response.status_code}"
             )

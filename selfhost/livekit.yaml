@@ -1,5 +1,6 @@
-api_key: 'devkey_4b19b9896c7018e6'
-api_secret: '37f60141b419ba220cd81ae2d31ddd9192a926f3b9fba124'
+port: 7880
+keys:
+  devkey_4b19b9896c7018e6: "37f60141b419ba220cd81ae2d31ddd9192a926f3b9fba124"
 rtc:
   tcp_port: 7881
   udp_port: 7882

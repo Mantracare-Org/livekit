@@ -10,7 +10,7 @@ import os
 import asyncio
 import asyncpg
 import logging
-from dotenv import load_dotenv
+from mantra.services.telephony import _get_sip_domain
 
 load_dotenv(".env.self")
 load_dotenv(".env.local")
@@ -70,20 +70,22 @@ async def run_migration():
             rule_id = row["dispatch_rule_id"]
             name = row["name"] or f"Inbound {phone}"
             
+            sip_domain = _get_sip_domain()
             await conn.execute("""
                 INSERT INTO sip_trunks (
                     name, provider, address, numbers, auth_username, auth_password,
                     livekit_trunk_id, dispatch_rule_id, phone_number, direction, is_active
                 ) VALUES (
-                    $1, 'plivo', 'sip.localhost', ARRAY[$2], '', '',
+                    $1, 'plivo', $5, ARRAY[$2], '', '',
                     $3, $4, $2, 'inbound', true
                 )
                 ON CONFLICT (name, provider) DO UPDATE SET
                     livekit_trunk_id = EXCLUDED.livekit_trunk_id,
                     dispatch_rule_id = EXCLUDED.dispatch_rule_id,
+                    address = EXCLUDED.address,
                     direction = 'inbound',
                     updated_at = NOW();
-            """, name, phone, trunk_id, rule_id)
+            """, name, phone, trunk_id, rule_id, sip_domain)
             logger.info(f"Synced inbound trunk for {phone} (Trunk: {trunk_id}, Rule: {rule_id})")
 
         logger.info("Migration 008 completed successfully!")
