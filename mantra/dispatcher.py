@@ -52,6 +52,7 @@ async def dispatch_call(lk_client: api.LiveKitAPI, payload: dict):
     room_name = payload.get("_resolved_room_name") or (f"call_{trunk_id}_{call_id}" if trunk_id else f"call_{call_id}")
     trunk_id = payload.get("_resolved_trunk_id")
     sip_number = payload.get("_resolved_sip_number")
+    phone_number = payload.get("phone_number") or payload.get("client_phone") or payload.get("phone")
 
     try:
         logger.info(f"[Call {call_id}] Creating agent dispatch for room {room_name}")

@@ -9,6 +9,7 @@
 - [x] **Health Status Detail Consistency Fix (2026-09-15):** Unified the badge and popover behind the same dependency and capacity checks so degraded status details identify the actual failing check. Files: `mantra/services/health.py`, `mantra/routers/pages.py`.
 - [x] **Active Calls Badge Sync (2026-09-15):** Synced the `Active Calls` badge with the Redis-backed live call list on every SSE refresh. File: `static/dashboard.js`.
 - [x] **Redis Monitor Log Noise Reduction (2026-09-15):** Moved successful Redis monitor polling logs to DEBUG while retaining ERROR logs for failed requests. File: `mantra/ui_server.py`.
+- [x] **Dispatcher Phone Number Name Fix (2026-09-15):** Defined the outbound phone destination from normalized payload fields before SIP dispatch, resolving the Pyrefly `unknown-name` diagnostic. File: `mantra/dispatcher.py`.
 - [x] **Live Dashboard System Status (2026-09-15):** Added a navigation indicator backed by `/health`, refreshed at startup and every 15 seconds. Files: `static/dashboard.html`, `static/dashboard.js`.
 - [x] **Scrollable Dashboard Call History (2026-09-15):** Bounded the call-history table to the viewport and enabled vertical scrolling with sticky column headings. File: `static/dashboard.html`.
 - [x] **MANTRAASSIST_BACKEND_URL Webhook Standard (2026-09-15):** Simplified `send_to_backend` in `mantra/utils.py` to rely strictly on `MANTRAASSIST_BACKEND_URL` as the single backend webhook configuration variable. File: `mantra/utils.py`.

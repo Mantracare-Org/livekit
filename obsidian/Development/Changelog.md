@@ -81,6 +81,11 @@
 
 ## 2026-09-14
 
+### Dispatcher Phone Number Name Fix
+
+- **fix:** Defined the outbound `phone_number` in `dispatch_call()` from the normalized payload fields before logging and creating the SIP participant.
+- **files:** `mantra/dispatcher.py`.
+
 ### Plivo 403 RESOLVED — Dedicated Self-Provisioned Outbound Trunk (E2E call placed)
 
 - **root cause of 403:** The local LiveKit trunk mirrored the *cloud* trunk `ST_maHQuSjpJXNZ` (`96314205396053064.zt.plivo.com`, username `77413`). Plivo will not return credential passwords, and `77413/77413` can never be a valid Plivo password (Plivo requires ≥1 special char). Result: Plivo challenged with `407 Proxy Auth Required`, we answered digest, Plivo replied `403 Forbidden` (`sip status: 403: Forbidden` at webhook `create_sip_participant`). Plivo API confirmed username `77413` was correct on both credentials (`MantraCare-2705`, `mc-livekit`) but the password was unknowable.
