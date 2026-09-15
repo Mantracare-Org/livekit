@@ -7,7 +7,7 @@ from livekit import api
 from mantra.dependencies.database import get_db_connection
 from mantra.services import clients as _svc_clients
 from mantra.services.clients import AGENT_NAME
-from mantra.services.telephony import _get_provider_from_trunk
+from mantra.services.telephony import _ensure_outbound_trunk, _get_provider_from_trunk
 from mantra.utils import report_telemetry, save_call_event, send_to_backend
 import asyncio
 import json
@@ -157,16 +157,41 @@ async def handle_outbound_call_webhook(request: Request):
             {"error": "No client_phone provided in payload"}, status_code=400
         )
 
-    # Resolve trunk ID and detect provider for logging
-    trunk_id = (
+    # Resolve trunk ID and detect provider. DB-first: sip_trunks holds the
+    # durable config (address/auth/number) and LiveKit IDs regenerate on demand,
+    # so a `flushall`-wiped Redis store is self-healed.
+    trunk_ref = (
         payload.get("trunk_id")
         or payload.get("call_from_id")
         or os.getenv("SIP_TRUNK_ID")
     )
-    if not trunk_id:
+    if not trunk_ref:
         return JSONResponse({"error": "No SIP trunk ID configured"}, status_code=500)
 
-    provider = await _get_provider_from_trunk(trunk_id)
+    db_trunk = await _ensure_outbound_trunk(trunk_ref)
+    if db_trunk:
+        trunk_id = db_trunk["trunk_id"]
+        provider = db_trunk["provider"]
+        db_caller_number = db_trunk["phone_number"]
+        logger.info(
+            f"[DIAG] Webhook: resolved trunk {trunk_ref} -> DB trunk {trunk_id} "
+            f"provider={provider} caller_number={db_caller_number}"
+        )
+    else:
+        # Fallback: map cloud trunk IDs to their local mirror trunks. LiveKit
+        # generates trunk IDs randomly, so a production/cloud ST_x can never
+        # exist in a self-hosted store. SIP_TRUNK_ALIASES="cloud1:local1,cloud2:local2"
+        aliases_env = os.getenv("SIP_TRUNK_ALIASES", "")
+        for pair in (p.strip() for p in aliases_env.split(",") if p.strip()):
+            cloud, local = (part.strip() for part in pair.split(":", 1))
+            if trunk_ref == cloud and local:
+                logger.info(f"[DIAG] Webhook: mapped trunk {trunk_ref} -> local mirror {local}")
+                trunk_ref = local
+                break
+        trunk_id = trunk_ref
+        provider = await _get_provider_from_trunk(trunk_id)
+        db_caller_number = None
+
     logger.info(f"[DIAG] Webhook: call_id={call_id} phone={phone_number} trunk={trunk_id} provider={provider} AGENT_NAME={AGENT_NAME}")
 
     # Embed trunk_id in room name for capacity tracking (zero Redis)
@@ -320,7 +345,9 @@ async def handle_outbound_call_webhook(request: Request):
             return
 
         # ── Step 2: SIP dial ───────────────────────────────────────────
-        sip_number = payload.get("call_from")
+        # Caller ID comes from the DB-registered trunk number first (persisted,
+        # survives Redis flushall) and from the payload otherwise.
+        sip_number = db_caller_number or payload.get("call_from")
         if sip_number and not sip_number.startswith("+"):
             sip_number = f"+{sip_number}"
 

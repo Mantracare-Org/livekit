@@ -1,15 +1,41 @@
 # Changelog
 
+## 2026-09-15
+
+### Unified Database Setup (`livekit_db`) & Inbound Trunk / Dispatch Rule Storage
+
+- **feat:** Provisioned new dedicated database `livekit_db` owned by role `redscarf` (password `nowandforever`) on PostgreSQL (port 5440) in `~/lkdb`.
+- **feat:** Migration `008_inbound_sip_trunks_and_rules.py` extended `sip_trunks` table with `direction`, `dispatch_rule_id`, `room_prefix`, and `metadata` columns.
+- **feat:** Inbound numbers now automatically persist both LiveKit Inbound Trunk ID (`livekit_trunk_id`) and Dispatch Rule ID (`dispatch_rule_id`) in PostgreSQL (`org_configs` and `sip_trunks`).
+- **feat:** Migrated complete schema and data from `call_logs_db` to `livekit_db` (`call_logs` [1304 rows], `org_configs` [2 rows], `kb_collections` [7 rows], `kb_pages` [127 rows], `sip_trunks` [3 rows], `call_events`, `webhook_events`).
+- **config:** Updated `.env.self`, `.env.local`, and `~/lkdb/.env` to default POSTGRES connection target to `livekit_db` with user `redscarf`.
+- **Files:** `mantra/services/telephony.py`, `mantra/migrations/008_inbound_sip_trunks_and_rules.py`, `~/lkdb/.env`, `.env.self`, `.env.local`, `obsidian/Development/Changelog.md`.
+
 ## 2026-09-14
 
-### LiveKit Agent Workflows
+### Plivo 403 RESOLVED — Dedicated Self-Provisioned Outbound Trunk (E2E call placed)
 
-- **feat:** Implemented graph-based workflows natively inside LiveKit using the `AgentTask` primitive. Provides an architecture analogous to the Dograh template while staying entirely within the LiveKit ecosystem.
-- **feat:** Created `mantra/core/workflow.py` featuring `LivekitWorkflowEngine` and native `AgentTask` subclasses (`StartCallTask`, `AgentNodeTask`, `EndCallExtractionTask`).
-- **feat:** Workflows define a sequence of conversational states. The agent seamlessly updates its instructions dynamically via `AgentSession.update_agent(task)` as the caller progresses through the configured graph.
-- **feat:** The `endCall` extraction node dynamically translates graph-defined extraction prompts into a strict structured JSON extraction task, seamlessly moving into a webhook firing task using standard non-LLM Python async code.
-- **feat:** Updated `mantra/agent.py` entrypoint to detect `workflow` JSON in `job.metadata` and trigger background `run_workflow` execution alongside standard LiveKit sessions.
-- **Files:** `mantra/core/workflow.py`, `mantra/agent.py`.
+- **root cause of 403:** The local LiveKit trunk mirrored the *cloud* trunk `ST_maHQuSjpJXNZ` (`96314205396053064.zt.plivo.com`, username `77413`). Plivo will not return credential passwords, and `77413/77413` can never be a valid Plivo password (Plivo requires ≥1 special char). Result: Plivo challenged with `407 Proxy Auth Required`, we answered digest, Plivo replied `403 Forbidden` (`sip status: 403: Forbidden` at webhook `create_sip_participant`). Plivo API confirmed username `77413` was correct on both credentials (`MantraCare-2705`, `mc-livekit`) but the password was unknowable.
+- **fix:** Provisioned a **dedicated Plivo outbound trunk** with credentials we control: Plivo credential `MantraCare-Local-LiveKit` (`mantralocal` / strong password with special char), outbound trunk `MC-B2C-Plivo-LOCAL` → `trunk_id 18963348729522656`, domain `18963348729522656.zt.plivo.com`. Updated `sip_trunks` row (address, auth_username, auth_password) and the live store trunk `ST_tbcTqsc7vNU4` via `lk sip outbound update`. Caller-ID switched to account-owned Bangalore number `+918031321203` (per Fardeen, avoiding the production number `918035375213`).
+- **verification (E2E):** Webhook re-fire (call `281582`, dialed `+917795163421`, trunk resolved DB-first via `_ensure_outbound_trunk` alias `ST_maHQuSjpJXNZ`) → Plivo **accepted** auth → SIP participant joined room with media, agent joined and published audio, call lasted **39s** (`sip_connected` recorded; ended remote hangup). Event chain green: `webhook_received → dispatch_created → sip_initiated → entrypoint_started → sip_connected`. A second dial (`281583`) correctly returned `486 User Busy` (line in use). The DB-backed trunk self-heal + validated Plivo creds is now a fully working outbound path.
+- **Files:** `mantra/migrations/007_sip_trunks.py` (seed row now updated values), DB `sip_trunks`, LiveKit store trunk `ST_tbcTqsc7vNU4`. No code change needed — the existing `_ensure_outbound_trunk` + DB-first webhook consumed the corrected config unchanged.
+
+### Persistent DB-Backed Outbound Trunk (survives Redis flushall)
+
+- **feat:** `sip_trunks` Postgres table (migration `007_sip_trunks.py`) is now the durable source of truth for outbound trunk config: name, provider (`plivo`), SIP address, numbers, auth, destination country, `livekit_trunk_id`, `cloud_aliases`, and `phone_number`. Seeded with `MC-B2C-Plivo-LOCAL` (address `96314205396053064.zt.plivo.com`, number `+918035375213`, alias `ST_maHQuSjpJXNZ`, livekit `ST_JitTRBLQDsdo`).
+- **feat:** `_ensure_outbound_trunk(ref)` in `mantra/services/telephony.py` — resolves a trunk by name / livekit ID / cloud alias from Postgres, checks the LiveKit store via `list_outbound_trunk`, and **recreates the store trunk from the DB row** (updating `livekit_trunk_id`) when Redis `flushall`/restart wiped it. Returns `{trunk_id, phone_number, provider}`.
+- **feat:** Webhook in `mantra/routers/telephony.py` resolves `trunk_id|called_from` DB-first through `_ensure_outbound_trunk`, uses `phone_number` from the row as the SIP caller ID (fallback: payload `call_from`), and keeps the `SIP_TRUNK_ALIASES` env map only as a non-DB fallback.
+- **verification:** Alias `ST_maHQuSjpJXNZ` → DB row → store empty → auto-recreated stored trunk `ST_JitTRBLQDsdo`; `lk` store confirms `[(ST_JitTRBLQDsdo, MC-B2C-Plivo-LOCAL, …zt.plivo.com)]`; `sip_trunks.livekit_trunk_id` updated in DB; all edited files `py_compile` clean.
+- **Files:** `mantra/migrations/007_sip_trunks.py`, `mantra/services/telephony.py`, `mantra/routers/telephony.py`, `.env.self`.
+
+### Self-Hosted LiveKit Transfer — Local Verification (env-only)
+
+- **feat:** Added `.env.self` (gitignored) as a highest-priority environment override: `LIVEKIT_URL=ws://localhost:7880`, dev keypair `devkey_4b19b9896c7018e6` / secret, `LIVEKIT_SIP_DOMAIN=sip.localhost`. Loaded with `override=True` after `.env`/`.env.local` in `mantra/agent.py`, `mantra/ui_server.py`, `mcp/server.py`, `mantra/dispatcher.py`. No behavioral change when the file is absent.
+- **infra:** LiveKit 1.13 split SIP out of `livekit-server`. Self-host stack is now 3 services sharing the host dev Redis — `selfhost/docker-compose.self.yml` runs `livekit/livekit-server:latest` (host networking, config `selfhost/livekit.yaml`, RTC UDP 64000-64999, TCP 7881) plus `livekit/sip:latest` (host networking, `SIP_CONFIG_BODY` with `ws_url ws://localhost:7880`, `sip_port 5060`, `rtp_port 10000-20000`, `use_external_ip`).
+- **key fix:** Blanked `HTTPS_PROXY`/`HTTP_PROXY` in `.env.self`. The `livekit.agents` worker SDK forces the env proxy onto its WebSocket connection to LiveKit; routing `ws://localhost:7880` through the remote India egress proxy (13.234.222.62) returned 500 on the `/agent` handshake. aiohttp ignores `NO_PROXY` for an explicitly-passed proxy, so `NO_PROXY` could not save it. `PLIVO_PROXY` unchanged.
+- **key fix:** `mantra/utils.py` — the refactor's `from datetime import datetime, timezone` shadowed the `datetime` module (still relied on by `datetime.datetime` calls at lines 346/549/578/589/747/1068-1089), crashing every job at `SessionRecorder()`. Re-aliased to `from datetime import datetime as dt, timezone` with the one class-form call updated.
+- **verification:** All 7 startup dependency checks green against self-hosted LiveKit (`redis`, `livekit`, `livekit_primary`, `postgres`, `stt_deepgram`, `mantraassist_backend`, `s3`); agent worker **registered** (`worker registered {agentName: mantra-agent-dev}`); `/dispatch-test` created a room and the server dispatched `JT_ROOM` to the worker; agent joined via WebRTC over the 64000 UDP range, warmed the KB, and spoke the greeting (`TRANSCRIPT | assistant: Hello, this is Arushi from MantraCare. How can I help you today?`); first job ended `JS_SUCCESS` with no error.
+- **Files:** `.env.self`, `selfhost/livekit.yaml`, `selfhost/docker-compose.self.yml`, `mantra/{agent,ui_server,dispatcher,utils}.py`, `mcp/server.py`.
 
 ## 2026-09-12
 

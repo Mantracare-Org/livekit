@@ -679,8 +679,7 @@ async def _setup_inbound_sip_process(payload: dict | None) -> JSONResponse:
                 "sip_uri": sip_uri
             }, status_code=400)
 
-        # 5.5 Create or update org_configs mapping (only after provider forwarding has
-        # succeeded, so the DB row reflects an actually-configured number)
+        # 5.5 Create or update org_configs and sip_trunks mapping in PostgreSQL
         try:
             conn = await get_db_connection()
             org_config_id = await conn.fetchval("""
@@ -712,10 +711,35 @@ async def _setup_inbound_sip_process(payload: dict | None) -> JSONResponse:
             str(org_id), clean_number, name, prompt, voice, model, 
             kb_tags, json.dumps(transfer_numbers), client_name, process_id, 
             trunk_id, rule_id)
+
+            # Store in durable sip_trunks registry as well
+            await conn.execute("""
+                INSERT INTO sip_trunks (
+                    name, provider, address, numbers, auth_username, auth_password,
+                    livekit_trunk_id, dispatch_rule_id, phone_number, direction,
+                    room_prefix, metadata, is_active
+                ) VALUES (
+                    $1, $2, $3, ARRAY[$4], '', '',
+                    $5, $6, $4, 'inbound',
+                    $7, $8::jsonb, true
+                )
+                ON CONFLICT (name, provider) DO UPDATE SET
+                    livekit_trunk_id = EXCLUDED.livekit_trunk_id,
+                    dispatch_rule_id = EXCLUDED.dispatch_rule_id,
+                    phone_number = EXCLUDED.phone_number,
+                    direction = 'inbound',
+                    room_prefix = EXCLUDED.room_prefix,
+                    metadata = EXCLUDED.metadata,
+                    is_active = true,
+                    updated_at = NOW();
+            """,
+            name, provider, sip_domain, clean_number,
+            trunk_id, rule_id, f"inbound_{trunk_id[-6:]}", json.dumps(metadata_dict))
+
             await conn.close()
-            logger.info(f"Successfully saved org_config for {clean_number} with ID: {org_config_id}")
+            logger.info(f"Successfully saved org_config and sip_trunks for {clean_number} (Trunk: {trunk_id}, Rule: {rule_id})")
         except Exception as e:
-            logger.error(f"Failed to save org_config to database: {e}")
+            logger.error(f"Failed to save org_config / sip_trunks to database: {e}")
             # We continue even if this fails, to not break existing functionality completely,
             # though the agent might fall back to MantraAssist.
             org_config_id = None
@@ -790,6 +814,101 @@ async def _create_sip_outbound_trunk(
     except Exception as e:
         logger.error(f"LiveKit API error creating SIP trunk: {e}")
         raise
+
+async def _ensure_outbound_trunk(trunk_ref: str | None) -> dict | None:
+    """
+    Resolve an outbound trunk from the durable Postgres registry and make sure
+    it exists in the LiveKit store, recreating it from the DB row when the
+    volatile Redis store lost it (e.g. after `flushall` or a restart).
+
+    `trunk_ref` may be a name, a livekit trunk ID, or a cloud alias.
+    Returns dict {trunk_id, phone_number, provider} or None when no row matches.
+    """
+    if not trunk_ref:
+        return None
+
+    # 1. Look up the durable config in Postgres.
+    try:
+        conn = await get_db_connection()
+        try:
+            row = await conn.fetchrow(
+                """
+                SELECT name, provider, address, numbers, auth_username,
+                       auth_password, destination_country, livekit_trunk_id,
+                       phone_number
+                FROM sip_trunks
+                WHERE is_active = true
+                  AND (name = $1 OR livekit_trunk_id = $1 OR $1 = ANY(cloud_aliases))
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                trunk_ref,
+            )
+        finally:
+            await conn.close()
+    except Exception as e:
+        logger.warning(f"Cannot resolve trunk {trunk_ref} from DB: {e}")
+        return None
+
+    if not row:
+        logger.info(f"No sip_trunks row matches {trunk_ref}")
+        return None
+
+    name = row["name"]
+    provider = row["provider"]
+    phone = row["phone_number"] or (("+" + row["numbers"][0]) if row["numbers"] else None)
+
+    # 2. Check whether the trunk still exists in the LiveKit store.
+    live_id = row["livekit_trunk_id"]
+    existing = None
+    if live_id:
+        try:
+            resp = await _svc_clients.lk_client.sip.list_outbound_trunk(
+                api.ListSIPOutboundTrunkRequest(trunk_ids=[live_id])
+            )
+            if resp.items:
+                existing = live_id
+        except Exception as e:
+            logger.warning(f"Trunk check {live_id} failed (will recreate): {e}")
+
+    if not existing:
+        # 3. Store lost it (or first run): recreate from the durable DB row.
+        numbers = list(row["numbers"] or [])
+        if not numbers and phone:
+            numbers = [phone.lstrip("+")]
+        try:
+            created = await _create_sip_outbound_trunk(
+                name=name,
+                address=row["address"],
+                numbers=numbers,
+                auth_username=row["auth_username"],
+                auth_password=row["auth_password"],
+                destination_country=row["destination_country"],
+            )
+            live_id = created.sip_trunk_id
+            logger.info(f"Recreated outbound trunk {name} -> {live_id} (store was empty)")
+            try:
+                conn = await get_db_connection()
+                try:
+                    await conn.execute(
+                        "UPDATE sip_trunks SET livekit_trunk_id = $1, updated_at = NOW() WHERE name = $2 AND provider = $3",
+                        live_id, name, provider,
+                    )
+                finally:
+                    await conn.close()
+            except Exception as e:
+                logger.warning(f"Could not store regenerated trunk ID {live_id}: {e}")
+        except Exception as e:
+            logger.error(f"Could not recreate trunk {name} in store: {e}")
+            return None
+
+    return {
+        "trunk_id": live_id,
+        "phone_number": phone,
+        "provider": provider,
+        "name": name,
+    }
+
 
 async def _get_provider_from_trunk(trunk_id: str) -> str | None:
     if _svc_clients.redis_client:

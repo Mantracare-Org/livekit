@@ -105,6 +105,7 @@ load_dotenv()  # Load .env (OpenAI, etc.)
 load_dotenv(
     ".env.local", override=True
 )  # Load .env.local (LiveKit, etc.) and override if needed
+load_dotenv(".env.self", override=True)  # Self-host override (if present)
 
 
 AGENT_NAME = os.getenv("AGENT_NAME", "mantra-agent")
@@ -495,14 +496,6 @@ async def entrypoint(ctx: JobContext):
         logger.info(f"[DIAG] Starting agent session...")
         await session.start(agent=agent, room=ctx.room)
         logger.info(f"[DIAG] Session started successfully")
-        
-        workflow_json = payload.get("workflow") if payload else None
-        if workflow_json:
-            from mantra.core.workflow import LivekitWorkflowEngine, run_workflow
-            workflow_engine = LivekitWorkflowEngine(workflow_json, cc, payload)
-            workflow_task = asyncio.create_task(run_workflow(workflow_engine))
-            logger.info(f"[DIAG] LiveKit Workflow Engine initialized and started.")
-            
         limiter_task = asyncio.create_task(call_limiter(cc))
         inactivity_task = asyncio.create_task(inactivity_monitor(cc))
         safety_net_task = asyncio.create_task(farewell_safety_net(cc))
@@ -739,7 +732,6 @@ async def entrypoint(ctx: JobContext):
             "safety_net_task",
             "transcript_task",
             "intent_task",
-            "workflow_task",
         ]:
             task = locals().get(task_name)
             if task and not task.done():
