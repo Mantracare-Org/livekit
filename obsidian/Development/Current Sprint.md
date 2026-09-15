@@ -4,6 +4,7 @@
 > **Last Updated:** 2026-09-15  
 > **Status:** Active maintenance, Self-Hosted LiveKit Database Migration Completed (`livekit_db` on port 5440)
 
+- [x] **Production Docker Deployment & Host Safeguards (2026-09-15):** Created `.env.prod.example` / `.env.prod`, updated `Dockerfile` with Silero model pre-caching, updated `entrypoint.sh` for combined execution (`all`), and created `docker-compose.prod.yml` with memory limits (`768M`) and health checks. Files: `Dockerfile`, `entrypoint.sh`, `docker-compose.prod.yml`, `.env.prod.example`.
 - [x] **Workflow Module Cleanup (2026-09-15):** Removed unused experimental `mantra/core/workflow.py` module. File: `mantra/core/workflow.py`.
 - [x] **Dashboard Service Status Details (2026-09-15):** Added a compact status button and inline popover listing failed services via `/health/details`, with no navigation. Files: `mantra/routers/pages.py`, `static/dashboard.html`, `static/dashboard.js`.
 - [x] **Health Status Detail Consistency Fix (2026-09-15):** Unified the badge and popover behind the same dependency and capacity checks so degraded status details identify the actual failing check. Files: `mantra/services/health.py`, `mantra/routers/pages.py`.

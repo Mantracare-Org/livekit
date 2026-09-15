@@ -2,6 +2,11 @@
 
 ## 2026-09-15
 
+### Production Docker Deployment & Host RAM Safeguards
+
+- **ops:** Created `.env.prod.example` / `.env.prod` pointing strictly to self-hosted LiveKit (`ws://localhost:7880` and `sip.localhost`), updated `Dockerfile` with model pre-caching (`python -m mantra.agent download-files`), updated `entrypoint.sh` for combined container execution (`all`), and created `docker-compose.prod.yml` with memory limits (`768M`) and health checks.
+- **files:** `.env.prod.example`, `Dockerfile`, `entrypoint.sh`, `docker-compose.prod.yml`, `obsidian/Development/Changelog.md`.
+
 ### Workflow Module Cleanup
 
 - **chore:** Removed unused experimental `mantra/core/workflow.py` module.
