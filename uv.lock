@@ -1324,6 +1324,7 @@ dependencies = [
     { name = "livekit-api" },
     { name = "livekit-plugins-ai-coustics" },
     { name = "livekit-plugins-assemblyai" },
+    { name = "livekit-plugins-cartesia" },
     { name = "livekit-plugins-deepgram" },
     { name = "livekit-plugins-google" },
     { name = "livekit-plugins-noise-cancellation" },
@@ -1354,6 +1355,7 @@ requires-dist = [
     { name = "livekit-api", specifier = ">=1.1.0" },
     { name = "livekit-plugins-ai-coustics" },
     { name = "livekit-plugins-assemblyai" },
+    { name = "livekit-plugins-cartesia", specifier = ">=1.6.7" },
     { name = "livekit-plugins-deepgram" },
     { name = "livekit-plugins-google" },
     { name = "livekit-plugins-noise-cancellation", specifier = "~=0.2" },
@@ -1532,6 +1534,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/3a/31/e86ea62ed57e9a7e7888fb5ec430d4b4b39dc185390f4c942761e33dd691/livekit_plugins_assemblyai-1.6.7.tar.gz", hash = "sha256:a542625883c6323103c894008b1af1b99847b9f4dd6ea6dd11dd1e1598f95690", size = 14667, upload-time = "2026-07-25T02:04:06.161Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5c/3a/4e3ab8dc17155cafbee563f3b5cb8d17b5a755f9ec26df417972632d5a9e/livekit_plugins_assemblyai-1.6.7-py3-none-any.whl", hash = "sha256:7944ff3b02a5960eac902c77ed865dd158cb5073e092801c53cf36698d4bf7d0", size = 14805, upload-time = "2026-07-25T02:04:04.696Z" },
+]
+
+[[package]]
+name = "livekit-plugins-cartesia"
+version = "1.6.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "livekit-agents" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4b/0d/2a7ee55aebf21089110e7c4173b6673cfde90616598b5601f2ce168774d0/livekit_plugins_cartesia-1.6.7.tar.gz", hash = "sha256:75bbefb39c42a4a1f58484298793d4c1efddfe39ab19fa4db007c2b6797997ba", size = 18312, upload-time = "2026-07-25T02:04:36.483Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/46/87/92524579a4bf54bdae9ad8c43120425b938e6cd37c095bbf32e4130184d2/livekit_plugins_cartesia-1.6.7-py3-none-any.whl", hash = "sha256:ed6cc74a26cda9c300da9f2c8a4ccca626024aa041d83211eab1f7355e901623", size = 25680, upload-time = "2026-07-25T02:04:35.151Z" },
 ]
 
 [[package]]

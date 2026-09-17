@@ -1,16 +1,26 @@
+"""Kettle Voice Agent worker — LiveKit agent server and per-call orchestration.
+
+Heavy lifting lives in ``mantra.core.*`` and ``mantra.prompts``; this module
+owns the AgentServer, environment startup, and the entrypoint that wires a
+CallContext and starts the monitors.
+"""
 import logging
 import json
 import asyncio
 import os
 import datetime
-import aiohttp
-from mantra.email_alerts import send_crash_email
-from mantra.language_manager import CallKeytermMemory, LanguageManager, MultilingualParallelSTT, resolve_stt_language, resolve_stt_keyterms
 import sys
-import httpx
-import openai as openai_client
 
-from livekit.agents import APIConnectOptions
+from livekit import rtc
+from livekit.agents import (
+    AgentServer,
+    AgentSession,
+    JobContext,
+    TurnHandlingOptions,
+    cli,
+    inference,
+)
+from livekit.plugins import silero
 
 # ── Suppress OpenTelemetry 429 errors ──────────────────────────────────
 os.environ.setdefault("OTEL_METRICS_EXPORTER", "none")
@@ -37,97 +47,65 @@ logger = logging.getLogger("mantra.agent")
 logging.getLogger("livekit.agents").setLevel(logging.DEBUG)
 logger.info("Initializing process...")
 
-POST_CALL_LLM_MODEL = os.getenv("POST_CALL_LLM_MODEL", "deepseek-chat")
-
-
-def build_post_call_llm() -> "llm.LLM":
-    """Build a dedicated LLM engine for post-call analysis.
-
-    Uses the Pro-tier model so transcript analysis (stage transitions,
-    next_call_on, user_intent) is more reliable than the live-agent flash model.
-    Falls back to the Gemini flash model if DEEPSEEK_API_KEY is missing.
-    """
-    deepseek_key = os.getenv("DEEPSEEK_API_KEY")
-    if not deepseek_key:
-        logger.warning("DEEPSEEK_API_KEY not set for post-call LLM, falling back to gemini-2.5-flash")
-        return google.LLM(model="gemini-2.5-flash")
-
-    http_client = httpx.AsyncClient(
-        timeout=httpx.Timeout(connect=15.0, read=60.0, write=15.0, pool=15.0),
-        limits=httpx.Limits(max_connections=20, max_keepalive_connections=5, keepalive_expiry=120),
-    )
-    client = openai_client.AsyncClient(
-        api_key=deepseek_key,
-        base_url="https://api.deepseek.com",
-        http_client=http_client,
-    )
-    logger.info(f"Post-call LLM using model: {POST_CALL_LLM_MODEL}")
-    return openai.LLM(
-        model=POST_CALL_LLM_MODEL,
-        client=client,
-        timeout=httpx.Timeout(connect=15.0, read=60.0, write=15.0, pool=15.0),
-    )
-
 # Also suppress noisy OTEL SDK logs once the SDK initialises
 logging.getLogger("opentelemetry").setLevel(logging.ERROR)
 
 from dotenv import load_dotenv
 
-from livekit import rtc, api
-from livekit.agents import mcp as lk_mcp
-from livekit.agents import (
-    Agent,
-    AgentServer,
-    AgentSession,
-    JobContext,
-    cli,
-    inference,
-    llm,
-)
-from livekit.agents import TurnHandlingOptions
-from livekit.agents.voice.agent import ModelSettings
-from livekit.plugins import openai, google, silero, deepgram
-
+from mantra.email_alerts import send_crash_email
 from mantra.utils import (
     SessionRecorder,
-    upload_to_s3,
-    send_to_backend,
-    normalize_datetime,
-    save_call_log_to_db,
     save_call_event,
     report_telemetry,
-    format_e164_phone_number,
-    reconcile_process_and_stage_id,
 )
+
 from mantra.amd import detect_voicemail
 
-# Import knowledge base
-from mantra.knowledge_base import PostgresKnowledgeBase
-from mantra.retriever import KnowledgeRetriever
-from typing import Annotated, Any, Optional
+from mantra.call_duration import (
+    current_limits,
+    extend_call,
+)
+from mantra.positive_intent import should_extend_from_history
 
-
-VOICE_MAPPING = {
-    "gemma": "62ae83ad-4f6a-430b-af41-a9bede9286ca",
-    "alistair": "c8f7835e-28a3-4f0c-80d7-c1302ac62aae",
-    "sunny": "156fb8d2-335b-4950-9cb3-a2d33befec77",
-    "tyler": "820a3788-2b37-4d21-847a-b65d8a68c99a",
-    "vikas": "adf97b9d-905c-41de-9fe9-afb387116d06",
-    "camila": "bef2ba57-5c10-433b-b215-3bef35110a81",
-    "renata": "d3793b7b-4996-409c-9d59-96dd09f47717",
-    "arushi": "95d51f79-c397-46f9-b49a-23763d3eaa2d",
-    "sia": "4459a9a5-69d6-4680-b970-e13dc51845b6",
-    "sneha": "6b02ffe5-e3cb-48c0-a023-c72f85953375",
-    "kavita": "56e35e2d-6eb6-4226-ab8b-9776515a7094",
-    "katie": "f786b574-daa5-4673-aa0c-cbe3e8534c02",
-    "cathy": "e8e5fffb-252c-436d-b842-8879b84445b6",
-}
+from mantra.core.common import CallContext, create_bg_task, get_global_kb
+from mantra.core.engines import (
+    build_language_manager,
+    build_live_llm_engine,
+    build_stt_engine,
+    build_tts_engine,
+    select_model_and_voice,
+)
+from mantra.core.inbound import (
+    _extract_livekit_caller_phone,
+    recognize_inbound_client,
+    resolve_inbound_context,
+    resolve_outbound_context,
+)
+from mantra.core.assistant_functions import AssistantFunctions
+from mantra.core.live_agent import make_multilingual_agent
+from mantra.core.call_monitors import (
+    call_limiter,
+    farewell_safety_net,
+    inactivity_monitor,
+    positive_intent_monitor,
+    register_room_handlers,
+    register_session_handlers,
+    transcript_logger,
+)
+from mantra.core.finalize import finalize
+from mantra.core.room_control import _force_disconnect_room
+from mantra.prompts import (
+    BASE_INSTRUCTIONS,
+    apply_language_directive,
+    build_initial_instructions,
+)
 
 # Load environment variables
 load_dotenv()  # Load .env (OpenAI, etc.)
 load_dotenv(
     ".env.local", override=True
 )  # Load .env.local (LiveKit, etc.) and override if needed
+load_dotenv(".env.self", override=True)  # Self-host override (if present)
 
 
 AGENT_NAME = os.getenv("AGENT_NAME", "mantra-agent")
@@ -136,16 +114,6 @@ logger.info(f"Agent name configured as: {AGENT_NAME}")
 AMD_ENABLED = os.getenv("AMD_ENABLED", "1") == "1"
 
 server = AgentServer(num_idle_processes=20, shutdown_process_timeout=120.0)
-
-from mantra.call_duration import (
-    BASE_FAREWELL_SECONDS as CALL_BASE_FAREWELL_SECONDS,
-    BASE_HARD_LIMIT_SECONDS as CALL_BASE_HARD_LIMIT_SECONDS,
-    EXTENDED_FAREWELL_SECONDS as CALL_EXTENDED_FAREWELL_SECONDS,
-    EXTENDED_HARD_LIMIT_SECONDS as CALL_EXTENDED_HARD_LIMIT_SECONDS,
-    current_limits,
-    extend_call,
-)
-from mantra.positive_intent import should_extend_from_history
 
 # --- Transfer/Handoff Configuration ---
 TRANSFER_NUMBERS = {}
@@ -163,921 +131,6 @@ if TRANSFER_DEFAULT_NUMBER:
 if TRANSFER_SIP_TRUNK_ID:
     logger.info(f"Transfer SIP trunk configured: {TRANSFER_SIP_TRUNK_ID}")
 # -------------------------------------------------
-
-
-_bg_tasks = set()
-
-
-def create_bg_task(coro):
-    task = asyncio.create_task(coro)
-    _bg_tasks.add(task)
-    task.add_done_callback(_bg_tasks.discard)
-    return task
-
-def _as_int(value):
-    """Coerce value to int for backend Zod schemas. Returns None if not coercible."""
-    if value is None or value == "":
-        return None
-    try:
-        return int(float(str(value).strip()))
-    except (TypeError, ValueError):
-        return None
-
-_global_kb: PostgresKnowledgeBase | None = None
-
-def get_global_kb() -> PostgresKnowledgeBase:
-    global _global_kb
-    if _global_kb is None:
-        dsn = (
-            f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
-            f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
-        )
-        _global_kb = PostgresKnowledgeBase(dsn)
-    return _global_kb
-
-
-async def _resolve_from_db(phone_number: str) -> dict | None:
-    """
-    Look up inbound call context from the PostgreSQL org_configs table.
-    """
-    try:
-        clean_number = phone_number.replace("+", "")
-        kb = get_global_kb()
-        pool = await kb._get_pool()
-        
-        async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT * FROM org_configs WHERE phone_number IN ($1, $2) AND is_active = true",
-                phone_number, clean_number
-            )
-            
-        if row:
-            result = dict(row)
-            if result.get('transfer_numbers') and isinstance(result['transfer_numbers'], str):
-                try: result['transfer_numbers'] = json.loads(result['transfer_numbers'])
-                except: pass
-
-            # Get all KB collection IDs for this org (includes org_id fallback for legacy data)
-            try:
-                kb_ids = await kb.get_kb_ids_for_org(result["org_id"])
-            except Exception as e:
-                logger.error(f"Failed to fetch kb_ids for org {result.get('org_id')}: {e}")
-                kb_ids = [result.get("org_id")]
-
-            process_id = None
-            stage_id = None
-            try:
-                col_details = await kb.get_collection_details_for_org(result["org_id"])
-                if col_details:
-                    process_id = col_details.get("process_id")
-                    stage_id = col_details.get("stage_id")
-            except Exception as e:
-                logger.error(f"Failed to fetch collection details for org {result.get('org_id')}: {e}")
-
-            return {
-                "org_id": result.get("org_id"),
-                "kb_id": result.get("org_id"),
-                "kb_ids": kb_ids,
-                "kb_tags": result.get("kb_tags", []),
-                "prompt": result.get("prompt"),
-                "voice": result.get("voice"),
-                "model": result.get("model"),
-                "process_id": process_id,
-                "stage_id": stage_id,
-                "transfer_numbers": result.get("transfer_numbers", {}),
-                "client_name": result.get("client_name"),
-            }
-        return None
-    except Exception as e:
-        logger.error(f"Failed to query DB for phone number {phone_number}: {e}")
-        return None
-
-
-async def _resolve_from_mantra_backend(phone_number: str) -> dict | None:
-    """
-    Call MantraAssist backend to resolve inbound call context from the dialed phone number.
-    Returns org_id, kb_id, kb_tags, prompt, voice, model, process_id, transfer_numbers, client_name.
-    Returns None if the backend is unreachable or returns an error.
-    """
-    base_url = os.getenv("MANTRAASSIST_BACKEND_URL", "").rstrip("/")
-    if not base_url:
-        logger.error("MANTRAASSIST_BACKEND_URL not set — cannot resolve inbound call context")
-        return None
-
-    url = f"{base_url}/v1/telephony/resolve-inbound-call"
-    logger.info(f"Resolving inbound call context for phone_number={phone_number} via {url}")
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url,
-                json={"phone_number": phone_number},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    logger.info(
-                        f"Resolved inbound context: org_id={data.get('org_id')}, "
-                        f"kb_id={data.get('kb_id')}, kb_tags={data.get('kb_tags')}"
-                    )
-                    return data
-                else:
-                    resp_text = await resp.text()
-                    logger.error(
-                        f"MantraAssist resolve-inbound-call returned {resp.status}: {resp_text}"
-                    )
-                    return None
-    except asyncio.TimeoutError:
-        logger.error("MantraAssist resolve-inbound-call timed out (10s)")
-        return None
-    except Exception as e:
-        logger.error(f"Failed to resolve inbound call context: {e}")
-        return None
-
-
-async def resolve_inbound_context(phone_number: str) -> dict | None:
-    """
-    Resolves inbound call context from the PostgreSQL org_configs table (DB only, no HTTP).
-    """
-    logger.info(f"[DIAG] resolve_inbound_context: looking up {phone_number} in DB...")
-    config = await _resolve_from_db(phone_number)
-    if config:
-        logger.info(f"[DIAG] resolve_inbound_context: DB HIT — org_id={config.get('org_id')}, kb_ids={config.get('kb_ids')}, client={config.get('client_name')}")
-    else:
-        logger.warning(f"[DIAG] resolve_inbound_context: DB MISS for {phone_number} — using dispatch rule defaults")
-    return config
-
-
-def _extract_inbound_caller_phone(meta_payload: dict | None, fallback_phone: str | None = None) -> str:
-    """Prefer the true caller number over the org-bound inbound DID."""
-    candidates: list[str] = []
-    if isinstance(meta_payload, dict):
-        for key in (
-            "call_from",
-            "caller_number",
-            "client_phone_number",
-            "client_phone",
-            "from_number",
-            "source_number",
-            "phone_number",
-        ):
-            value = meta_payload.get(key)
-            if value:
-                candidates.append(str(value))
-    if fallback_phone:
-        candidates.insert(0, str(fallback_phone))
-
-    for candidate in candidates:
-        value = str(candidate).strip()
-        if not value:
-            continue
-        if value.lower().startswith("sip_"):
-            value = value[4:]
-        normalized = format_e164_phone_number(value)
-        if normalized:
-            return normalized
-    return ""
-
-
-def _extract_livekit_caller_phone(participants) -> str:
-    """Extract the inbound caller number from LiveKit SIP participant metadata."""
-    attribute_keys = (
-        "sip.phoneNumber",
-        "sip.from",
-        "sip.callerNumber",
-        "sip.sourceNumber",
-        "phone_number",
-        "caller_number",
-        "from_number",
-    )
-    for participant in participants:
-        attributes = getattr(participant, "attributes", {}) or {}
-        for key in attribute_keys:
-            value = attributes.get(key)
-            if value:
-                normalized = _extract_inbound_caller_phone({"phone_number": value})
-                if normalized:
-                    return normalized
-
-        identity = getattr(participant, "identity", "")
-        normalized = _extract_inbound_caller_phone({"phone_number": identity})
-        if normalized:
-            return normalized
-    return ""
-
-
-def _extract_recognized_client_name(result: Any) -> str | None:
-    """Extract a client name from the MCP/backend response, including null results."""
-    if result is None:
-        return None
-
-    if isinstance(result, str):
-        value = result.strip()
-        if not value or value.lower() in {"null", "none", "{}", "[]"}:
-            return None
-        try:
-            result = json.loads(value)
-        except json.JSONDecodeError:
-            return value
-
-    if not isinstance(result, dict):
-        return None
-
-    for key in ("client_name", "name", "full_name"):
-        value = result.get(key)
-        if value is not None and str(value).strip():
-            return str(value).strip()
-
-    for key in ("data", "result", "lead", "client"):
-        nested_name = _extract_recognized_client_name(result.get(key))
-        if nested_name:
-            return nested_name
-    return None
-
-
-def _extract_recognized_client_metadata(result: Any) -> dict[str, list]:
-    """Extract structured client metadata while tolerating nested MCP responses."""
-    if isinstance(result, str):
-        try:
-            result = json.loads(result)
-        except json.JSONDecodeError:
-            return {"ai_summaries": [], "custom_fields": []}
-
-    if not isinstance(result, dict):
-        return {"ai_summaries": [], "custom_fields": []}
-
-    for key in ("data", "result", "lead", "client"):
-        nested = result.get(key)
-        if isinstance(nested, dict):
-            metadata = _extract_recognized_client_metadata(nested)
-            if any(metadata.values()):
-                return metadata
-
-    metadata = result.get("client_metadata")
-    if not isinstance(metadata, dict):
-        return {"ai_summaries": [], "custom_fields": []}
-    return {
-        "ai_summaries": metadata.get("ai_summaries", []) if isinstance(metadata.get("ai_summaries"), list) else [],
-        "custom_fields": metadata.get("custom_fields", []) if isinstance(metadata.get("custom_fields"), list) else [],
-    }
-
-
-async def recognize_inbound_client(phone_number: str, org_id: str | int) -> dict[str, Any] | None:
-    """Resolve a known client's identity and metadata before an inbound greeting.
-
-    Use the actual caller's phone number to identify the client, scoped by org_id.
-    The org-bound DID is only used for routing and should not be sent to the
-    client-recognition tool.
-    """
-    if not phone_number or org_id in (None, ""):
-        return None
-
-    try:
-        from mantra.mcp_client import get_mcp_client
-
-        async with asyncio.timeout(3):
-            result = await get_mcp_client().call_tool(
-                "recognize_client",
-                {"org_id": org_id, "phone_number": format_e164_phone_number(phone_number)},
-            )
-
-        client_name = _extract_recognized_client_name(result)
-        client_metadata = _extract_recognized_client_metadata(result)
-        if client_name:
-            logger.info("Client recognition returned client_name=%s for org_id=%s", client_name, org_id)
-        else:
-            logger.info("Client recognition returned no matching client for org_id=%s", org_id)
-        if not client_name:
-            return None
-        return {
-            "client_name": client_name,
-            "client_metadata": client_metadata,
-        }
-    except asyncio.TimeoutError:
-        logger.warning("Client recognition timed out for org_id=%s", org_id)
-    except json.JSONDecodeError:
-        logger.warning("Client recognition returned malformed MCP data for org_id=%s", org_id)
-    except Exception as error:
-        logger.warning("Client recognition via MCP failed for org_id=%s: %s", org_id, error)
-
-    return None
-
-
-async def resolve_outbound_context(org_id: str) -> dict | None:
-    """
-    Resolves outbound call KB context from PostgreSQL using org_id.
-    Fetches all kb_ids for the org and kb_tags from org_configs.
-    """
-    if not org_id:
-        return None
-    org_id = str(org_id).strip()
-    logger.info(f"[DIAG] resolve_outbound_context: looking up org_id={org_id} in DB...")
-    try:
-        kb = get_global_kb()
-        pool = await kb._get_pool()
-        async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT org_id, kb_tags, prompt, voice, model FROM org_configs WHERE org_id = $1 AND is_active = true",
-                org_id,
-            )
-        try:
-            kb_ids = await kb.get_kb_ids_for_org(org_id)
-        except Exception as e:
-            logger.error(f"Failed to fetch kb_ids for outbound org {org_id}: {e}")
-            kb_ids = [org_id]
-        kb_tags = []
-        if row and row["kb_tags"]:
-            kb_tags = row["kb_tags"] if isinstance(row["kb_tags"], list) else []
-        logger.info(f"[DIAG] resolve_outbound_context: DB HIT — org_id={org_id}, kb_ids={kb_ids}, kb_tags={kb_tags}")
-        return {
-            "org_id": org_id,
-            "kb_ids": kb_ids,
-            "kb_tags": kb_tags,
-            "prompt": row["prompt"] if row and row["prompt"] else None,
-            "voice": row["voice"] if row and row["voice"] else None,
-            "model": row["model"] if row and row["model"] else None,
-        }
-    except Exception as e:
-        logger.error(f"Failed to resolve outbound context for org_id {org_id}: {e}")
-        try:
-            kb = get_global_kb()
-            kb_ids = await kb.get_kb_ids_for_org(org_id)
-            return {"org_id": org_id, "kb_ids": kb_ids, "kb_tags": []}
-        except Exception:
-            return {"org_id": org_id, "kb_ids": [org_id], "kb_tags": []}
-
-
-def format_upfront_kb_context(pages: list) -> str:
-    if not pages:
-        return ""
-    text = "\n\n<!-- UPFRONT_KB_START -->\n=== ORGANIZATION KNOWLEDGE BASE (PRE-LOADED FOR INSTANT ZERO-LATENCY ANSWERS) ===\n"
-    total_len = 0
-    for i, page in enumerate(pages, 1):
-        content = page.content_in_text if hasattr(page, "content_in_text") else str(getattr(page, "content", ""))
-        title = page.title if hasattr(page, "title") else f"Doc {i}"
-        entry = f"\n[DOCUMENT: {title}]\n{content}\n"
-        if total_len + len(entry) > 12000:
-            break
-        text += entry
-        total_len += len(entry)
-    text += "\nDIRECTIVE: Use the pre-loaded Knowledge Base information above for general informational questions only. Never use it for doctor availability, appointment slots, booking, rescheduling, cancellation, or doctor working hours; those requests must use the dedicated MCP availability tool.\n<!-- UPFRONT_KB_END -->"
-    return text
-
-
-def format_upfront_process_context(processes: list) -> str:
-    if not processes:
-        return ""
-
-    text = "\n\n<!-- UPFRONT_PROCESS_CONTEXT_START -->\n=== ORGANIZATION PROCESS AND STAGE INFORMATION ===\n"
-    total_len = 0
-    for process in processes:
-        if not isinstance(process, dict):
-            continue
-        process_name = process.get("name") or process.get("process_name") or "Process"
-        description = process.get("description") or process.get("process_description") or ""
-        entry = f"\n[PROCESS: {process_name}]\n{description}\n"
-        stages = process.get("stages") or process.get("stageDetails") or []
-        for stage in stages:
-            if not isinstance(stage, dict):
-                continue
-            stage_name = stage.get("name") or stage.get("stage_name") or "Stage"
-            stage_description = stage.get("description") or stage.get("stage_description") or ""
-            entry += f"[STAGE: {stage_name}]\n{stage_description}\n"
-        if total_len + len(entry) > 12000:
-            break
-        text += entry
-        total_len += len(entry)
-
-    if total_len == 0:
-        return ""
-    text += "\nDIRECTIVE: Use this process and stage information to answer specific caller questions directly. Do not invent details that are not present here.\n<!-- UPFRONT_PROCESS_CONTEXT_END -->"
-    return text
-
-
-class AssistantFunctions:
-    def __init__(
-        self,
-        job_metadata: str,
-        room_name: str,
-        ctx: JobContext = None,
-        kb_ids: list[str] = None,
-        kb_tags: list[str] = None,
-        call_state: dict = None,
-    ):
-        self.job_metadata = job_metadata
-        self.room_name = room_name
-        self.handoff_triggered = False
-        self._end_call_triggered = False
-        self.call_state = call_state
-        self.agent = None
-        self.session = None
-        self.ctx = ctx
-        self.call_id = None
-        self.tos_task_id = None
-        self.kb_ids = kb_ids or []
-        self.kb_tags = kb_tags or []
-        self._retriever: KnowledgeRetriever | None = None
-        if job_metadata:
-            try:
-                payload = json.loads(job_metadata)
-                self.call_id = str(payload.get("call_id") or payload.get("voice_id") or "")
-                self.tos_task_id = payload.get("metadata", {}).get("tos_task_id")
-                self.tos_task_id = payload.get("tos_task_id") or payload.get("metadata", {}).get("tos_task_id")
-            except Exception:
-                pass
-
-    def _telemetry(self, message: str, call_id: str = None, data: dict = None):
-        if self.tos_task_id:
-            cid = call_id or self.call_id or ""
-            create_bg_task(
-                report_telemetry(
-                    tos_task_id=self.tos_task_id,
-                    message=f"[Agent Worker] {message}",
-                    call_id=cid,
-                    data=data,
-                )
-            )
-
-    async def _get_kb(self) -> PostgresKnowledgeBase:
-        return get_global_kb()
-
-    async def warmup(self):
-        try:
-            kb = await self._get_kb()
-            await kb.warmup(self.kb_ids)
-            retriever = await self._get_retriever()
-            pages = await retriever.prefetch(self.kb_ids)
-            process_context = await kb.get_process_stage_data_for_kb_ids(self.kb_ids)
-            if self.agent:
-                upfront_text = format_upfront_kb_context(pages)
-                upfront_text += format_upfront_process_context(process_context)
-                if upfront_text:
-                    cur_inst = self.agent.instructions
-                    if isinstance(cur_inst, str) and "<!-- UPFRONT_KB_START -->" not in cur_inst:
-                        await self.agent.update_instructions(cur_inst + upfront_text)
-                        logger.info(
-                            f"[KB] Injected {len(pages)} KB pages and {len(process_context)} "
-                            "process contexts into agent instructions"
-                        )
-        except Exception as e:
-            logger.warning(f"[KB] AssistantFunctions warmup error: {e}")
-
-    async def _get_retriever(self) -> KnowledgeRetriever:
-        if self._retriever is None:
-            kb = await self._get_kb()
-            self._retriever = KnowledgeRetriever(kb)
-        return self._retriever
-
-    @property
-    def used_kb_process_ids(self) -> list[str]:
-        if self._retriever is None:
-            return []
-        seen = set()
-        result = []
-        for meta in self._retriever.accessed_pages_meta:
-            raw = meta.get("process_id")
-            if isinstance(raw, list):
-                for pid in raw:
-                    if pid is not None and str(pid) not in seen:
-                        seen.add(str(pid))
-                        result.append(str(pid))
-            elif raw is not None and str(raw) not in seen:
-                seen.add(str(raw))
-                result.append(str(raw))
-            pa = meta.get("process_assignments")
-            if isinstance(pa, list):
-                for entry in pa:
-                    if isinstance(entry, dict) and entry.get("process_id") is not None:
-                        pid_str = str(entry["process_id"])
-                        if pid_str not in seen:
-                            seen.add(pid_str)
-                            result.append(pid_str)
-            psd = meta.get("process_stage_data")
-            if isinstance(psd, list):
-                for entry in psd:
-                    pid = entry.get("id") or entry.get("process_id")
-                    if pid is not None:
-                        pid_str = str(pid)
-                        if pid_str not in seen:
-                            seen.add(pid_str)
-                            result.append(pid_str)
-        return result
-
-    @property
-    def used_kb_stage_ids(self) -> list[str]:
-        if self._retriever is None:
-            return []
-        seen = set()
-        result = []
-        for meta in self._retriever.accessed_pages_meta:
-            raw = meta.get("stage_id")
-            if isinstance(raw, list):
-                for sid in raw:
-                    if sid is not None and str(sid) not in seen:
-                        seen.add(str(sid))
-                        result.append(str(sid))
-            elif raw is not None and str(raw) not in seen:
-                seen.add(str(raw))
-                result.append(str(raw))
-            s_ids = meta.get("stage_ids")
-            if isinstance(s_ids, list):
-                for sid in s_ids:
-                    if sid is not None and str(sid) not in seen:
-                        seen.add(str(sid))
-                        result.append(str(sid))
-            pa = meta.get("process_assignments")
-            if isinstance(pa, list):
-                for entry in pa:
-                    if isinstance(entry, dict) and isinstance(entry.get("stage_ids"), list):
-                        for sid in entry["stage_ids"]:
-                            if sid is not None and str(sid) not in seen:
-                                seen.add(str(sid))
-                                result.append(str(sid))
-            psd = meta.get("process_stage_data")
-            if isinstance(psd, list):
-                for entry in psd:
-                    if isinstance(entry, dict):
-                        stages = entry.get("stages") or entry.get("stageDetails")
-                        if isinstance(stages, list):
-                            for stg in stages:
-                                if isinstance(stg, dict):
-                                    sid = stg.get("stage_id") or stg.get("id")
-                                    if sid is not None and str(sid) not in seen:
-                                        seen.add(str(sid))
-                                        result.append(str(sid))
-        return result
-
-    @property
-    def used_process_stage_data(self) -> list:
-        if self._retriever is None:
-            return []
-        seen_ids = set()
-        result = []
-        for meta in self._retriever.accessed_pages_meta:
-            psd = meta.get("process_stage_data")
-            if isinstance(psd, list):
-                for entry in psd:
-                    pid = entry.get("id")
-                    if pid is not None and pid not in seen_ids:
-                        seen_ids.add(pid)
-                        result.append(entry)
-        return result
-
-    # @llm.function_tool(
-    #     description="Transfer the call to a human agent in a specific department when the user requests it, "
-    #                 "you cannot resolve their issue, or they seem frustrated. "
-    #                 "Specify the department (e.g., 'refund', 'support', 'billing', 'general') "
-    #                 "based on what the user needs."
-    # )
-    # async def transfer_to_human(
-    #     self,
-    #     reason: Annotated[str, "Why the human agent is needed — be specific about the user's request"],
-    #     department: Annotated[str, "The department to transfer to (e.g., refund, support, billing, general)"] = "general"
-    # ):
-    #     logger.info(f"Handoff requested. Reason: {reason}, Department: {department}")
-    # 
-    #     # Guard: prevent duplicate transfers if LLM calls this twice
-    #     if self.handoff_triggered:
-    #         logger.warning("Handoff already in progress — ignoring duplicate request")
-    #         return "TRANSFER_ALREADY_IN_PROGRESS."
-    # 
-    #     self.handoff_triggered = True
-    #     self.last_reason = reason
-    #     self.last_department = department
-    # 
-    #     # Parse metadata to get call/lead IDs
-    #     try:
-    #         payload = json.loads(self.job_metadata) if self.job_metadata else {}
-    #     except Exception:
-    #         payload = {}
-    # 
-    #     # Determine target number from department mapping
-    #     dept_lower = department.lower().strip()
-    #     target_number = TRANSFER_NUMBERS.get(dept_lower, TRANSFER_DEFAULT_NUMBER)
-    #     trunk_id = TRANSFER_SIP_TRUNK_ID or payload.get("trunk_id") or payload.get("call_from_id") or ""
-    # 
-    #     if target_number and trunk_id:
-    #         try:
-    #             lk_api = api.LiveKitAPI(
-    #                 url=os.getenv("LIVEKIT_URL"),
-    #                 api_key=os.getenv("LIVEKIT_API_KEY"),
-    #                 api_secret=os.getenv("LIVEKIT_API_SECRET")
-    #             )
-    #             timestamp = datetime.datetime.now().strftime("%H%M%S%f")
-    #             call_id = payload.get("call_id") or payload.get("voice_id") or self.room_name
-    #             human_identity = f"human_{call_id}_{timestamp}"
-    #             await lk_api.sip.create_sip_participant(
-    #                 api.CreateSIPParticipantRequest(
-    #                     sip_trunk_id=trunk_id,
-    #                     sip_call_to=target_number,
-    #                     room_name=self.room_name,
-    #                     participant_identity=human_identity,
-    #                     participant_name=f"Human - {department.title()}"
-    #                 )
-    #             )
-    #             await lk_api.aclose()
-    #             logger.info(f"Human agent ({target_number}) added to room {self.room_name} for {department} department")
-    #         except Exception as e:
-    #             logger.error(f"Failed to add human agent via SIP: {e}")
-    #     else:
-    #         missing = []
-    #         if not target_number:
-    #             missing.append("target phone number")
-    #         if not trunk_id:
-    #             missing.append("SIP trunk ID")
-    #         logger.warning(f"Cannot transfer: missing {', '.join(missing)}. Backend notification sent anyway.")
-    # 
-    #     # Notify backend (skip if no URL configured)
-    #     if os.getenv("MANTRAASSIST_BACKEND_URL"):
-    #         webhook_payload = {
-    #             "event": "HANDOFF_REQUESTED",
-    #             "data": {
-    #                 "room_name": self.room_name,
-    #                 "reason": reason,
-    #                 "department": department,
-    #                 "call_id": payload.get("call_id") or payload.get("voice_id"),
-    #                 "lead_id": payload.get("lead_id"),
-    #                 "client_name": payload.get("client_name", "User"),
-    #             }
-    #         }
-    #         await send_to_backend(webhook_payload)
-    # 
-    #     # Override agent instructions to enforce absolute silence
-    #     if self.agent:
-    #         try:
-    #             await self.agent.update_instructions(
-    #                 "You are SILENT. The call has been transferred to a human agent. "
-    #                 "Say absolutely nothing. Do not speak, do not acknowledge, do not say goodbye. "
-    #                 "The human agent handles everything from here. SILENT."
-    #             )
-    #             logger.info("Agent instructions overridden to enforce silence")
-    #         except Exception as e:
-    #             logger.error(f"Failed to update agent instructions: {e}")
-    # 
-    #     # Interrupt any in-progress speech from the agent
-    #     try:
-    #         if self.agent and self.agent._session:
-    #             self.agent._session.interrupt()
-    #             logger.info("Agent speech interrupted for handoff")
-    #         except Exception as e:
-    #             logger.debug(f"Agent interrupt unavailable (non-fatal): {e}")
-    # 
-    #     return "TRANSFER_COMPLETE. Do not speak."
-
-    @llm.function_tool(
-        description=(
-            "Search the knowledge base for general factual information, doctor profiles, pricing, services, "
-            "policies, and any entity or topic asked by the caller. Call this tool silently without saying search fillers "
-            "(e.g., do NOT say 'Let me check' or 'Let me look that up'). Speak the retrieved answer directly. "
-            "NEVER use this tool for doctor availability, open appointment slots, booking, rescheduling, cancellation, "
-            "or doctor working hours; always use the dedicated MCP availability tool for those requests."
-        )
-    )
-    async def search_knowledge_base(
-        self, 
-        query: Annotated[str, "The search query to look up in the knowledge base. Be specific, e.g., 'What are the symptoms of diabetes?' or 'How many paid leaves do I get?'"],
-        specific_tag: Annotated[Optional[str], "An optional specific tag or category to search within (e.g., 'sales', 'support', 'pricing') if the user explicitly switches context. Leaves empty to search the default context."] = None
-    ):
-        tags_to_search = [specific_tag] if specific_tag else self.kb_tags
-        logger.info(f"Agent requested knowledge base search for: '{query}' with tags {tags_to_search}")
-        retriever = await self._get_retriever()
-        result = await retriever.retrieve(query, kb_ids=self.kb_ids, tags=tags_to_search if tags_to_search else None)
-        return result
-
-    @llm.function_tool(
-        description="End the call. Call this tool ONLY when the conversation has reached its final conclusion (e.g. after saying final goodbye or when the user explicitly hangs up/declines). NEVER call this during the initial greeting or while the conversation is active."
-    )
-    async def end_call(self):
-        if self.call_state and not self.call_state.get("user_has_spoken", False) and not self.call_state.get("initial_greeting_done", False):
-            logger.warning("[DIAG] end_call invoked prematurely during initial greeting / before user spoke. Ignoring tool call.")
-            return "Call cannot be ended before the conversation starts. Please greet the user and proceed with the conversation."
-
-        logger.info("Agent decided to end the call via function tool. Disconnecting shortly.")
-        self._telemetry("Call ended by agent")
-        self._end_call_triggered = True
-        async def graceful_disconnect():
-            await asyncio.sleep(3.0)
-            if self.ctx:
-                await _force_disconnect_room(self.ctx)
-
-        self._disconnect_task = create_bg_task(graceful_disconnect())
-        return ""
-
-    async def _load_department_options(self, org_id: int | str) -> list[str]:
-        """Load and remember the departments available for this organization."""
-        from mantra.mcp_client import get_mcp_client
-
-        try:
-            raw_departments = await get_mcp_client().call_tool(
-                "get_org_departments",
-                {"org_id": org_id},
-            )
-            departments = json.loads(raw_departments) if isinstance(raw_departments, str) else raw_departments
-            if isinstance(departments, dict):
-                departments = departments.get("departments") or departments.get("data") or []
-            if not isinstance(departments, list):
-                departments = []
-            normalized = []
-            for item in departments:
-                name = str(item).strip()
-                if name and name.casefold() not in {value.casefold() for value in normalized}:
-                    normalized.append(name)
-        except Exception as exc:
-            logger.warning(f"Failed to fetch departments for org_id={org_id}: {exc}")
-            normalized = []
-
-        if self.call_state is not None:
-            self.call_state["department_options"] = normalized
-        return normalized
-
-    @llm.function_tool(
-        description=(
-            "Use when the caller gives a broad medical symptom without a clear department or specialty, such as 'I have an eye problem'. "
-            "Fetch the organization's department list silently, but do not guess a department from one vague symptom. "
-            "Ask up to two concise clinical-routing questions before selecting a department. Ask about the symptom's onset, progression, severity, and any associated symptoms that distinguish the available specialties. "
-            "Use the caller's answers and the full conversation to select the best exact value from the returned list. "
-            "Do not ask the caller to choose a department or mention department names aloud. "
-            "Do not use fixed symptom-to-department mappings or assume that a symptom always belongs to a particular specialty. "
-            "Only call check_doctor_availability after the caller answers the necessary routing question(s)."
-        )
-    )
-    async def clarify_medical_department(
-        self,
-        symptom: Annotated[str, "The caller's broad symptom or reason for the appointment."],
-    ) -> str:
-        org_id = self.call_state.get("org_id") if self.call_state else None
-        if not org_id and self.job_metadata:
-            try:
-                payload = json.loads(self.job_metadata) if isinstance(self.job_metadata, str) else self.job_metadata
-                org_id = payload.get("org_id") or (
-                    payload.get("metadata", {}).get("org_id")
-                    if isinstance(payload.get("metadata"), dict)
-                    else None
-                )
-            except Exception as exc:
-                logger.warning(f"Could not parse job_metadata in clarify_medical_department: {exc}")
-
-        if not org_id:
-            return "Ask the caller which specific eye or medical specialty they need, then continue without guessing a department."
-
-        departments = await self._load_department_options(org_id)
-
-        if self.call_state is not None:
-            self.call_state["department_clarification_symptom"] = symptom.strip()
-
-        if not departments:
-            return (
-                "Department discovery is unavailable for this organization. Do not ask the caller to choose a department "
-                "and do not fall back to the knowledge base. Proceed directly by calling check_doctor_availability with "
-                "the best department inferred from the conversation, or leave department empty if none is known."
-            )
-
-        return (
-            f"INTERNAL ROUTING CONTEXT ONLY. Caller symptom: {symptom.strip()}. "
-            f"Allowed departments: {json.dumps(departments)}. "
-            "Do not select a department yet if the symptom could reasonably match more than one option. Ask up to two concise questions about onset, progression, severity, and associated symptoms, choosing the questions that best distinguish the returned options. "
-            "After the caller answers, select the single best exact department using the full conversation context and the clinical evidence provided by the caller. "
-            "Do not use a fixed symptom-to-department mapping, infer a department solely from one keyword, say the department list, ask the caller to choose a department, or explain the internal routing."
-        )
-
-    @llm.function_tool(
-        description=(
-            "Check doctor and healthcare provider availability, working hours, and open appointment slots on a specific date. "
-            "This is the authoritative real-time MCP tool for appointment availability. Never use the knowledge base for this request. "
-            "If the organization department list is available, the department must match one of its values. "
-            "Never invent a generic department such as Ophthalmology when a department list is available. If the department is unknown, "
-            "call clarify_medical_department first, then continue even if department discovery is unavailable. Never ask the caller to choose a department by name. "
-            "ALWAYS use this tool whenever the caller asks about doctor availability, open consultation times, "
-            "scheduling an appointment, or doctor working hours on a given day. "
-            "If the caller mentions or asks about a specific medical department or specialty (e.g. 'Cardiology', 'Dermatology', 'Orthopedics', 'Pediatrics', 'Dental'), extract and pass it in department."
-        )
-    )
-    async def check_doctor_availability(
-        self,
-        date: Annotated[str, "The date to check in YYYY-MM-DD format (e.g. '2026-08-25'). If the caller specifies a relative day like 'tomorrow' or 'next Tuesday', calculate the exact YYYY-MM-DD date."],
-        doctor_name: Annotated[Optional[str], "Optional doctor name to filter by (e.g. 'Sharma' or 'Dr. Ananya'). If no doctor name is mentioned, leave None."] = None,
-        department: Annotated[Optional[str], "Optional medical department or specialty mentioned in the transcript/call (e.g. 'Cardiology', 'Dermatology', 'Orthopedics', 'Pediatrics', 'General Medicine'). If no department is mentioned, leave None."] = None,
-    ) -> str:
-        org_id = None
-        caller_phone = None
-
-        # 1. Extract from active call state (resolved from registered phone number in org_configs)
-        if self.call_state:
-            org_id = self.call_state.get("org_id")
-            caller_phone = (
-                self.call_state.get("caller_phone_number")
-                or self.call_state.get("caller_phone")
-                or self.call_state.get("phone_number")
-                or self.call_state.get("client_phone")
-            )
-
-        # 2. Extract dynamically from call metadata payload
-        if self.job_metadata:
-            try:
-                payload = json.loads(self.job_metadata) if isinstance(self.job_metadata, str) else self.job_metadata
-                if not org_id:
-                    org_id = payload.get("org_id") or (payload.get("metadata", {}).get("org_id") if isinstance(payload.get("metadata"), dict) else None)
-                if not caller_phone:
-                    caller_phone = (
-                        payload.get("phone_number")
-                        or payload.get("caller_phone")
-                        or payload.get("client_phone")
-                        or payload.get("from_phone")
-                    )
-            except Exception as e:
-                logger.warning(f"Could not parse job_metadata in check_doctor_availability: {e}")
-
-        department_options = self.call_state.get("department_options", []) if self.call_state else []
-        if not department_options and org_id:
-            department_options = await self._load_department_options(org_id)
-
-        requested_department = str(department).strip() if department else ""
-        matched_department = next(
-            (
-                option
-                for option in department_options
-                if option.casefold() == requested_department.casefold()
-            ),
-            None,
-        )
-        if not matched_department and department_options:
-            if self.call_state is not None:
-                self.call_state["department_clarification_symptom"] = requested_department
-            return (
-                "Department selection is invalid. Call clarify_medical_department, choose one exact value from its "
-                "returned allowed departments, and retry availability. Do not ask the caller to choose a department."
-            )
-
-        if self.call_state is not None:
-            self.call_state["selected_department"] = matched_department or requested_department or None
-
-        logger.info(f"Agent requesting doctor availability via MCP: org_id={org_id}, date={date}, doctor={doctor_name}, department={department}, phone={caller_phone}")
-
-        from mantra.mcp_client import get_mcp_client
-
-        mcp_client = get_mcp_client()
-        result = await mcp_client.call_tool(
-            "receive_doctor_availability",
-            {
-                "org_id": org_id,
-                "date": str(date).strip(),
-                "query_date": str(date).strip(),
-                "name": str(doctor_name).strip() if doctor_name else None,
-                "doc_name": str(doctor_name).strip() if doctor_name else "",
-                "department": str(department).strip() if department else "",
-                "query": str(doctor_name).strip() if doctor_name else (str(department).strip() if department else None),
-                "caller_phone": caller_phone,
-            },
-        )
-        if self.call_state is not None and isinstance(result, str):
-            import re
-            m = re.search(r'User ID:\s*(\d+)', result, re.IGNORECASE) or re.search(r'Doctor ID:\s*(\d+)', result, re.IGNORECASE) or re.search(r'user_id[":\s]+(\d+)', result, re.IGNORECASE)
-            if m:
-                try:
-                    self.call_state["provider_user_id"] = int(m.group(1))
-                    logger.info(f"Captured provider_user_id={self.call_state['provider_user_id']} from MCP availability result")
-                except Exception:
-                    pass
-        return result
-
-    # Removed query_knowledge_base tool as per user request to inject KB directly into the main job
-
-    # @llm.ai_callable(description="Transfer the call to a human assistant when requested or if the issue is too complex.")
-    # async def transfer_to_human(
-    #     self,
-    #     reason: Annotated[str, "The reason why a human is needed"]
-    # ):
-    #     logger.info(f"Handoff requested. Reason: {reason}")
-    #     self.handoff_triggered = True
-    #
-    #     # Parse metadata to get call/lead IDs
-    #     try:
-    #         payload = json.loads(self.job_metadata) if self.job_metadata else {}
-    #     except Exception:
-    #         payload = {}
-    #
-    #     # Notify backend
-    #     webhook_payload = {
-    #         "event": "HANDOFF_REQUESTED",
-    #         "data": {
-    #             "room_name": self.room_name,
-    #             "reason": reason,
-    #             "call_id": payload.get("call_id") or payload.get("voice_id"),
-    #             "lead_id": payload.get("lead_id"),
-    #             "client_name": payload.get("client_name", "User"),
-    #         }
-    #     }
-    #     await send_to_backend(webhook_payload)
-    #
-    #     if self.agent:
-    #         logger.info("Handoff triggered — switching to passive monitoring instructions")
-    #         await self.agent.update_instructions(
-    #             "A human has joined the call. You are now in PASSIVE MONITORING MODE. "
-    #             "DO NOT speak. DO NOT respond to the user. DO NOT generate any audio. "
-    #             "Just observe and maintain the transcript for the final summary."
-    #         )
-    #
-    #     return "I am connecting you to a human assistant now. Please stay on the line. I will remain on the call to record and summarize our conversation."
 
 
 @server.rtc_session(agent_name=AGENT_NAME)
@@ -1112,7 +165,7 @@ async def entrypoint(ctx: JobContext):
             metadata = payload.get("metadata", {})
             if isinstance(metadata, dict):
                 call_state["call_initiated_at"] = metadata.get("call_initiated_at")
-        except:
+        except Exception:
             pass
 
     call_state["tos_task_id"] = tos_task_id
@@ -1149,6 +202,7 @@ async def entrypoint(ctx: JobContext):
     resolved_context = None
     kb_ids_list = []
     kb_tags_list = []
+    payload = None
 
     if ctx.job.metadata:
         try:
@@ -1241,96 +295,35 @@ async def entrypoint(ctx: JobContext):
     # Fully in-memory recorder — no disk I/O
     recorder = SessionRecorder()
 
-    @ctx.room.on("track_subscribed")
-    def on_track_subscribed(
-        track: rtc.Track,
-        publication: rtc.TrackPublication,
-        participant: rtc.RemoteParticipant,
-    ):
-        logger.info(f"[DIAG] Track subscribed: kind={track.kind} participant={participant.identity} sid={track.sid}")
-        if track.kind == rtc.TrackKind.KIND_AUDIO:
-            recorder.start_recording(track, f"participant_{participant.identity}")
-            logger.info(f"[DIAG] Recording started for participant audio track: {participant.identity}")
+    # CallContext created early so room handlers register before any long
+    # engine-building work; fields are filled in as each component is built.
+    cc = CallContext(
+        ctx=ctx,
+        session=None,
+        agent=None,
+        fnc_ctx=fnc_ctx,
+        call_state=call_state,
+        recorder=recorder,
+        language_mgr=None,
+        tts_engine=None,
+        stt_engine=None,
+        keyterm_memory=None,
+        llm_engine=None,
+        entrypoint_start_time=entrypoint_start_time,
+        is_inbound=False,
+        client_name="User",
+        voice_id="",
+        effective_call_metadata=None,
+        telemetry=_telemetry,
+        agent_name=AGENT_NAME,
+    )
+    register_room_handlers(cc)
 
-    @ctx.room.on("local_track_published")
-    def on_local_track_published(
-        publication: rtc.LocalTrackPublication, track: rtc.Track
-    ):
-        logger.info(f"[DIAG] Local track published: kind={track.kind} sid={track.sid}")
-        if track.kind == rtc.TrackKind.KIND_AUDIO:
-            recorder.start_recording(track, "agent")
-            logger.info(f"[DIAG] Recording started for agent audio track")
-
-    @ctx.room.on("participant_disconnected")
-    def on_participant_disconnected(participant: rtc.RemoteParticipant):
-        call_state["timeline"].append(
-            {
-                "event": "Remote Participant Disconnected",
-                "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
-            }
-        )
-        logger.info(
-            f"[DIAG] Participant {participant.identity} disconnected. Force-ending call."
-        )
-        create_bg_task(_force_disconnect_room(ctx))
-
-    initial_instructions = """You are a warm, polite, and empathetic Care Support Assistant on a phone call.
-
-CORE BEHAVIOR:
-- This is a PHONE CALL. Speak naturally.
-- Keep responses SHORT (1-2 sentences max).
-- Sound like a helpful human friend, not a robot.
-- Do NOT use markdown, bullet points, or special characters.
-- If the user pauses, wait patiently for them to finish.
-- ACTIVELY LISTEN: If the user asks a question (directions, bus stand, timing, cost, etc.), answer it helpfully FIRST, then return to the main topic. Never ignore questions or blindly push the script.
-- RETAIN CONTEXT & AVOID REPETITION: Remember previous answers. Do not re-ask the same question. If the user says no or changes topic, acknowledge and move on. Never be pushy.
-
-<!-- LANGUAGE_DIRECTIVE_START -->
-The response language is controlled by the runtime language directive below. Follow it exactly.
-<!-- LANGUAGE_DIRECTIVE_END -->
-
-KNOWLEDGE BASE & SEARCH DIRECTIVES:
-- NEVER say search filler phrases like "Let me check that for you", "Let me look that up", "One moment", "Main dekh raha hoon".
-- Call the search tool SILENTLY in the background and answer directly with the real information.
-- Call at most ONE search tool per turn. Never chain multiple searches for the same request.
-- If search returns nothing useful, reply immediately with what you know or politely ask for clarification.
-
-# HUMAN HANDOFF (DISABLED):
-# - Handoff is currently disabled.
-# - If user asks for a human or doctor, say:
-#   "Main samajh sakta hoon aap human agent se baat karna chahte hain. Abhi human transfer available nahi hai. Main aapko appointment book karwa sakta hoon ya agent ko callback schedule kar sakta hoon."
-# - If they insist, politely end the call. Do not promise transfers.
-
-POLITENESS & EMPATHY:
-- Always be polite, courteous and respectful.
-- Show real empathy: "Main samajh sakta hoon", "Woh toh frustrating hoga", "Main aapki madad ke liye yahan hoon".
-- Warm, caring and reassuring tone. Never rude or dismissive.
-
-ENDING THE CALL:
-- You have a tool called `end_call`. Call it ONLY when the call is clearly ending.
-- NEVER call `end_call` during greeting or while conversation is ongoing.
-- Call `end_call` only when:
-  * User says goodbye / thank you / that's all / not interested / hang up.
-  * User clearly rejects the offer.
-  * Conversation has reached a natural end.
-- Sequence: 1) Call `end_call` tool → 2) Then say a short warm goodbye.
-- Final goodbye example: "Thank you for your time. Have a great day!" or "Dhanyavaad. Aapka din shubh ho!"
-
-PRONUNCIATION (CRITICAL):
-- ALWAYS write the brand name as "MantraCare" (single word). NEVER "Mantra Care".
-- ALWAYS write "MantraAssist" (single word). NEVER "Mantra Assist".
-
-PROSODY AND TONE (CRITICAL):
-- DO NOT use exclamation marks (!) or ALL CAPS.
-- Use only periods and commas. The voice engine treats ! and CAPS as shouting.
-- Write: "Hello." not "HELLO!" | "Great." not "Great!"
-
-Follow these specific instructions:
-"""
+    initial_instructions = BASE_INSTRUCTIONS  # literal base; metadata block builds on it
     client_name = "User"
     is_inbound = False
     _effective_call_metadata = None
-    
+
     if ctx.job.metadata:
         try:
             # Use the enriched metadata if inbound context was resolved, otherwise parse fresh
@@ -1339,10 +332,9 @@ Follow these specific instructions:
             else:
                 payload = json.loads(ctx.job.metadata)
             _effective_call_metadata = dict(payload)  # keep for finalize()
-            
+
             if payload.get("direction") == "inbound":
                 is_inbound = True
-
 
             # Normalize client_custom_fileds to client_custom_fields
             if "client_custom_fileds" in payload:
@@ -1362,85 +354,8 @@ Follow these specific instructions:
                         pass
 
             # 1. Handle main prompt
+            initial_instructions, client_name = build_initial_instructions(payload, is_inbound=is_inbound)
 
-            # If the call arrived via an external IVR (SIP header passthrough),
-            # inject a dedicated context block so the LLM understands the caller's
-            # origin and reason for calling without having to re-ask.
-            ivr_keys = {"account_number", "call_reason", "department", "language", "user_id", "caller_choice"}
-            ivr_block = ""
-            for key in payload:
-                if key in ivr_keys and payload[key]:
-                    ivr_block += f"- {key.replace('_', ' ').title()}: {payload[key]}\n"
-            
-            if ivr_block:
-                initial_instructions += "\n--- EXTERNAL IVR / CALLER CONTEXT ---\n"
-                initial_instructions += "The caller was routed from an automated system with the following context.\n"
-                initial_instructions += "DO NOT ask the user for this information again:\n"
-                initial_instructions += ivr_block
-
-            if "prompt" in payload:
-                # Remove the impatient "not responding" rule which causes repetitive loops
-                clean_prompt = payload["prompt"].replace(
-                    "If the client is not responding, ask questions like 'hope you are hearing me', etc.",
-                    "",
-                )
-                initial_instructions += "\n" + clean_prompt
-
-            if "client_name" in payload:
-                client_name = payload["client_name"]
-
-            # 2. Extract ALL other features as context for the LLM
-            context_header = "\n\n--- ADDITIONAL CALL CONTEXT ---\n"
-            context_body = ""
-
-            for key, value in payload.items():
-                if key == "prompt":
-                    continue
-                
-                # For inbound calls, do not inject client_name into additional context so the LLM does not assume the caller's name from DB config
-                if is_inbound and key == "client_name":
-                    continue
-
-                readable_key = key.replace("_", " ").title()
-
-                if isinstance(value, dict):
-                    context_body += f"{readable_key}:\n"
-                    for k, v in value.items():
-                        rk = k.replace("_", " ").title()
-                        context_body += f"  - {rk}: {v}\n"
-                elif isinstance(value, list):
-                    context_body += f"- {readable_key}: {', '.join(map(str, value))}\n"
-                else:
-                    context_body += f"- {readable_key}: {value}\n"
-
-            # Inject live date and time context so LLM always uses current year and date
-            now_dt = datetime.datetime.now()
-            initial_instructions += "\n\n--- CURRENT DATE & TIME ---\n"
-            initial_instructions += f"- Today's Date: {now_dt.strftime('%A, %B %d, %Y')}\n"
-            initial_instructions += f"- Current Time: {now_dt.strftime('%I:%M %p')}\n"
-            initial_instructions += f"- Current Year: {now_dt.year}\n"
-            initial_instructions += f"- Always calculate appointment dates and relative days (e.g. 'today', 'tomorrow', 'next week', 'August 31') using the current year ({now_dt.year}) and pass in YYYY-MM-DD format.\n"
-
-            # Add an overriding rule at the very end so it takes precedence over the backend prompt
-            initial_instructions += "\n\n*** CRITICAL OVERRIDING RULES ***\n"
-            initial_instructions += "1. NEVER repeat the same question twice. If the user dodges the question or asks a counter-question, answer them and DO NOT repeat your previous question.\n"
-            initial_instructions += "2. DO NOT push for an appointment if the user hasn't explicitly agreed or if they are asking about other things. Let the conversation flow naturally.\n"
-            initial_instructions += "3. Answer user's questions DIRECTLY without appending a sales pitch or appointment request at the end of every turn.\n"
-            initial_instructions += "4. If the user asks to speak to a human or asks to be transferred — apologize and explain that human transfer is currently unavailable. Do not promise transfer, and if they insist, politely end the call.\n"
-            initial_instructions += "5. LANGUAGE CONSISTENCY: Always respond in the caller's current conversational language as specified in the CURRENT CONVERSATIONAL LANGUAGE directive.\n"
-            initial_instructions += "6. NO SEARCH FILLERS: When retrieving information from the knowledge base, NEVER say 'Let me check that for you', 'Let me look that up', or any filler phrases. Execute the search silently and speak the final answer directly.\n"
-
-
-            if is_inbound:
-                initial_instructions += "\n--- INBOUND CALL FLOW & CONTEXT (CRITICAL) ---\n"
-                initial_instructions += "- This is an INBOUND call. The caller reached out to you.\n"
-                initial_instructions += "- TURN 1 (Initial Greeting): Greet warmly and ask how you can help (e.g. 'Hi, this is Arushi. How can I help you today?').\n"
-                initial_instructions += "- TURN 2 (Name Request): When the caller states their reason for calling or intent, briefly acknowledge it, and politely ask for their name BEFORE proceeding to address their request (e.g. 'Sure, I can help with that! May I know your name, please?' or 'Got it. Who am I speaking with?').\n"
-                initial_instructions += "- TURN 3+ (Addressing Request): Once the caller gives their name, address their request or answer their questions directly, using their name naturally.\n"
-                initial_instructions += "- Do not assume the caller's name unless they state it or your prompt explicitly specifies it.\n"
-                initial_instructions += "- Identify yourself strictly as instructed in your prompt\n"
-                initial_instructions += "- If the caller seems confused, help them understand who you are.\n"
-                
             logger.info(f"Loaded full context for {client_name} (inbound: {is_inbound})")
             call_state["is_inbound"] = is_inbound
 
@@ -1448,43 +363,12 @@ Follow these specific instructions:
             logger.error(f"Failed to parse metadata: {e}")
 
     call_state["is_inbound"] = is_inbound
+    cc.is_inbound = is_inbound
+    cc.client_name = client_name
+    cc.effective_call_metadata = _effective_call_metadata
 
     # 3. Select LLM and Voice based on payload
-    if "payload" in locals():
-        # Handle nested ai_payload if present
-        ai_p = payload.get("ai_payload")
-        if not isinstance(ai_p, dict):
-            ai_p = {}
-
-        # Priority for Model: ai_payload.ai_model -> payload.model -> default "deepseek"
-        model_name = ai_p.get("ai_model") or payload.get("model") or "deepseek"
-        model_name = str(model_name).lower()
-
-        # Priority for Voice: ai_payload.voice_id -> payload.voice_id -> voice_name -> voice -> default "arushi"
-        _raw_voice = (
-            ai_p.get("voice_id")
-            or payload.get("voice_id")
-            or payload.get("voice_name")
-            or payload.get("voice")
-            or "arushi"
-        )
-        voice_input = "arushi" if _raw_voice in (None, "null", "None") else _raw_voice
-        voice_id = VOICE_MAPPING.get(str(voice_input).lower(), voice_input)
-
-        # Priority for Speed: ai_payload.voice_speed -> payload.voice_speed -> default 1.05
-        voice_speed = ai_p.get("voice_speed") or payload.get("voice_speed") or 1
-    else:
-        model_name = "deepseek"
-        voice_input = "arushi"
-        voice_id = VOICE_MAPPING["arushi"]
-        voice_speed = 1.0
-
-    # Safe parsing and clamping for speed (0.1 to 2.0)
-    try:
-        voice_speed = float(voice_speed)
-        voice_speed = max(0.1, min(2.0, voice_speed))
-    except (ValueError, TypeError):
-        voice_speed = 1.0
+    model_name, voice_input, voice_id, voice_speed = select_model_and_voice(payload)
 
     # Explicit logs for call configuration
     logger.info("--- CALL CONFIGURATION ---")
@@ -1493,93 +377,20 @@ Follow these specific instructions:
     logger.info(f"Speed: {voice_speed}")
     logger.info("--------------------------")
 
-    if model_name == "gemini":
-        logger.info("Using Gemini (Google) LLM")
-        llm_engine = google.LLM(model="gemini-2.5-flash")
-    elif model_name == "deepseek":
-        deepseek_key = os.getenv("DEEPSEEK_API_KEY")
-        if not deepseek_key:
-            logger.warning("DEEPSEEK_API_KEY not set, falling back to OpenAI")
-            llm_engine = openai.LLM(model="gpt-4o-mini")
-        else:
-            logger.info("Using DeepSeek LLM (Optimized Low-Latency HTTP/2)")
+    cc.voice_id = voice_id
 
-            try:
-                http_client = httpx.AsyncClient(
-                    timeout=httpx.Timeout(connect=10.0, read=45.0, write=15.0, pool=15.0),
-                    limits=httpx.Limits(max_connections=50, max_keepalive_connections=20, keepalive_expiry=300.0),
-                    http2=True,
-                )
-            except Exception:
-                http_client = httpx.AsyncClient(
-                    timeout=httpx.Timeout(connect=10.0, read=45.0, write=15.0, pool=15.0),
-                    limits=httpx.Limits(max_connections=50, max_keepalive_connections=20, keepalive_expiry=300.0),
-                )
+    llm_engine, client = build_live_llm_engine(model_name)
 
-            deepseek_base = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-            client = openai_client.AsyncClient(
-                api_key=deepseek_key,
-                base_url=deepseek_base,
-                http_client=http_client,
-            )
-            llm_engine = openai.LLM(
-                model="deepseek-v4-flash",
-                client=client,
-                timeout=httpx.Timeout(connect=10.0, read=45.0, write=15.0, pool=15.0),
-            )
-
-            # Fire background socket pre-warming ping to eliminate initial SSL/TCP handshake latency
-            async def _prewarm_deepseek():
-                try:
-                    logger.info("[DEEPSEEK] Pre-warming DeepSeek API connection...")
-                    pw_start = asyncio.get_event_loop().time()
-                    await client.chat.completions.create(
-                        model="deepseek-v4-flash",
-                        messages=[{"role": "user", "content": "hi"}],
-                        max_tokens=1,
-                    )
-                    pw_dur = (asyncio.get_event_loop().time() - pw_start) * 1000
-                    logger.info(f"[DEEPSEEK] Socket pre-warmed successfully in {pw_dur:.1f}ms")
-                except Exception as pw_err:
-                    logger.warning(f"[DEEPSEEK] Pre-warm non-fatal error: {pw_err}")
-
-            # Pre-warm fired AFTER initial_instructions is fully built (see below)
-            # so DeepSeek's KV cache is populated with the actual system prompt.
-    else:
-        logger.info("Using OpenAI LLM")
-        llm_engine = openai.LLM(model="gpt-4o-mini")
-    # TTS via LiveKit Inference — Cartesia provider
     # Language Manager & TTS via LiveKit Inference — Cartesia provider
-    raw_lang = None
-    if "payload" in locals() and isinstance(payload, dict):
-        ai_p = payload.get("ai_payload") if isinstance(payload.get("ai_payload"), dict) else {}
-        raw_lang = (
-            payload.get("language")
-            or payload.get("lang")
-            or ai_p.get("language")
-            or ai_p.get("lang")
-        )
-
-    requested_lang = str(raw_lang or "").strip().lower()
-    response_mode = (
-        "hi"
-        if requested_lang in {"hi", "hindi", "hi-in"}
-        else "en"
-        if requested_lang in {"en", "english", "en-us", "en-in", "en-gb"}
-        else "en"
-    )
-    language_mgr = LanguageManager(initial_language=raw_lang, response_mode=response_mode)
+    language_mgr, raw_lang, requested_lang, response_mode = build_language_manager(payload)
     language = language_mgr.get_current_language()
     call_state["current_language"] = language
 
+    cc.language_mgr = language_mgr
+
     # Insert dynamic language directive into initial prompt instructions
     directive_block = f"<!-- LANGUAGE_DIRECTIVE_START -->\n{language_mgr.get_prompt_directive()}\n<!-- LANGUAGE_DIRECTIVE_END -->"
-    if "<!-- LANGUAGE_DIRECTIVE_START -->" in initial_instructions and "<!-- LANGUAGE_DIRECTIVE_END -->" in initial_instructions:
-        pref = initial_instructions.split("<!-- LANGUAGE_DIRECTIVE_START -->")[0]
-        suff = initial_instructions.split("<!-- LANGUAGE_DIRECTIVE_END -->")[1]
-        initial_instructions = f"{pref}{directive_block}{suff}"
-    else:
-        initial_instructions += f"\n\n{directive_block}"
+    initial_instructions = apply_language_directive(initial_instructions, directive_block)
 
     logger.info(f"[LANG] Initialized language state: '{language}' (Voice: {voice_id} | Speed: {voice_speed})")
 
@@ -1587,7 +398,7 @@ Follow these specific instructions:
     # Passing the real system prompt warms DeepSeek's KV prefix cache so the
     # first actual turn (e.g. user says "Yes") reuses the cached prefix
     # instead of recomputing the entire context → eliminates 2-3s TTFT on turn 2.
-    if model_name == "deepseek" and 'client' in locals():
+    if model_name == "deepseek" and client is not None:
         async def _prewarm_deepseek_with_ctx():
             try:
                 logger.info("[DEEPSEEK] Pre-warming KV cache with system prompt...")
@@ -1606,63 +417,16 @@ Follow these specific instructions:
                 logger.warning(f"[DEEPSEEK] Pre-warm (with ctx) non-fatal error: {pw_err}")
         create_bg_task(_prewarm_deepseek_with_ctx())
 
+    tts_engine = build_tts_engine(voice_id, language, voice_speed)
+    cc.tts_engine = tts_engine
 
-    tts_engine = inference.TTS(
-        model="cartesia/sonic-3",
-        voice=voice_id,
-        language=language,
-        extra_kwargs={
-            "speed": voice_speed,
-        }
+    stt_engine, stt_lang, dynamic_keyterms, keyterm_memory = build_stt_engine(
+        payload, call_state, is_inbound, language, requested_lang
     )
 
-    # Deepgram Nova-3 STT engine with international locale resolution (en-IN, en-US, en-GB, en-AU, etc.)
-    # Fully compatible with both INBOUND and OUTBOUND calls
-    call_phone = (
-        call_state.get("caller_phone_number")
-        or (payload.get("phone_number") if "payload" in locals() and isinstance(payload, dict) else None)
-        or (payload.get("client_phone_number") if "payload" in locals() and isinstance(payload, dict) else None)
-        or (payload.get("client_phone") if "payload" in locals() and isinstance(payload, dict) else None)
-        or (payload.get("caller_phone") if "payload" in locals() and isinstance(payload, dict) else None)
-        or (payload.get("to_phone") if "payload" in locals() and isinstance(payload, dict) else None)
-        or (call_data.get("phone_number") if "call_data" in locals() and isinstance(call_data, dict) else None)
-        or (call_payload.get("client_phone_number") if "call_payload" in locals() and isinstance(call_payload, dict) else None)
-        or (getattr(participant, "identity", None) if "participant" in locals() and participant else None)
-    )
-    country_val = (
-        (payload.get("country") or payload.get("country_code") or payload.get("client_country"))
-        if "payload" in locals() and isinstance(payload, dict)
-        else None
-    )
-
-    bilingual_stt = not requested_lang or requested_lang in {
-        "multi", "multilingual", "bilingual", "hinglish", "en-hi", "hi-en"
-    }
-    stt_lang = (
-        "multi"
-        if bilingual_stt
-        else resolve_stt_language(language=language, phone_number=call_phone, country_code=country_val)
-    )
-    logger.info(f"[STT] Deepgram Nova-3 configured with language/locale: '{stt_lang}' (Direction: {'inbound' if is_inbound else 'outbound'} | Phone: {call_phone})")
-
-    dynamic_keyterms = resolve_stt_keyterms(payload=payload if "payload" in locals() and isinstance(payload, dict) else None)
-    keyterm_memory = CallKeytermMemory(dynamic_keyterms)
-    dynamic_keyterms = keyterm_memory.snapshot()
-    call_state["stt_keyterms"] = dynamic_keyterms
-    stt_kwargs = {
-        "model": "nova-3",
-        "language": stt_lang,
-        "smart_format": True,
-        "punctuate": True,
-        "numerals": True,
-        "endpointing_ms": 100,
-        "no_delay": True,
-    }
-    if dynamic_keyterms:
-        stt_kwargs["keyterm"] = dynamic_keyterms
-        logger.info(f"[STT] Deepgram Nova-3 keyterm prompting enabled ({len(dynamic_keyterms)} terms): {dynamic_keyterms[:10]}...")
-
-    stt_engine = deepgram.STT(**stt_kwargs)
+    cc.stt_engine = stt_engine
+    cc.keyterm_memory = keyterm_memory
+    cc.llm_engine = llm_engine
 
     session = AgentSession(
         turn_handling=TurnHandlingOptions(
@@ -1707,438 +471,35 @@ Follow these specific instructions:
         fnc_ctx.check_doctor_availability,
     ]
 
-        # agent_tools = [fnc_ctx.end_call,fnc_ctx.search_knowledge_base, fnc_ctx.check_doctor_availability, ]
-
-    class MantraMultilingualAgent(Agent):
-        async def llm_node(
-            self,
-            chat_ctx: llm.ChatContext,
-            tools: list[llm.Tool],
-            model_settings: ModelSettings,
-        ):
-            # Synchronously align language before LLM generates text
-            try:
-                msgs = list(chat_ctx.messages()) if callable(getattr(chat_ctx, "messages", None)) else (chat_ctx.messages if isinstance(getattr(chat_ctx, "messages", None), list) else [])
-                if msgs:
-                    user_msgs = [m for m in msgs if hasattr(m, 'role') and str(m.role).lower() in ('user', 'caller')]
-                    if user_msgs:
-                        last_user_msg = user_msgs[-1]
-                        content = " ".join([str(c) for c in last_user_msg.content]) if isinstance(last_user_msg.content, list) else str(last_user_msg.content)
-                        if content and not content.startswith("[System:"):
-                            new_lang, switched = language_mgr.process_user_utterance(content)
-                            if switched:
-                                old_lang = call_state.get("current_language", "en")
-                                call_state["current_language"] = new_lang
-                                logger.info(f"[LANG] Immediate llm_node switch: {old_lang} -> {new_lang}")
-                                try:
-                                    tts_engine.update_options(language=new_lang, voice=voice_id)
-                                    logger.info(f"[LANG] TTS updated to language='{new_lang}' (voice={voice_id})")
-                                except Exception as tts_err:
-                                    logger.error(f"[LANG] Failed to update TTS options: {tts_err}")
-                            # Synchronously update the language directive in the system message inside chat_ctx
-                            directive = language_mgr.get_prompt_directive()
-                            for m in msgs:
-                                if hasattr(m, 'role') and str(m.role).lower() in ('system',):
-                                    sys_text = " ".join([str(c) for c in m.content]) if isinstance(m.content, list) else str(m.content)
-                                    if "<!-- LANGUAGE_DIRECTIVE_START -->" in sys_text and "<!-- LANGUAGE_DIRECTIVE_END -->" in sys_text:
-                                        pref = sys_text.split("<!-- LANGUAGE_DIRECTIVE_START -->")[0]
-                                        suff = sys_text.split("<!-- LANGUAGE_DIRECTIVE_END -->")[1]
-                                        new_sys_content = f"{pref}<!-- LANGUAGE_DIRECTIVE_START -->\n{directive}\n<!-- LANGUAGE_DIRECTIVE_END -->{suff}"
-                                        m.content = [new_sys_content] if isinstance(m.content, list) else new_sys_content
-            except Exception as align_err:
-                logger.error(f"[LANG] Error aligning language in llm_node: {align_err}")
-
-            async for chunk in Agent.default.llm_node(self, chat_ctx, tools, model_settings):
-                yield chunk
-
-    agent = MantraMultilingualAgent(
+    agent = make_multilingual_agent(
         instructions=initial_instructions,
-        tools=agent_tools
+        tools=agent_tools,
+        language_mgr=language_mgr,
+        call_state=call_state,
+        tts_engine=tts_engine,
+        voice_id=voice_id,
     )
     fnc_ctx.agent = agent
     fnc_ctx.session = session
     call_state["_agent_ref"] = agent
     call_state["original_instructions"] = initial_instructions
 
-    async def positive_intent_monitor():
-        logger.info("[INTENT] Positive-intent monitor started (outbound only, heuristic, auto-extend 3m to 5m)")
-        await asyncio.sleep(5.0)
-        while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
-            try:
-                if call_state.get("is_inbound") or call_state.get("duration_extended"):
-                    await asyncio.sleep(2.0)
-                    continue
-                elapsed = asyncio.get_event_loop().time() - entrypoint_start_time
-                if elapsed < 15.0 or elapsed > CALL_EXTENDED_HARD_LIMIT_SECONDS - 10:
-                    await asyncio.sleep(2.0)
-                    continue
-                if not (session and hasattr(session, "history") and session.history):
-                    await asyncio.sleep(2.0)
-                    continue
-                msgs = list(session.history.messages())
-                should, reason = should_extend_from_history(msgs)
-                if should:
-                    logger.info(f"[INTENT] Positive intent detected: {reason} at t={elapsed:.1f}s")
-                    ok = await extend_call(call_state, reason, elapsed)
-                    if ok:
-                        create_bg_task(report_telemetry(tos_task_id=call_state.get("tos_task_id"), message=f"[Agent Worker] Call auto-extended to 5m — {reason}", call_id=call_state.get("call_id"), data={"reason": reason, "elapsed": round(elapsed, 1)}))
-                    break
-            except Exception as e:
-                logger.info(f"[INTENT] monitor error: {e}")
-            await asyncio.sleep(2.0)
+    cc.session = session
+    cc.agent = agent
 
     # ── Transcript logging & dynamic language switching task ─────────────
-    _last_logged_history_size = 0
+    transcript_task = asyncio.create_task(transcript_logger(cc))
 
-    async def transcript_logger():
-        nonlocal _last_logged_history_size
-        await asyncio.sleep(2.0)  # brief startup delay
-        while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
-            try:
-                if session and hasattr(session, 'history') and session.history:
-                    msgs = list(session.history.messages())
-                    if len(msgs) > _last_logged_history_size:
-                        new_msgs = msgs[_last_logged_history_size:]
-                        _last_logged_history_size = len(msgs)
-                        for m in new_msgs:
-                            role = m.role.name if hasattr(m.role, "name") else str(m.role)
-                            content = " ".join([str(c) for c in m.content]) if isinstance(m.content, list) else str(m.content)
-                            if content and not content.startswith("[System:"):
-                                content_preview = content[:200] + ("..." if len(content) > 200 else "")
-                                now_str = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-                                logger.info(f"[DIAG] [{now_str}] TRANSCRIPT | {role}: {content_preview}")
-
-                                # Learn explicit names and locations for later STT turns.
-                                if str(role).lower() in ["user", "caller"]:
-                                    if keyterm_memory.learn_from_text(content):
-                                        updated_keyterms = keyterm_memory.snapshot()
-                                        call_state["stt_keyterms"] = updated_keyterms
-                                        try:
-                                            stt_engine.update_options(keyterm=updated_keyterms)
-                                            logger.info(f"[STT] Updated temporary call keyterms ({len(updated_keyterms)} terms)")
-                                        except Exception as keyterm_err:
-                                            logger.warning(f"[STT] Temporary keyterm update unavailable: {keyterm_err}")
-
-                                # Intercept caller/user utterances for dynamic language switching
-                                if str(role).lower() in ["user", "caller"]:
-                                    new_lang, switched = language_mgr.process_user_utterance(content)
-                                    if switched:
-                                        old_lang = call_state.get("current_language", "en")
-                                        call_state["current_language"] = new_lang
-                                        logger.info(f"[LANG] Language switch triggered: {old_lang} -> {new_lang}")
-
-                                        # Keep STT stable for bilingual calls; update response language only.
-                                        # 1. Dynamically update TTS language options (preserving voice & speed)
-                                        try:
-                                            tts_engine.update_options(language=new_lang, voice=voice_id)
-                                            logger.info(f"[LANG] TTS updated to language='{new_lang}' (voice={voice_id})")
-                                        except Exception as tts_err:
-                                            logger.error(f"[LANG] Failed to update TTS language: {tts_err}")
-
-                                        # 2. Dynamically update agent system instructions
-                                        try:
-                                            cur_inst = agent.instructions
-                                            if "<!-- LANGUAGE_DIRECTIVE_START -->" in cur_inst and "<!-- LANGUAGE_DIRECTIVE_END -->" in cur_inst:
-                                                pref = cur_inst.split("<!-- LANGUAGE_DIRECTIVE_START -->")[0]
-                                                suff = cur_inst.split("<!-- LANGUAGE_DIRECTIVE_END -->")[1]
-                                                new_directive = language_mgr.get_prompt_directive()
-                                                updated_inst = f"{pref}<!-- LANGUAGE_DIRECTIVE_START -->\n{new_directive}\n<!-- LANGUAGE_DIRECTIVE_END -->{suff}"
-                                                await agent.update_instructions(updated_inst)
-                                                logger.info(f"[LANG] Agent instructions updated to language='{new_lang}'")
-                                        except Exception as inst_err:
-                                            logger.error(f"[LANG] Failed to update agent prompt instructions: {inst_err}")
-
-            except Exception as e:
-                logger.info(f"[DIAG] Transcript logger error: {e}")
-            await asyncio.sleep(0.4)
-
-    transcript_task = asyncio.create_task(transcript_logger())
-
-    @session.on("agent_state_changed")
-    def on_agent_state(ev):
-        call_state["agent_state"] = ev.new_state
-        logger.info(f"[DIAG] Agent state change: {getattr(ev, 'old_state', 'None')} -> {ev.new_state}")
-        
-        if ev.new_state == "speaking":
-            call_state["greeting_started"] = True
-                
-        elif getattr(ev, "old_state", None) == "speaking" and ev.new_state != "speaking":
-            call_state["last_activity"] = asyncio.get_event_loop().time()
-            if call_state.get("greeting_started"):
-                call_state["initial_greeting_done"] = True
-
-    @session.on("user_state_changed")
-    def on_user_state(ev):
-        logger.info(f"[DIAG] User state change: {getattr(ev, 'old_state', 'None')} -> {ev.new_state}")
-        if ev.new_state == "speaking":
-            call_state["last_activity"] = asyncio.get_event_loop().time()
-            call_state["prompted_inactivity"] = False
-            call_state["user_has_spoken"] = True
-        elif getattr(ev, "old_state", None) == "speaking" and ev.new_state != "speaking":
-            call_state["user_finished_speaking_at"] = asyncio.get_event_loop().time()
-
-    _PIPELINE_ERROR_ALERT_COOLDOWN = 300.0  # seconds between alert emails per call
-
-    @session.on("error")
-    def on_session_error(ev):
-        err = getattr(ev, "error", None)
-        # Framework wraps provider errors (LLMError/STTError/TTSError carry .error)
-        inner = err if isinstance(err, BaseException) else getattr(err, "error", None) or err
-        source = getattr(ev, "source", None)
-        source_label = (
-            f"{getattr(source, 'provider', '')} {type(source).__name__}".strip()
-            if source is not None
-            else "unknown"
-        )
-        recoverable = getattr(err, "recoverable", None)
-        logger.error(
-            f"[DIAG] Pipeline error from {source_label}: {inner}",
-            exc_info=inner if isinstance(inner, BaseException) else None,
-        )
-
-        call_state["pipeline_error_count"] = call_state.get("pipeline_error_count", 0) + 1
-        now = asyncio.get_event_loop().time()
-        last_alert = call_state.get("last_pipeline_error_alert", 0.0)
-        if now - last_alert < _PIPELINE_ERROR_ALERT_COOLDOWN:
-            return
-        call_state["last_pipeline_error_alert"] = now
-        error_count = call_state["pipeline_error_count"]
-
-        async def _alert():
-            try:
-                await send_crash_email(
-                    service_name="Livekit Voice Agent pipeline",
-                    error=inner if isinstance(inner, BaseException) else RuntimeError(str(inner)),
-                    context_data={
-                        "Room Name": getattr(ctx.room, "name", "N/A"),
-                        "Job ID": getattr(ctx.job, "id", "N/A"),
-                        "Process ID (PID)": os.getpid(),
-                        "Component": source_label,
-                        "Recoverable": recoverable,
-                        "Errors This Call": error_count,
-                        "Agent": AGENT_NAME,
-                    },
-                )
-            except Exception as email_err:
-                logger.error(f"[DIAG] Failed to dispatch pipeline error email: {email_err}")
-
-        asyncio.create_task(_alert())
-
-    async def inactivity_monitor():
-        logger.info("Inactivity monitor started.")
-        while not call_state.get("user_joined"):
-            await asyncio.sleep(1.0)
-
-        call_state["last_activity"] = asyncio.get_event_loop().time()
-        call_state["prompted_inactivity"] = False
-
-        while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
-            await asyncio.sleep(1.0)
-            # Only monitor inactivity AFTER initial greeting has completed speaking
-            if not call_state.get("initial_greeting_done"):
-                call_state["last_activity"] = asyncio.get_event_loop().time()
-                continue
-
-            now = asyncio.get_event_loop().time()
-            agent_state = call_state.get("agent_state", "initializing")
-            last_activity = call_state.get("last_activity", now)
-
-            time_since_activity = now - last_activity
-
-            if agent_state in ["listening", "idle"]:
-                if time_since_activity > 30.0:
-                    logger.warning("[DIAG] No user response for 30s. Disconnecting room due to inactivity.")
-                    call_state["timeline"].append(
-                        {
-                            "event": "Inactivity Timeout Disconnect",
-                            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
-                        }
-                    )
-                    create_bg_task(_force_disconnect_room(ctx))
-                    break
-                elif time_since_activity > 15.0 and not call_state.get(
-                    "prompted_inactivity", False
-                ):
-                    logger.info("No response for 15s. Prompting user...")
-                    call_state["prompted_inactivity"] = True
-                    try:
-                        session.generate_reply(
-                            user_input="[System: The user has been silent for a while. Politely ask if they are still there (e.g. 'Are you still there?' or 'Let me know if you need help.'). Keep it extremely short.]"
-                        )
-                    except RuntimeError as e:
-                        logger.warning(
-                            f"Failed to generate inactivity reply (session may be closing): {e}"
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"Unexpected error generating inactivity reply: {e}"
-                        )
-
-    # Safety net: if the LLM says goodbye but forgets to call end_call, force disconnect
-    # Inbound calls use "thank you for calling" as a greeting — exclude it from detection
-    INBOUND_FAREWELL_PHRASES = [
-        "goodbye",
-        "good bye",
-        "bye bye",
-        "take care",
-        "have a great day",
-        "have a good day",
-        "have a nice day",
-        "talk to you later",
-        "see you later",
-    ]
-    OUTBOUND_FAREWELL_PHRASES = INBOUND_FAREWELL_PHRASES + [
-        "thanks for calling",
-        "thank you for calling",
-    ]
-
-    async def farewell_safety_net():
-        """Detect if the agent said goodbye without calling end_call, and force disconnect."""
-        logger.info("[DIAG] farewell_safety_net: Started")
-        await asyncio.sleep(10.0)  # Let the conversation warm up first
-        farewell_phrases = INBOUND_FAREWELL_PHRASES if is_inbound else OUTBOUND_FAREWELL_PHRASES
-        while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
-            await asyncio.sleep(3.0)
-            if not (session and hasattr(session, "history") and session.history):
-                continue
-            try:
-                messages = list(session.history.messages())
-                if not messages:
-                    continue
-                last_msg = messages[-1]
-                role = getattr(last_msg, "role", "")
-                content = str(getattr(last_msg, "content", "")).lower()
-                if role == "assistant" and any(
-                    phrase in content for phrase in farewell_phrases
-                ):
-                    logger.warning(
-                        "[DIAG] farewell_safety_net: Agent said goodbye but end_call was never invoked. Force disconnecting."
-                    )
-                    call_state["timeline"].append(
-                        {
-                            "event": "Farewell Safety Net Triggered",
-                            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
-                        }
-                    )
-                    await asyncio.sleep(3.0)  # Give TTS time to finish speaking
-                    await _force_disconnect_room(ctx)
-                    break
-            except Exception as e:
-                logger.info(f"Farewell safety net error: {e}")
-
-    # Call duration limiter logic — supports 3m default to 5m extension on positive intent (outbound only)
-    async def call_limiter():
-        logger.info("[DIAG] call_limiter: Started — waiting for remote participant to join.")
-        _force_disconnect_cancelled = call_state.get("_force_disconnect_cancelled")
-        if not isinstance(_force_disconnect_cancelled, asyncio.Event):
-            _force_disconnect_cancelled = asyncio.Event()
-            call_state["_force_disconnect_cancelled"] = _force_disconnect_cancelled
-        extension_event = call_state.get("extension_event")
-        try:
-            while not list(ctx.room.remote_participants.values()):
-                await asyncio.sleep(1.0)
-                if ctx.room.connection_state != rtc.ConnectionState.CONN_CONNECTED:
-                    return
-
-            def _targets():
-                ext = bool(call_state.get("duration_extended") and not call_state.get("is_inbound"))
-                return current_limits(ext)
-
-            elapsed = asyncio.get_event_loop().time() - entrypoint_start_time
-            farewell_target, hard_target = _targets()
-            logger.info(
-                f"[DIAG] call_limiter: Participant joined at t={elapsed:.2f}s. "
-                f"Farewell in {max(0.0, farewell_target - elapsed):.2f}s (target {farewell_target}s), "
-                f"Hard kill in {max(0.0, hard_target - elapsed):.2f}s (target {hard_target}s)."
-            )
-
-            farewell_done = False
-            while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
-                await asyncio.sleep(1.0)
-                if _force_disconnect_cancelled.is_set():
-                    logger.info("Call limiter exiting — force-disconnect cancelled.")
-                    return
-                cur_farewell, cur_hard = _targets()
-                if (cur_farewell, cur_hard) != (farewell_target, hard_target):
-                    logger.warning(f"[CALL_LIMITER] Targets updated: farewell {farewell_target}->{cur_farewell}s hard {hard_target}->{cur_hard}s")
-                    farewell_target, hard_target = cur_farewell, cur_hard
-                    if farewell_done and cur_farewell == CALL_EXTENDED_FAREWELL_SECONDS:
-                        elapsed_now = asyncio.get_event_loop().time() - entrypoint_start_time
-                        if elapsed_now < cur_farewell:
-                            farewell_done = False
-                            call_state["farewell_triggered"] = False
-
-                elapsed = asyncio.get_event_loop().time() - entrypoint_start_time
-                if not farewell_done and elapsed >= farewell_target:
-                    farewell_done = True
-                    call_state["farewell_triggered"] = True
-                    logger.info(f"Farewell stage hit at t={elapsed:.2f}s (target {farewell_target}s)")
-                    if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
-                        logger.info("Updating agent instructions for farewell.")
-                        current_inst = agent.instructions
-                        if isinstance(current_inst, str) and "call time is ending now" not in current_inst:
-                            farewell_inst = (
-                                "IMPORTANT: The call time is ending now. "
-                                "On your next turn, say a quick, natural one-sentence goodbye "
-                                "and do not continue the conversation. Do not ask questions."
-                            )
-                            await agent.update_instructions(current_inst + "\n\n" + farewell_inst)
-                        logger.info("Farewell instructions set.")
-                        for _ in range(25):
-                            if call_state.get("duration_extended") and not call_state.get("is_inbound"):
-                                logger.info("[CALL_LIMITER] Farewell wait interrupted — call extended")
-                                farewell_done = False
-                                call_state["farewell_triggered"] = False
-                                break
-                            if ctx.room.connection_state != rtc.ConnectionState.CONN_CONNECTED or _force_disconnect_cancelled.is_set():
-                                break
-                            if hasattr(session, "wait_for_inactive") and callable(getattr(session, "wait_for_inactive")):
-                                try:
-                                    await asyncio.wait_for(session.wait_for_inactive(), timeout=1.0)
-                                    logger.info("Session became inactive naturally.")
-                                    break
-                                except asyncio.TimeoutError:
-                                    continue
-                                except Exception:
-                                    await asyncio.sleep(1.0)
-                            else:
-                                await asyncio.sleep(1.0)
-                        else:
-                            logger.warning("Session did not go inactive within 25s — hard limit will handle it.")
-                    else:
-                        logger.warning("Room already disconnected — skipping farewell.")
-
-                elapsed = asyncio.get_event_loop().time() - entrypoint_start_time
-                if elapsed >= hard_target:
-                    if ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
-                        logger.warning(f"HARD DISCONNECT: {hard_target}s limit reached. Force disconnecting room.")
-                        call_state["timeline"].append(
-                            {
-                                "event": "Max Call Duration Reached",
-                                "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
-                                "limit": hard_target,
-                                "extended": bool(call_state.get("duration_extended")),
-                            }
-                        )
-                        await _force_disconnect_room(ctx)
-                    break
-        except asyncio.CancelledError:
-            logger.info("Call limiter cancelled (call ended naturally before limits).")
-            try:
-                _force_disconnect_cancelled.set()
-            except Exception:
-                pass
-        except Exception as e:
-            logger.error(f"Error in call limiter: {e}")
+    register_session_handlers(cc)
 
     try:
         logger.info(f"[DIAG] Starting agent session...")
         await session.start(agent=agent, room=ctx.room)
         logger.info(f"[DIAG] Session started successfully")
-        limiter_task = asyncio.create_task(call_limiter())
-        inactivity_task = asyncio.create_task(inactivity_monitor())
-        safety_net_task = asyncio.create_task(farewell_safety_net())
-        intent_task = asyncio.create_task(positive_intent_monitor())
+        limiter_task = asyncio.create_task(call_limiter(cc))
+        inactivity_task = asyncio.create_task(inactivity_monitor(cc))
+        safety_net_task = asyncio.create_task(farewell_safety_net(cc))
+        intent_task = asyncio.create_task(positive_intent_monitor(cc))
 
         logger.info(f"[DIAG] Checking for already-published tracks...")
         # Check if agent track was already published before we attached the listener
@@ -2226,7 +587,7 @@ Follow these specific instructions:
                     recognized_name = recognized_client["client_name"]
                     client_metadata = recognized_client["client_metadata"]
                     client_name = recognized_name
-                    if "payload" in locals() and isinstance(payload, dict):
+                    if isinstance(payload, dict):
                         payload["client_name"] = recognized_name
                         payload["client_metadata"] = client_metadata
                     metadata_lines = []
@@ -2382,603 +743,7 @@ Follow these specific instructions:
         )
 
         # 3. Shielded finalization
-        async def finalize():
-            if call_state.get("_finalized"):
-                logger.info("[DIAG] finalize(): Call already finalized — skipping duplicate execution")
-                return
-            call_state["_finalized"] = True
-            post_call_llm = build_post_call_llm()
-
-            recording_url = None
-            transcript_data = None
-            summary_text = None
-            tos_sent = False
-            duration = 0
-            call_status = "Failed"
-            next_call_on = None
-            current_stage_id = None
-            new_stage_id = None
-            derived_process_id = None
-            client_custom_fields = {}
-            call_payload = {}
-            webhook_payload = {}
-            delivered = False
-
-            try:
-                logger.info("[DIAG] finalize(): Starting post-call processing...")
-                if "timeline" in call_state:
-                    call_state["timeline"].append({"event": "Call Finalization Started", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
-                await _telemetry("Post-call processing started")
-
-                # 1. Pre-load call metadata
-                logger.info("[DIAG] finalize(): Step 1 — Loading call metadata...")
-                try:
-                    if _effective_call_metadata:
-                        call_payload = dict(_effective_call_metadata)
-                        logger.info(f"[DIAG] finalize(): Using _effective_call_metadata with {len(call_payload)} keys")
-                    else:
-                        call_payload = (
-                            json.loads(ctx.job.metadata) if (ctx.job and ctx.job.metadata) else {}
-                        )
-                        logger.info(f"[DIAG] finalize(): Parsed raw job metadata with {len(call_payload)} keys")
-                except Exception as e:
-                    logger.error(f"[DIAG] finalize(): Failed to parse call metadata: {e}")
-
-                # For inbound calls, store KB tracked process_id and stage_id hints
-                if call_payload.get("direction") == "inbound":
-                    try:
-                        if fnc_ctx and hasattr(fnc_ctx, "used_kb_process_ids"):
-                            used_pids = fnc_ctx.used_kb_process_ids
-                            if used_pids:
-                                call_payload["kb_tracked_process_id"] = used_pids[0]
-                                logger.info(f"KB-tracked process_id hint for inbound: {used_pids[0]}")
-                        if fnc_ctx and hasattr(fnc_ctx, "used_kb_stage_ids"):
-                            used_sids = fnc_ctx.used_kb_stage_ids
-                            if used_sids:
-                                call_payload["kb_tracked_stage_id"] = used_sids[0]
-                                logger.info(f"KB-tracked stage_id hint for inbound: {used_sids[0]}")
-                    except Exception as e:
-                        logger.error(f"Failed to extract KB usage metadata: {e}")
-
-                # Determine call status based on whether user joined and spoke
-                user_spoke = False
-                for msg in history_snapshot:
-                    role = msg.role.name if hasattr(msg.role, "name") else str(msg.role)
-                    if role.lower() == "user":
-                        user_spoke = True
-                        break
-
-                call_id = call_payload.get("call_id") or call_payload.get("voice_id") or (ctx.job.id if ctx.job else "")
-                logger.info(f"[DIAG] finalize(): user_joined={call_state.get('user_joined')} user_spoke={user_spoke} history_size={len(history_snapshot)}")
-
-                is_inbound = (call_payload.get("direction") == "inbound")
-                is_user_joined = bool(call_state.get("user_joined") or is_inbound)
-
-                if not is_user_joined:
-                    initiated_str = call_state.get("call_initiated_at") or (call_payload.get("metadata", {}) or {}).get("call_initiated_at")
-                    ring_time = 0
-                    if initiated_str:
-                        try:
-                            initiated = datetime.datetime.strptime(initiated_str, "%Y-%m-%dT%H:%M:%S")
-                            ring_time = (datetime.datetime.now() - initiated).total_seconds()
-                        except (ValueError, TypeError):
-                            pass
-                    logger.info(f"[DIAG] finalize(): ring_time={ring_time:.0f}s (from call_initiated_at={initiated_str})")
-                    if ring_time >= 30:
-                        call_status = "No Answer"
-                    elif ring_time >= 3:
-                        call_status = "Busy"
-                    else:
-                        call_status = "Failed"
-                elif not user_spoke and not is_inbound:
-                    call_status = "No Answer"
-                else:
-                    call_status = "Completed"
-                logger.info(f"[DIAG] finalize(): call_status determined as '{call_status}' (is_inbound={is_inbound}, user_spoke={user_spoke})")
-
-                # 2. Flush recording tasks and upload to S3 (bounded by 10s timeout)
-                logger.info(f"[DIAG] finalize(): Step 2 — Stopping recording...")
-                try:
-                    if recorder and hasattr(recorder, "stop_recording"):
-                        await recorder.stop_recording()
-                        logger.info(f"[DIAG] finalize(): Recording stopped. track_count={len(getattr(recorder, '_tracks', []))}")
-                        mp3_bytes = recorder.get_combined_mp3_bytes()
-                        if mp3_bytes:
-                            logger.info(f"[DIAG] finalize(): Got {len(mp3_bytes)} bytes of MP3 audio, uploading to S3...")
-                            call_id_for_key = (
-                                call_payload.get("call_id")
-                                or call_payload.get("voice_id")
-                                or (ctx.job.id if ctx.job else "unknown")
-                            )
-                            s3_key = f"recordings/{call_id_for_key}.mp3"
-                            loop = asyncio.get_running_loop()
-                            recording_url = await asyncio.wait_for(
-                                loop.run_in_executor(None, upload_to_s3, mp3_bytes, s3_key),
-                                timeout=10.0
-                            )
-                            logger.info(f"[DIAG] finalize(): S3 recording: {'uploaded' if recording_url else 'upload failed'}")
-                        else:
-                            logger.info("[DIAG] finalize(): No audio data captured for recording")
-                except asyncio.TimeoutError:
-                    logger.warning("[DIAG] finalize(): S3 recording upload timed out after 10s — proceeding without recording_url")
-                except Exception as e:
-                    logger.error(f"[DIAG] finalize(): Recording/S3 step failed: {e}", exc_info=True)
-
-                # 3. Build transcript from captured history snapshot
-                logger.info(f"[DIAG] finalize(): Step 3 — Building transcript from {len(history_snapshot)} messages...")
-                try:
-                    transcript_data = SessionRecorder.build_transcript(
-                        list(history_snapshot)
-                    )
-                    logger.info(f"[DIAG] finalize(): Transcript built ({len(history_snapshot)} messages, {len(transcript_data or '')} chars)")
-                except Exception as e:
-                    logger.error(f"[DIAG] finalize(): Transcript step failed: {e}", exc_info=True)
-
-                # 4. Calculate duration
-                if recorder and hasattr(recorder, "recording_duration_seconds"):
-                    duration = int(recorder.recording_duration_seconds)
-
-                # 5. Run unified analysis (bounded by 70s timeout)
-                direction = call_payload.get("direction")
-                if direction == "inbound":
-                    try:
-                        if fnc_ctx and hasattr(fnc_ctx, "used_kb_process_ids"):
-                            used_pids = fnc_ctx.used_kb_process_ids
-                            if used_pids and not call_payload.get("kb_tracked_process_id"):
-                                call_payload["kb_tracked_process_id"] = used_pids[0]
-                                logger.info(f"Using KB-tracked process_id hint for inbound before analysis: {used_pids[0]}")
-                        if fnc_ctx and hasattr(fnc_ctx, "used_kb_stage_ids"):
-                            used_sids = fnc_ctx.used_kb_stage_ids
-                            if used_sids and not call_payload.get("kb_tracked_stage_id"):
-                                call_payload["kb_tracked_stage_id"] = used_sids[0]
-                                logger.info(f"Using KB-tracked stage_id hint for inbound before analysis: {used_sids[0]}")
-                    except Exception as e:
-                        logger.error(f"Failed to extract KB usage metadata before analysis: {e}")
-
-                current_stage_id = call_payload.get("stage_id") or call_payload.get("kb_tracked_stage_id")
-                stage_details = call_payload.get("stageDetails", [])
-                kb_process_stage_data = (
-                    fnc_ctx.used_process_stage_data 
-                    if (fnc_ctx and hasattr(fnc_ctx, 'used_process_stage_data') and fnc_ctx.used_process_stage_data) 
-                    else None
-                )
-                # For inbound calls, query org processes and stage descriptions via MCP before post-call analysis
-                if is_inbound and not kb_process_stage_data:
-                    inbound_org_id = (
-                        call_state.get("org_id")
-                        or call_payload.get("org_id")
-                        or (fnc_ctx.org_id if fnc_ctx and hasattr(fnc_ctx, 'org_id') else None)
-                    )
-                    if inbound_org_id:
-                        try:
-                            from mantra.mcp_client import get_mcp_client
-                            logger.info(f"Fetching org processes via MCP for inbound post-call analysis: org_id={inbound_org_id}")
-                            mcp_client = get_mcp_client()
-                            mcp_res = await mcp_client.call_tool("fetch_org_processes", {"org_id": inbound_org_id})
-                            if mcp_res:
-                                items = []
-                                if isinstance(mcp_res, list):
-                                    items = mcp_res
-                                elif isinstance(mcp_res, dict):
-                                    items = [mcp_res]
-                                elif isinstance(mcp_res, str):
-                                    mcp_res_str = mcp_res.strip()
-                                    try:
-                                        parsed = json.loads(mcp_res_str)
-                                        if isinstance(parsed, list):
-                                            items = parsed
-                                        elif isinstance(parsed, dict):
-                                            items = [parsed]
-                                    except Exception:
-                                        pass
-                                    if not items:
-                                        for line in mcp_res_str.splitlines():
-                                            line = line.strip()
-                                            if line:
-                                                try:
-                                                    items.append(json.loads(line))
-                                                except Exception:
-                                                    pass
-                                if items:
-                                    kb_process_stage_data = items
-                                    logger.info(f"[INBOUND-MCP] Loaded {len(kb_process_stage_data)} processes via MCP for org_id={inbound_org_id}:\n{json.dumps(kb_process_stage_data, indent=2)}")
-                        except Exception as e:
-                            logger.warning(f"Failed to fetch org processes via MCP for inbound call: {e}")
-
-                if not kb_process_stage_data and fnc_ctx and hasattr(fnc_ctx, 'kb_ids') and fnc_ctx.kb_ids:
-                    try:
-                        kb = get_global_kb()
-                        kb_process_stage_data = await kb.get_process_stage_data_for_kb_ids(fnc_ctx.kb_ids)
-                        if kb_process_stage_data:
-                            logger.info(f"Loaded {len(kb_process_stage_data)} process_stage_data entries from DB for KB ids: {fnc_ctx.kb_ids}")
-                    except Exception as e:
-                        logger.error(f"Failed to fetch fallback KB process_stage_data from DB: {e}")
-
-                summary_text = None
-                new_stage_id = current_stage_id
-                llm_analysis_ran = False
-                derived_process_id = None
-                derived_user_intent = None
-                appointment_metadata = None
-                client_custom_fields = call_payload.get("client_custom_fields", {})
-                if not isinstance(client_custom_fields, dict):
-                    client_custom_fields = {}
-
-                if call_status in ["Busy", "Incomplete", "No Answer"]:
-                    logger.info(
-                        f"[DIAG] finalize(): Call status is {call_status}. Skipping LLM analysis."
-                    )
-                    summary_text = f"Call failed with status: {call_status}. The user did not speak or answer."
-                    duration = 0
-                    not_answering_id = current_stage_id
-                    for stage in stage_details:
-                        desc = stage.get("description", "").lower()
-                        if (
-                            "not answering" in desc
-                            or "failed" in desc
-                            or "incomplete" in desc
-                            or "busy" in desc
-                        ):
-                            not_answering_id = stage.get("stage_id")
-                            break
-                    new_stage_id = not_answering_id
-                else:
-                    try:
-                        target_llm = post_call_llm or llm_engine
-                        if target_llm and history_snapshot:
-                            logger.info(f"[DIAG] finalize(): Step 5 — Running analyze_call with {len(list(history_snapshot))} messages...")
-                            client_country_code = call_payload.get("client_country_code") or call_payload.get("country_code", "")
-                            
-                            analysis = await asyncio.wait_for(
-                                SessionRecorder.analyze_call(
-                                    llm_engine=target_llm,
-                                    history=list(history_snapshot),
-                                    current_stage_id=current_stage_id,
-                                    stage_details=stage_details,
-                                    duration=duration,
-                                    client_country_code=client_country_code,
-                                    process_stage_data=kb_process_stage_data,
-                                ),
-                                timeout=10.0
-                            )
-                            summary_text = analysis["summary"]
-                            new_stage_id = analysis["new_stage_id"]
-                            llm_analysis_ran = True
-                            derived_process_id = analysis.get("process_id")
-                            derived_user_intent = analysis.get("user_intent")
-                            extracted_client_name = analysis.get("client_name")
-
-                            if extracted_client_name:
-                                clean_name = str(extracted_client_name).strip()
-                                if clean_name and clean_name.lower() not in ["user", "unknown", "n/a", "none", "null", ""]:
-                                    curr_name = str(call_payload.get("client_name") or "").strip()
-                                    if not curr_name or curr_name.lower() in ["user", "unknown", "n/a"]:
-                                        call_payload["client_name"] = clean_name
-                                        logger.info(f"[DIAG] finalize(): Extracted client_name from call analysis: {clean_name}")
-
-                            if derived_process_id:
-                                call_payload["process_id"] = derived_process_id
-                            elif not call_payload.get("process_id") and call_payload.get("kb_tracked_process_id"):
-                                call_payload["process_id"] = call_payload.get("kb_tracked_process_id")
-
-                            next_call_on = normalize_datetime(analysis["next_call_on"])
-
-                            if analysis.get("appointment_date_time"):
-                                client_custom_fields["appointment_date_time"] = analysis["appointment_date_time"]
-                            if analysis.get("doctor"):
-                                client_custom_fields["doctor"] = analysis["doctor"]
-                            if analysis.get("hospital_location"):
-                                client_custom_fields["hospital_location"] = analysis["hospital_location"]
-
-                            appointment_metadata = analysis.get("appointment_metadata") if isinstance(analysis.get("appointment_metadata"), dict) else None
-                            if appointment_metadata:
-                                appointment_metadata.pop("preferred_end_datetime", None)
-                                if appointment_metadata.get("preferred_datetime"):
-                                    appointment_metadata["preferred_datetime"] = normalize_datetime(appointment_metadata["preferred_datetime"])
-                                if appointment_metadata.get("provider_user_id") is not None:
-                                    appointment_metadata["provider_user_id"] = _as_int(appointment_metadata["provider_user_id"])
-                                elif call_state.get("provider_user_id") is not None:
-                                    appointment_metadata["provider_user_id"] = _as_int(call_state.get("provider_user_id"))
-                                    logger.info(f"[DIAG] Auto-injected provider_user_id={appointment_metadata['provider_user_id']} into appointment_metadata from call_state")
-
-                            logger.info(
-                                f"Analysis completed. Process: {derived_process_id}, New Stage ID: {new_stage_id}, Next Call On: {next_call_on}, User Intent: {derived_user_intent}, Client Name: {call_payload.get('client_name')}"
-                            )
-                        else:
-                            logger.warning(
-                                "Skipping analysis: LLM or history unavailable after session close"
-                            )
-                    except (asyncio.TimeoutError, asyncio.CancelledError):
-                        logger.warning("[DIAG] finalize(): analyze_call timed out or task cancelled — using fallback summary and captured state")
-                        summary_text = "Call completed."
-                        if call_state.get("provider_user_id") and not appointment_metadata:
-                            appointment_metadata = {
-                                "provider_user_id": _as_int(call_state.get("provider_user_id")),
-                                "provider_name": None,
-                                "preferred_datetime": None,
-                                "appointment_title": "Scheduled Appointment",
-                                "appointment_notes": "Appointment requested during call."
-                            }
-                    except Exception as e:
-                        logger.error(
-                            f"Analysis or summary generation failed: {e}", exc_info=True
-                        )
-
-                # Final fallback guarantee for summary_text if missing or empty
-                if not summary_text or not str(summary_text).strip():
-                    if transcript_data and transcript_data.strip():
-                        summary_text = f"Call completed ({duration}s). Transcript snippet: {transcript_data[:180]}..."
-                    else:
-                        summary_text = "Call completed."
-
-            except (Exception, asyncio.CancelledError) as e:
-                logger.error(f"[DIAG] finalize(): Pipeline error in finalize: {e}", exc_info=True)
-
-            # 6. Build webhook payload — separate structures for inbound vs outbound
-            resolved_call_id = call_payload.get("call_id") or call_payload.get("voice_id") or (ctx.job.id if ctx.job else "")
-
-            kb_referred = bool(direction == "inbound" and (call_payload.get("process_id") or call_payload.get("stage_id") or call_payload.get("kb_tracked_process_id") or derived_process_id))
-            if direction == "inbound":
-                effective_process_id = _as_int(derived_process_id or call_payload.get("process_id") or call_payload.get("kb_tracked_process_id")) if kb_referred else None
-            else:
-                effective_process_id = _as_int(derived_process_id or call_payload.get("process_id") or call_payload.get("kb_tracked_process_id"))
-
-            initial_stage_id = _as_int(current_stage_id if current_stage_id is not None else call_payload.get("stage_id") or call_payload.get("kb_tracked_stage_id"))
-            analysis_stage_id = _as_int(new_stage_id) if new_stage_id is not None else None
-
-            payload_stage_id = initial_stage_id
-            if analysis_stage_id is not None:
-                payload_new_stage_id = analysis_stage_id
-            else:
-                payload_new_stage_id = initial_stage_id
-
-            # Reconcile effective_process_id and payload_new_stage_id against kb_process_stage_data
-            if kb_process_stage_data:
-                effective_process_id, payload_new_stage_id = reconcile_process_and_stage_id(
-                    process_id=effective_process_id,
-                    stage_id=payload_new_stage_id,
-                    process_stage_data=kb_process_stage_data,
-                )
-
-                # Ensure payload_stage_id belongs to the effective_process_id
-                proc_stages = []
-                for p in kb_process_stage_data:
-                    if isinstance(p, dict) and _as_int(p.get("process_id") or p.get("id")) == effective_process_id:
-                        stg_list = p.get("stages") or p.get("stageDetails") or []
-                        for s in stg_list:
-                            if isinstance(s, dict):
-                                sid = _as_int(s.get("stage_id") or s.get("id"))
-                                if sid is not None:
-                                    proc_stages.append(sid)
-
-                if proc_stages:
-                    if payload_stage_id not in proc_stages:
-                        logger.info(
-                            f"[DIAG] finalize(): payload_stage_id {payload_stage_id} does not belong to process {effective_process_id} "
-                            f"(available: {proc_stages}) — defaulting to initial stage {proc_stages[0]}"
-                        )
-                        payload_stage_id = proc_stages[0]
-
-            # Enforce stage-based call status rule:
-            # If payload_new_stage_id == initial_stage_id (not updated) -> Incomplete
-            # If payload_new_stage_id != initial_stage_id (updated) -> Completed
-            if call_status not in ["No Answer", "Busy", "Failed"]:
-                if payload_stage_id is not None and payload_new_stage_id != payload_stage_id:
-                    call_status = "Completed"
-                    logger.info(f"[DIAG] finalize(): Stage updated from {payload_stage_id} to {payload_new_stage_id} — call_status='Completed'")
-                elif payload_stage_id is None and payload_new_stage_id is not None:
-                    call_status = "Completed"
-                    logger.info(f"[DIAG] finalize(): New stage assigned ({payload_new_stage_id}) with no initial stage — call_status='Completed'")
-                else:
-                    call_status = "Incomplete"
-                    logger.info(f"[DIAG] finalize(): Stage not updated (new_stage_id={payload_new_stage_id}, initial={payload_stage_id}) — call_status='Incomplete'")
-
-            if direction == "inbound":
-                raw_caller_phone = call_state.get("caller_phone_number") or call_payload.get("client_phone_number") or call_payload.get("client_phone") or ""
-                cc_code = call_payload.get("client_country_code") or call_payload.get("country_code") 
-                formatted_caller_phone = format_e164_phone_number(raw_caller_phone, country_code=cc_code)
-
-                webhook_payload = {
-                    "event": "CALL_DATA_INBOUND_UPDATE",
-                    "data": {
-                        "org_id": _as_int(call_payload.get("org_id")),
-                        "call_recording": recording_url or "",
-                        "process_id": effective_process_id,
-                        "stage_id": payload_stage_id,
-                        "new_stage_id": payload_new_stage_id,
-                        "call_status": call_status,
-                        "client_name": call_payload.get("client_name") or "",
-                        "client_email": call_payload.get("client_email") or "",
-                        "client_phone_number": formatted_caller_phone,
-                        "call_duration": duration,
-                        "call_transcript": transcript_data or "",
-                        "ai_summary": summary_text or "",
-                        "next_call_on": normalize_datetime(next_call_on) or "",
-                        "called_on": call_state.get("call_initiated_at") or call_state.get("agent_joined_at") or "",
-                        "user_intent": derived_user_intent,
-                        "call_intent": derived_user_intent,
-                        "meta_data": {
-                            "document_id": str(call_payload.get("call_id") or call_payload.get("voice_id") or (ctx.job.id if ctx.job else "")),
-                            "provider": (call_payload.get("metadata", {}) or {}).get("provider", ""),
-                        },
-                    }
-                }
-                if appointment_metadata:
-                    webhook_payload["data"]["appointment_metadata"] = appointment_metadata
-            else:
-                event_name = "CALL_RETRY" if call_status in ["No Answer", "Busy", "Failed"] else "CALL_DATA_UPDATE"
-                if event_name == "CALL_RETRY":
-                    webhook_payload = {
-                        "event": event_name,
-                        "data": {
-                            "call_id": resolved_call_id,
-                            "called_on": call_state.get("call_initiated_at"),
-                            "call_status": call_status,
-                            "ai_call_id": ctx.job.id if ctx.job else "",
-                        },
-                    }
-                else:
-                    webhook_payload = {
-                        "event": event_name,
-                        "data": {
-                            "client_id": call_payload.get("lead_id"),
-                            "call_id": resolved_call_id,
-                            "call_status": call_status,
-                            "call_transcript": transcript_data,
-                            "ai_summary": summary_text,
-                            "recording_url": recording_url,
-                            "call_duration_seconds": duration,
-                            "next_call_on": normalize_datetime(next_call_on) or "",
-                            "called_on": call_state.get("call_initiated_at") or call_state.get("agent_joined_at") or None,
-                            "ai_call_id": ctx.job.id if ctx.job else "",
-                            "process_id": effective_process_id,
-                            "stage_id": payload_stage_id,
-                            "new_stage_id": payload_new_stage_id,
-                            "user_intent": derived_user_intent,
-                            "call_intent": derived_user_intent,
-                            "metadata": call_payload.get("metadata", {}),
-                            "client_custom_fields": client_custom_fields or {},
-                            "call_custom_fields": call_payload.get("call_custom_fields", {}),
-                        },
-                    }
-                if appointment_metadata:
-                    webhook_payload["data"]["appointment_metadata"] = appointment_metadata
-
-            # Prominently log the complete generated webhook payload for easy developer copying
-            payload_json_str = json.dumps(webhook_payload, indent=2)
-            logger.info(
-                f"\n{'='*70}\n"
-                f"📋 [COMPLETE WEBHOOK PAYLOAD - {webhook_payload.get('event')}]\n"
-                f"{'='*70}\n"
-                f"{payload_json_str}\n"
-                f"{'='*70}"
-            )
-            print(
-                f"\n{'='*70}\n"
-                f"📋 [COMPLETE WEBHOOK PAYLOAD - {webhook_payload.get('event')}]\n"
-                f"{'='*70}\n"
-                f"{payload_json_str}\n"
-                f"{'='*70}\n",
-                flush=True
-            )
-
-            # 8. Send to MantraAssist backend and save to local DB
-            logger.info(f"[DIAG] finalize(): Step 8 — Saving to DB and delivering webhook...")
-            try:
-                # Save to local Postgres DB
-                try:
-                    c_id = webhook_payload.get("data", {}).get("call_id", (ctx.job.id if ctx.job else ""))
-                    caller_number = call_payload.get("call_from") or call_payload.get("caller_number") or call_state.get("caller_phone_number") or ""
-                    called_number = call_payload.get("client_phone") or call_payload.get("client_phone_number") or call_payload.get("called_number") or ""
-                    call_trunk_id = call_payload.get("call_from_id") or call_payload.get("trunk_id") or ""
-                    await save_call_log_to_db(
-                        call_id=str(c_id),
-                        call_log=json.dumps(webhook_payload.get("data", {}), indent=2),
-                        status=call_status,
-                        recording_url=recording_url,
-                        caller_number=caller_number,
-                        called_number=called_number,
-                        trunk_id=call_trunk_id,
-                    )
-                    logger.info(f"[DIAG] finalize(): Call log saved to DB for call_id={c_id}")
-                except Exception as db_err:
-                    logger.error(f"[DIAG] finalize(): Error calling save_call_log_to_db: {db_err}")
-
-                logger.info("[DIAG] finalize(): Queueing webhook to UI Server via Redis...")
-                try:
-                    import redis.asyncio as redis
-                    redis_url = os.getenv("REDIS_URL")
-                    if redis_url:
-                        client = redis.from_url(redis_url, decode_responses=True)
-                        await client.rpush("mantra:pending_webhooks", json.dumps(webhook_payload))
-                        await client.aclose()
-                        delivered = True
-                        logger.info(f"[DIAG] finalize(): Webhook queued to UI Server successfully (call_id={c_id})")
-                    else:
-                        logger.warning("[DIAG] finalize(): REDIS_URL not set. Falling back to synchronous HTTP delivery.")
-                        delivered = await send_to_backend(webhook_payload)
-                except Exception as e:
-                    logger.error(f"[DIAG] finalize(): Redis queueing failed, falling back to HTTP: {e}")
-                    delivered = await send_to_backend(webhook_payload)
-
-                tos_sent = True
-                await _telemetry(f"data_sent_to_backend — status={call_status}, queued_to_redis={'yes' if delivered else 'no'}")
-
-                # Log backend delivery event to audit trail
-                backend_cid = resolved_call_id or (ctx.job.id if ctx.job else "")
-                await save_call_event(
-                    call_id=str(backend_cid),
-                    event_type="backend_sent" if delivered else "backend_failed",
-                    event_source="agent",
-                    event_payload={k: v for k, v in webhook_payload.items() if k != "prompt"},
-                    event_status="success" if delivered else "failed",
-                    event_log=f"status={call_status} duration={duration}s {'delivered' if delivered else 'failed'}",
-                )
-            except Exception as e:
-                logger.error(f"[DIAG] finalize(): Webhook delivery failed: {e}", exc_info=True)
-                delivered = False
-                try:
-                    await save_call_event(
-                        call_id=str(resolved_call_id or (ctx.job.id if ctx.job else "")),
-                        event_type="backend_failed",
-                        event_source="agent",
-                        event_payload={"event": webhook_payload.get("event", "unknown")},
-                        event_status="failed",
-                        event_error=str(e)[:500],
-                        event_log=f"status={call_status} error={str(e)[:200]}",
-                    )
-                except Exception:
-                    pass
-
-            await _telemetry(f"call_complete — status={call_status}, duration={duration}s")
-
-            # Call has ended — release call lock in Redis so future retry attempts for call_id are allowed
-            try:
-                redis_url = os.getenv("REDIS_URL")
-                if redis_url and c_id:
-                    import redis.asyncio as redis
-                    r_client = redis.from_url(redis_url, decode_responses=True)
-                    await r_client.delete(f"lock:call:{c_id}")
-                    await r_client.aclose()
-                    logger.info(f"[DIAG] finalize(): Cleared lock:call:{c_id}")
-            except Exception as lock_err:
-                logger.warning(f"[DIAG] finalize(): Failed to clear call lock: {lock_err}")
-
-            logger.info(
-                f"[DIAG] ======== POST-CALL COMPLETE ========\n"
-                f"  Call ID: {ctx.job.id if ctx.job else 'N/A'}\n"
-                f"  Lead: {webhook_payload.get('data', {}).get('client_id', 'N/A')}\n"
-                f"  Status: {webhook_payload.get('data', {}).get('call_status', 'N/A')}\n"
-                f"  Duration: {duration}s\n"
-                f"  S3: {'✓' if recording_url else '✗'}\n"
-                f"  Backend: {'✓' if delivered else '✗'}\n"
-                f"  TOS: {'✓' if tos_sent else '✗'}\n"
-                f"  Transcript length: {len(transcript_data or '')} chars\n"
-                f"  Summary: {summary_text[:200] if summary_text else 'None'}"
-            )
-
-        await asyncio.shield(finalize())
-
-
-async def _force_disconnect_room(ctx: JobContext):
-    """Delete the room via LiveKit API. Falls back to local disconnect."""
-    lk_api = api.LiveKitAPI(
-        url=os.getenv("LIVEKIT_URL"),
-        api_key=os.getenv("LIVEKIT_API_KEY"),
-        api_secret=os.getenv("LIVEKIT_API_SECRET"),
-    )
-    try:
-        await lk_api.room.delete_room(api.DeleteRoomRequest(room=ctx.room.name))
-        # logger.info(f"{Fore.RED}➖ Room Destroyed via API: {ctx.room.name}{Style.RESET_ALL}")
-    except Exception as e:
-        logger.error(f"Failed to delete room via API: {e}")
-        try:
-            await ctx.room.disconnect()
-            # logger.info(f"{Fore.RED}➖ Room Disconnected locally: {ctx.room.name}{Style.RESET_ALL}")
-        except Exception as e2:
-            logger.error(f"Local disconnect also failed: {e2}")
-    finally:
-        await lk_api.aclose()
+        await asyncio.shield(finalize(cc, history_snapshot))
 
 
 def run_agent():

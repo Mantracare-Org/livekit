@@ -14,10 +14,11 @@
 - Agent will report Busy/No Answer in post-call
 
 ### No audio / TTS issues
-- TTS is LiveKit native `sonic-3` — no Cartesia API keys needed
+- Cloud: TTS is LiveKit native `sonic-3` — no Cartesia API key needed (LiveKit inference gateway)
+- Self-hosted (`ws://localhost:7880`): `inference.TTS` 401s against the cloud gateway — `engines.py` uses the direct `livekit-plugins-cartesia` plugin; requires a valid `CARTESIA_API_KEY` (test with `POST https://api.cartesia.ai/tts/bytes`)
 - Verify voice ID is valid in `VOICE_MAPPING`
 - Check voice_speed is within 0.1–2.0 range
-- Verify LiveKit Inference is available
+- Verify the TTS provider (cloud inference or Cartesia direct) is reachable
 
 ### Redis connection issues
 - Verify `REDIS_URL` in `.env.local`

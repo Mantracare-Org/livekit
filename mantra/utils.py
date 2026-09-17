@@ -12,7 +12,7 @@ import httpx
 import numpy as np
 import asyncpg
 from typing import Dict, List, Optional, Union
-
+from datetime import datetime as dt, timezone
 from livekit import rtc
 from livekit.agents import llm, APIConnectOptions
 import boto3
@@ -87,7 +87,7 @@ async def save_call_log_to_db(
         attempted_at = (
             log_data.get("called_on")
             or log_data.get("requested_at")
-            or datetime.now(tz=timezone.utc).isoformat()
+            or dt.now(tz=timezone.utc).isoformat()
         )
         ai_call_id = log_data.get("ai_call_id") or (log_data.get("data", {}) if isinstance(log_data, dict) else {}).get("ai_call_id") or ""
         duration = log_data.get("call_duration") or log_data.get("call_duration_seconds") or 0
@@ -182,11 +182,11 @@ async def save_call_event(
 
     event_source: 'ui_server' | 'agent'
     """
-    db_user = os.getenv("POSTGRES_USER")
-    db_password = os.getenv("POSTGRES_PASSWORD")
-    db_name = os.getenv("POSTGRES_DB")
-    db_host = os.getenv("POSTGRES_HOST")
-    db_port = os.getenv("POSTGRES_PORT")
+    db_user = os.getenv("POSTGRES_USER", "redscarf")
+    db_password = os.getenv("POSTGRES_PASSWORD", "nowandforever")
+    db_name = os.getenv("POSTGRES_DB", "livekit_db")
+    db_host = os.getenv("POSTGRES_HOST", "localhost")
+    db_port = os.getenv("POSTGRES_PORT", "5440")
 
     if not all([db_user, db_password, db_name, db_host, db_port]):
         return
@@ -339,7 +339,7 @@ async def send_to_backend(payload: dict, max_retries: int = 3, force: bool = Fal
     if not await _claim_backend_delivery(dedupe_key, force=is_retry_payload):
         return True  # already delivered (or in-flight) by the other path
 
-    url = f"{base_url}/v1/webhooks/n8n"
+    url = base_url if base_url.endswith("/v1/webhooks/n8n") else f"{base_url}/v1/webhooks/n8n"
 
     timestamp = str(int(time.time()))
 

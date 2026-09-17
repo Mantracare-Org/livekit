@@ -30,6 +30,7 @@ dependencies = [
     "prometheus-fastapi-instrumentator>=8.0.2",
     "langdetect>=1.0.9",
     "phonenumbers>=9.0.37",
+    "livekit-plugins-cartesia>=1.6.7",
 ]
 
 [tool.setuptools.packages.find]
