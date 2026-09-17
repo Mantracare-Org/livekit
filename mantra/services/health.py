@@ -81,7 +81,7 @@ async def _run_dependency_checks() -> tuple[bool, dict[str, bool | str]]:
             loop = asyncio.get_running_loop()
             await asyncio.wait_for(
                 loop.run_in_executor(None, _check_s3_bucket, bucket),
-                timeout=1.0,
+                timeout=3.0,
             )
             checks["s3"] = True
         except Exception as e:

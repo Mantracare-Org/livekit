@@ -11,10 +11,10 @@ async def get_db_connection():
         return await asyncpg.connect(dsn=database_url, timeout=5.0)
     else:
         return await asyncpg.connect(
-            user=os.getenv("POSTGRES_USER", "redscarf"),
-            password=os.getenv("POSTGRES_PASSWORD", "nowandforever"),
-            database=os.getenv("POSTGRES_DB", "livekit_db"),
-            host=os.getenv("POSTGRES_HOST", "localhost"),
-            port=os.getenv("POSTGRES_PORT", "5440"),
+            user=os.getenv("POSTGRES_USER"),
+            password=os.getenv("POSTGRES_PASSWORD"),
+            database=os.getenv("POSTGRES_DB"),
+            host=os.getenv("POSTGRES_HOST"),
+            port=os.getenv("POSTGRES_PORT"),
             timeout=5.0,
         )

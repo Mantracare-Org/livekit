@@ -36,7 +36,7 @@ async def init_clients():
     global lk_client, plivo_client, voicelink_client, redis_client, http_client
     api_key = os.getenv("LIVEKIT_API_KEY")
     api_secret = os.getenv("LIVEKIT_API_SECRET")
-    lk_url = os.getenv("LIVEKIT_URL", "ws://localhost:7880")
+    lk_url = os.getenv("LIVEKIT_URL")
 
     if lk_url.startswith("wss://"):
         api_url = lk_url.replace("wss://", "https://")
@@ -52,7 +52,7 @@ async def init_clients():
     voicelink_client = lk_client
 
     # Setup Redis
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+    redis_url = os.getenv("REDIS_URL")
     try:
         redis_client = redis.from_url(redis_url, decode_responses=True)
         await redis_client.ping()

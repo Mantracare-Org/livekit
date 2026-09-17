@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-09-17
+
+### Modular Microservices Compose Folder Architecture (`compose_files/`)
+
+- **arch:** Created isolated, modular Docker Compose stacks with dedicated `.env` files under [`compose_files/`](file:///home/fardeen/lkt/compose_files):
+  1. [`compose_files/postgres-adminer/`](file:///home/fardeen/lkt/compose_files/postgres-adminer): PostgreSQL 16 + Adminer GUI.
+  2. [`compose_files/redis/`](file:///home/fardeen/lkt/compose_files/redis): Shared Redis state & queue container.
+  3. [`compose_files/livekit/`](file:///home/fardeen/lkt/compose_files/livekit): LiveKit WebRTC Server + SIP Gateway + `livekit.yaml`.
+  4. [`compose_files/fastapi/`](file:///home/fardeen/lkt/compose_files/fastapi): Mantra Voice Agent App (UI Server + Dispatcher + Agent Worker) with low-RAM thread limits.
+- **files:** [`compose_files/*`](file:///home/fardeen/lkt/compose_files), `obsidian/Development/Changelog.md`, `obsidian/Development/Current Sprint.md`.
+
+## 2026-09-16
+
+### 1-Core 2GB RAM Production Docker Compose Optimization
+
+- **perf:** Optimized `docker-compose.prod.yml` specifically for 1-CPU-core / 2GB-RAM VPS nodes: removed non-essential Adminer service, removed startup `--redis-host` flag from `livekit-server` command to fix 100% CPU spinning, and capped total stack RAM limits to 828MB (`ui` 380M, `livekit-server` 180M, `sip` 140M, `postgres` 128M) leaving >1GB RAM free for OS stability.
+- **files:** `docker-compose.prod.yml`, `obsidian/Development/Changelog.md`, `obsidian/Development/Current Sprint.md`.
+
+## 2026-09-16
+
+### Self-Hosted Docker Compose Host Gateway & Endpoint Alignment
+
+- **fix:** Added `extra_hosts: ["host.docker.internal:host-gateway"]` to `docker-compose.prod.yml` to enable Docker bridge container network communication with host services.
+- **config:** Updated `.env.prod.example` default host configurations (`LIVEKIT_URL`, `POSTGRES_HOST`, `REDIS_URL`) to use `host.docker.internal` for Docker bridge deployments, while preserving documentation for `network_mode: host` and `tele-staging.mantracare.com` SIP domain setup.
+- **files:** `docker-compose.prod.yml`, `.env.prod.example`, `obsidian/Development/Changelog.md`, `obsidian/Development/Current Sprint.md`.
+
 ## 2026-09-15
 
 ### Production Docker Deployment & Host RAM Safeguards

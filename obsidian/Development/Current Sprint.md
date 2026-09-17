@@ -1,9 +1,12 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)  
-> **Last Updated:** 2026-09-15  
-> **Status:** Active maintenance, Self-Hosted LiveKit Database Migration Completed (`livekit_db` on port 5440)
+> **Last Updated:** 2026-09-17  
+> **Status:** Active maintenance, Modular Compose Stacks Created in `compose_files/`
 
+- [x] **Modular Microservices Compose Folder Architecture (2026-09-17):** Created modular standalone compose stacks with dedicated `.env` files under `compose_files/` (`postgres-adminer`, `redis`, `livekit`, `fastapi`). Files: `compose_files/*`.
+- [x] **1-Core 2GB RAM Production Docker Compose Optimization (2026-09-17):** Tuned `docker-compose.prod.yml` for 1-CPU-core / 2GB-RAM VPS limits: removed Adminer GUI, removed startup `--redis-host` flag on LiveKit server to eliminate 100% CPU spinning, and capped total stack RAM limits to 828MB leaving >1GB RAM free for system stability. File: `docker-compose.prod.yml`.
+- [x] **Self-Hosted Docker Compose Host Gateway & Endpoint Alignment (2026-09-16):** Added `extra_hosts` (`host.docker.internal:host-gateway`) to `docker-compose.prod.yml` and updated `.env.prod.example` with host gateway endpoint defaults (`ws://host.docker.internal:7880`, `POSTGRES_HOST=host.docker.internal`, `REDIS_URL=redis://host.docker.internal:6379`) to resolve container `ConnectionRefusedError` in Docker bridge mode. Files: `docker-compose.prod.yml`, `.env.prod.example`.
 - [x] **Production Docker Deployment & Host Safeguards (2026-09-15):** Created `.env.prod.example` / `.env.prod`, updated `Dockerfile` with Silero model pre-caching, updated `entrypoint.sh` for combined execution (`all`), and created `docker-compose.prod.yml` with memory limits (`768M`) and health checks. Files: `Dockerfile`, `entrypoint.sh`, `docker-compose.prod.yml`, `.env.prod.example`.
 - [x] **Workflow Module Cleanup (2026-09-15):** Removed unused experimental `mantra/core/workflow.py` module. File: `mantra/core/workflow.py`.
 - [x] **Dashboard Service Status Details (2026-09-15):** Added a compact status button and inline popover listing failed services via `/health/details`, with no navigation. Files: `mantra/routers/pages.py`, `static/dashboard.html`, `static/dashboard.js`.
