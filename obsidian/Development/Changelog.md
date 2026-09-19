@@ -1,6 +1,11 @@
 # Changelog
 
-## 2026-09-10
+## 2026-09-19
+
+### Drop call_intent From Webhook Payloads
+
+- **fix:** Inbound (`CALL_DATA_INBOUND_UPDATE`) and outbound (`CALL_DATA_UPDATE`) webhook payloads now send only `user_intent`; `call_intent` removed.
+- **Files:** `mantra/agent.py`.
 
 ### Organization-Agnostic Symptom Clarification
 

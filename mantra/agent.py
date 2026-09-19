@@ -2796,7 +2796,6 @@ Follow these specific instructions:
                         "next_call_on": normalize_datetime(next_call_on) or "",
                         "called_on": call_state.get("call_initiated_at") or call_state.get("agent_joined_at") or "",
                         "user_intent": derived_user_intent,
-                        "call_intent": derived_user_intent,
                         "meta_data": {
                             "document_id": str(call_payload.get("call_id") or call_payload.get("voice_id") or (ctx.job.id if ctx.job else "")),
                             "provider": (call_payload.get("metadata", {}) or {}).get("provider", ""),
@@ -2835,7 +2834,6 @@ Follow these specific instructions:
                             "stage_id": payload_stage_id,
                             "new_stage_id": payload_new_stage_id,
                             "user_intent": derived_user_intent,
-                            "call_intent": derived_user_intent,
                             "metadata": call_payload.get("metadata", {}),
                             "client_custom_fields": client_custom_fields or {},
                             "call_custom_fields": call_payload.get("call_custom_fields", {}),
