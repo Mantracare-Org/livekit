@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-21
+
+### Zadarma Inbound SIP Domain Resolution Fix
+
+- **fix:** Fixed invalid `LIVEKIT_SIP_DOMAIN` setting (`mantraassist-0ek43ife.india.sip.livekit.cloud`) in `.env` by updating to the exact LiveKit Cloud project SIP domain (`4mp2ouvchg3.sip.livekit.cloud`).
+- **fix:** Verified end-to-end inbound Zadarma SIP trunking (`+14313030987`), successfully creating LiveKit Inbound Trunk (`ST_69MYJWQZiong`), Dispatch Rule (`SDR_n8szQLWgAdtQ`), updating Zadarma API forwarding, and storing configuration in `org_configs`.
+- **Files:** `.env`, `obsidian/Development/Changelog.md`, `obsidian/Development/Current Sprint.md`.
+
 ## 2026-09-19
 
 ### Drop call_intent From Webhook Payloads
