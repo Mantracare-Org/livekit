@@ -831,6 +831,8 @@ You MUST return your response as a valid JSON object with the following schema:
   "appointment_metadata": {{
     "provider_user_id": integer or null,
     "provider_name": "string or null",
+    "product_service": "string or null",
+    "location": "string or null",
     "preferred_datetime": "string or null",
     "appointment_title": "string or null",
     "appointment_notes": "string or null"

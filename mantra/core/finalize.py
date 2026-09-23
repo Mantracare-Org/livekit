@@ -326,6 +326,11 @@ async def finalize(cc: CallContext, history_snapshot: list):
                             appointment_metadata["provider_user_id"] = _as_int(cc.call_state.get("provider_user_id"))
                             logger.info(f"[DIAG] Auto-injected provider_user_id={appointment_metadata['provider_user_id']} into appointment_metadata from call_state")
 
+                        if not appointment_metadata.get("product_service") and cc.call_state.get("selected_product_service"):
+                            appointment_metadata["product_service"] = cc.call_state["selected_product_service"]
+                        if not appointment_metadata.get("location") and cc.call_state.get("selected_location"):
+                            appointment_metadata["location"] = cc.call_state["selected_location"]
+
                     logger.info(
                         f"Analysis completed. Process: {derived_process_id}, New Stage ID: {new_stage_id}, Next Call On: {next_call_on}, User Intent: {derived_user_intent}, Client Name: {call_payload.get('client_name')}"
                     )

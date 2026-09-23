@@ -1,8 +1,10 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)  
-> **Last Updated:** 2026-09-12  
-> **Status:** Active maintenance, Monolith Split (ui_server + agent → modular packages)
+> **Last Updated:** 2026-09-23  
+> **Status:** Active maintenance, Products/Services & Geopy Location Appointment Workflow
+
+- [x] **Products/Services & Geopy Location Appointment Workflow (2026-09-23):** Shifted appointment mapping from departments to Products/Services (`get_org_products_services`, `clarify_product_service`), added `find_nearest_location(user_address_or_area, org_id)` tool using `geopy` distance calculation to find closest hospital branches, and updated `check_doctor_availability` / `receive_doctor_availability` to filter and return location-specific doctor shift schedules. Captured `product_service` and `location` in post-call `appointment_metadata` for webhooks. Files: `mantra/core/assistant_functions.py`, `mantra/agent.py`, `mantra/prompts.py`, `mantra/utils.py`, `mantra/core/finalize.py`, `livekit-mcp/src/livekit_mcp/tools/products_services.py`, `livekit-mcp/src/livekit_mcp/tools/doctor_availability.py`.
 
 - [x] **Monolith Split — `ui_server.py` & `agent.py` Refactor (2026-09-12):** Rebuilt `mantra/ui_server.py` (4,489 lines) as an app-assembly shim over generated `dependencies/`, `services/`, `routers/` packages — 59-route table verified identical to baseline. Rebuilt `mantra/agent.py` (3,012 lines) as an orchestration shim over new `mantra/core/` (`common`, `engines`, `inbound`, `assistant_functions`, `live_agent`, `call_monitors`, `finalize`, `room_control`) and `mantra/prompts.py`. Fixed `load_dotenv(".env.local")` ordering (must precede mantra imports for `JWT_SECRET`). Handled FastAPI lazy `_IncludedRouter` in route enumeration. All modules `py_compile` clean and both entrypoints import cleanly. Files: `mantra/ui_server.py`, `mantra/agent.py`, `mantra/prompts.py`, `mantra/core/*.py`, `mantra/{routers,services,dependencies}/*`.
 

@@ -466,7 +466,8 @@ async def entrypoint(ctx: JobContext):
     agent_tools = [
         fnc_ctx.end_call,
         fnc_ctx.search_knowledge_base,
-        fnc_ctx.clarify_medical_department,
+        fnc_ctx.clarify_product_service,
+        fnc_ctx.find_nearest_location,
         fnc_ctx.check_doctor_availability,
     ]
 
