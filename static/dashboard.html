@@ -295,7 +295,19 @@
         .status-busy, .status-dispatching, .status-pending { background: var(--warning-subtle); color: var(--warning); }
         .status-ignored { background: rgba(148, 155, 164, 0.15); color: #949ba4; }
         .status-failed, .status-error { background: var(--danger-subtle); color: var(--danger); }
-        .status-no_answer, .status-unknown { background: var(--accent-subtle); color: var(--accent); }
+        .status-no_answer, .status-no-answer, .status-unknown { background: var(--accent-subtle); color: var(--accent); }
+        .status-missed_call, .status-missed-call { background: rgba(249, 115, 22, 0.15); color: #f97316; border: 1px solid rgba(249, 115, 22, 0.3); }
+
+        .badge-attempt {
+            display: inline-block;
+            font-size: 10px;
+            font-weight: 500;
+            padding: 2px 8px;
+            background: rgba(88, 101, 242, 0.15);
+            color: #5865F2;
+            border: 1px solid rgba(88, 101, 242, 0.35);
+            border-radius: 12px;
+        }
 
         .status-dot-sm {
             display: inline-block;
@@ -310,7 +322,8 @@
         .status-dot-sm.busy, .status-dot-sm.dispatching { background: var(--warning); }
         .status-dot-sm.ignored { background: #949ba4; }
         .status-dot-sm.error, .status-dot-sm.failed { background: var(--danger); }
-        .status-dot-sm.no_answer, .status-dot-sm.unknown { background: var(--text-tertiary); }
+        .status-dot-sm.no_answer, .status-dot-sm.no-answer, .status-dot-sm.unknown { background: var(--accent); }
+        .status-dot-sm.missed_call, .status-dot-sm.missed-call { background: #f97316; }
 
         .table-wrap { overflow-x: auto; }
 

@@ -4,6 +4,7 @@
 > **Last Updated:** 2026-09-10  
 > **Status:** Active maintenance, Doctor Availability Tool Integration, Org Processes & Stages MCP Tool, Inbound Post-Call Integration, Inbound SIP Lifecycle
 
+- [x] **Dashboard Purple Attempt Badge & Retry Count (2026-09-23):** Styled attempt badges (`Attempt #N`) in Discord Blurple theme (`#5865F2` on `rgba(88, 101, 242, 0.15)`) and explicitly appended the retry count (e.g., `Attempt #2 (1 retry)`, `Attempt #3 (2 retries)`).
 - [x] **Zadarma Inbound SIP Domain Fix (2026-09-21):** Corrected `LIVEKIT_SIP_DOMAIN` from stale/invalid `mantraassist-0ek43ife.india.sip.livekit.cloud` to the exact LiveKit Cloud project SIP domain `4mp2ouvchg3.sip.livekit.cloud`. Tested and verified end-to-end Zadarma inbound SIP trunking (`+14313030987`), creating LiveKit Inbound Trunk (`ST_69MYJWQZiong`), Dispatch Rule (`SDR_n8szQLWgAdtQ`), Zadarma REST API forwarding update, and `org_configs` DB persistence.
 - [x] **Inbound SIP Trunk and Dispatch Rule Lifecycle (2026-09-10):** Required an explicit provider with no primary default, validated it before inbound LiveKit provisioning, rolled back newly-created trunk/rule resources when provider forwarding failed, and made inbound trunk deletion remove associated LiveKit dispatch rules and `org_configs` mappings.
 - [x] **Organization-Agnostic Symptom Clarification (2026-09-10):** Broad medical symptoms no longer force a department selection from a single keyword or hardcoded specialty mapping; the agent can ask up to two targeted routing questions before checking availability.

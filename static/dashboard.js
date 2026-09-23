@@ -220,8 +220,10 @@ async function loadCallHistory() {
         const phone = c.caller_number || c.client_phone || c.client_name || '—';
         const trunk = c.trunk_id || '—';
         const attemptsCount = c.attempts_count || (Array.isArray(c.attempts) ? c.attempts.length : 1);
+        const retriesCount = attemptsCount > 1 ? attemptsCount - 1 : 0;
+        const retryText = retriesCount === 1 ? '1 retry' : `${retriesCount} retries`;
         const attemptBadge = attemptsCount > 1
-            ? `<span class="badge-count" style="margin-left:6px; font-size:10px; padding:2px 6px; background:var(--accent); color:white; border-radius:10px;" title="${attemptsCount} attempts recorded">Attempt #${attemptsCount} (${attemptsCount - 1} Retries)</span>`
+            ? `<div style="margin-top:3px;"><span class="badge-attempt" title="${attemptsCount} attempts recorded (${retryText})">Attempt #${attemptsCount} (${retryText})</span></div>`
             : '';
 
         return `
@@ -294,7 +296,9 @@ function openCallModalByIndex(index) {
 
     const attemptsCountElem = document.getElementById('modal-attempts-count');
     if (attemptsCountElem) {
-        attemptsCountElem.textContent = `${attempts.length} ${attempts.length > 1 ? 'Attempts' : 'Attempt'}`;
+        const retriesTotal = attempts.length > 1 ? attempts.length - 1 : 0;
+        const retryTotalLabel = retriesTotal === 1 ? '1 retry' : `${retriesTotal} retries`;
+        attemptsCountElem.textContent = `${attempts.length} ${attempts.length > 1 ? 'Attempts' : 'Attempt'} (${retryTotalLabel})`;
     }
 
     const timelineContainer = document.getElementById('modal-attempts-timeline');
@@ -307,12 +311,14 @@ function openCallModalByIndex(index) {
             const attDur = att.duration ? `${Math.floor(att.duration / 60)}m ${att.duration % 60}s` : '0s';
             const attAiId = att.ai_call_id ? escapeHtml(att.ai_call_id) : '—';
             const isLatest = attIdx === attempts.length - 1;
+            const retriesForThisAtt = attNum > 1 ? attNum - 1 : 0;
+            const attRetryLabel = attNum > 1 ? `(${retriesForThisAtt} ${retriesForThisAtt === 1 ? 'retry' : 'retries'})` : '';
 
             return `
                 <div style="background:var(--bg-surface); border:1px solid var(--border-default); border-radius:6px; padding:10px 12px; font-size:var(--text-xs); display:flex; flex-direction:column; gap:4px;">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <span style="font-weight:700; color:var(--accent);">Attempt #${attNum} ${attNum > 1 ? '(Retry)' : ''}</span>
+                            <span style="font-weight:700; color:#5865F2;">Attempt #${attNum} ${attRetryLabel}</span>
                             <span class="status-badge ${attStatusClass}" style="font-size:10px; padding:2px 8px;">${escapeHtml(attStatus)}</span>
                             ${isLatest ? '<span style="font-size:9px; background:#22c55e; color:white; padding:1px 6px; border-radius:4px; font-weight:600;">LATEST</span>' : ''}
                         </div>

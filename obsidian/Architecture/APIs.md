@@ -46,6 +46,38 @@ Primary endpoint to trigger outbound calls.
 
 **Response:** `{ status, client_name, purpose, room, token, url }`
 
+### POST /v1/webhooks/voicelink/missed-call
+
+Endpoint for Voicelink missed call / hangup webhooks (e.g. when channel limit is exceeded). Accepts raw body, form-data, query parameters, standard JSON, or Voicelink's key-as-JSON-string format. Logs HTTP headers, query parameters, raw body, and parsed data.
+
+```json
+{
+  "{\"status\":\"NoAnswered\",\"call_id\":\"\",\"duration\":\"\",\"call_date\":\"2026-09-22 16:59:39\",\"call_type\":\"\",\"unique_id\":\"1790076579.136661\",\"event_type\":\"hangup\",\"hangup_cause\":\"Channel limit 4 exceeded\",\"virtual_number\":\"919484959268\",\"customer_number\":\"8360625862\",\"agent_number\":\"\"}": ""
+}
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "message": "Missed call webhook received",
+  "db_saved": true,
+  "received_data": {
+    "status": "NoAnswered",
+    "call_id": "",
+    "duration": "",
+    "call_date": "2026-09-22 16:59:39",
+    "call_type": "",
+    "unique_id": "1790076579.136661",
+    "event_type": "hangup",
+    "hangup_cause": "Channel limit 4 exceeded",
+    "virtual_number": "919484959268",
+    "customer_number": "8360625862",
+    "agent_number": ""
+  }
+}
+```
+
 ---
 
 ## SIP Trunk Management

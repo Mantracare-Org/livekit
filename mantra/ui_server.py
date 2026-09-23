@@ -2741,6 +2741,148 @@ async def plivo_dial_status(request: Request):
 
 
 
+@app.post("/v1/webhooks/voicelink/missed-call")
+async def handle_voicelink_missed_call(request: Request):
+    """
+    Webhook endpoint to accept Voicelink missed call / hangup events.
+    Handles raw body, JSON payloads, form data, query params, and Voicelink's key-as-JSON-string format.
+    """
+    try:
+        raw_body = await request.body()
+        raw_str = raw_body.decode("utf-8", errors="ignore").strip()
+        headers = dict(request.headers)
+        query_params = dict(request.query_params)
+
+        logger.info(
+            f"=== [VOICELINK MISSED CALL WEBHOOK RECEIVED] ===\n"
+            f"Headers: {json.dumps(headers, indent=2)}\n"
+            f"Query Params: {json.dumps(query_params, indent=2)}\n"
+            f"Raw Body: '{raw_str}'"
+        )
+
+        parsed_data = {}
+
+        # 1. Try URL-encoded form data / multipart form data
+        try:
+            form_data = await request.form()
+            if form_data:
+                form_dict = dict(form_data)
+                logger.info(f"Form Data received: {json.dumps(form_dict, indent=2)}")
+                for k, v in form_dict.items():
+                    if k.startswith("{") and k.endswith("}"):
+                        try:
+                            parsed_data = json.loads(k)
+                            break
+                        except Exception:
+                            pass
+                if not parsed_data:
+                    parsed_data = form_dict
+        except Exception:
+            pass
+
+        # 2. Try JSON payload parsing
+        if not parsed_data:
+            try:
+                payload = await request.json()
+                if isinstance(payload, dict):
+                    for k, v in payload.items():
+                        if isinstance(k, str) and k.startswith("{") and k.endswith("}"):
+                            try:
+                                parsed_data = json.loads(k)
+                                break
+                            except Exception:
+                                pass
+                    if not parsed_data:
+                        parsed_data = payload
+            except Exception:
+                pass
+
+        # 3. Fallback: Parse raw string if it's JSON or URL-encoded
+        if not parsed_data and raw_str:
+            if raw_str.startswith("{") and raw_str.endswith("}"):
+                try:
+                    parsed_data = json.loads(raw_str)
+                except Exception:
+                    pass
+            else:
+                try:
+                    from urllib.parse import parse_qs
+                    qs_data = parse_qs(raw_str)
+                    for k in qs_data.keys():
+                        if k.startswith("{") and k.endswith("}"):
+                            try:
+                                parsed_data = json.loads(k)
+                                break
+                            except Exception:
+                                pass
+                    if not parsed_data:
+                        parsed_data = {k: v[0] if len(v) == 1 else v for k, v in qs_data.items()}
+                except Exception:
+                    pass
+
+        # 4. Fallback to query params if body was empty
+        if not parsed_data and query_params:
+            parsed_data = query_params
+
+        logger.info(f"Voicelink Missed Call Final Parsed Payload:\n{json.dumps(parsed_data, indent=2)}")
+
+        # Store missed call into database for dashboard visibility
+        db_inserted = False
+        try:
+            unique_id = parsed_data.get("unique_id") or parsed_data.get("call_id") or f"vl_missed_{int(time.time() * 1000)}"
+            call_id = f"vl_{unique_id}"
+            customer_number = str(parsed_data.get("customer_number", "")).strip()
+            virtual_number = str(parsed_data.get("virtual_number", "")).strip()
+            status_text = "Missed Call"
+
+            full_call_log = {
+                "source": "voicelink_webhook",
+                "event_type": parsed_data.get("event_type", "missed_call"),
+                "hangup_cause": parsed_data.get("hangup_cause", ""),
+                "call_date": parsed_data.get("call_date", ""),
+                "duration": parsed_data.get("duration", "0"),
+                "raw_payload": parsed_data,
+            }
+
+            conn = await get_db_connection()
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO call_logs (
+                        call_id, status, caller_number, called_number, trunk_id, call_log, created_at
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6::jsonb, NOW())
+                    ON CONFLICT (call_id) DO UPDATE SET
+                        status = EXCLUDED.status,
+                        call_log = EXCLUDED.call_log,
+                        caller_number = EXCLUDED.caller_number,
+                        called_number = EXCLUDED.called_number;
+                    """,
+                    call_id,
+                    status_text,
+                    customer_number,
+                    virtual_number,
+                    "voicelink_inbound",
+                    json.dumps(full_call_log),
+                )
+                db_inserted = True
+                logger.info(f"Successfully saved Voicelink missed call to DB with call_id: {call_id}")
+            finally:
+                await conn.close()
+        except Exception as db_err:
+            logger.error(f"Failed to save Voicelink missed call to DB: {db_err}\n{traceback.format_exc()}")
+
+        return JSONResponse({
+            "status": "success",
+            "message": "Missed call webhook received",
+            "db_saved": db_inserted,
+            "received_data": parsed_data
+        }, status_code=200)
+    except Exception as e:
+        logger.error(f"Error processing Voicelink missed call webhook: {e}\n{traceback.format_exc()}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
 @app.post("/v1/webhooks/telephony")
 async def handle_outbound_call_webhook(request: Request):
     """
@@ -3787,7 +3929,7 @@ async def dashboard_metrics(request: Request):
                     COUNT(*)::int AS total_calls,
                     COUNT(*) FILTER (WHERE status = 'Completed')::int AS completed_calls,
                     COUNT(*) FILTER (WHERE status = 'Busy')::int AS busy_calls,
-                    COUNT(*) FILTER (WHERE status = 'No Answer')::int AS no_answer_calls,
+                    COUNT(*) FILTER (WHERE status IN ('No Answer', 'Missed Call', 'missed_call'))::int AS no_answer_calls,
                     COUNT(*) FILTER (WHERE status = 'Error')::int AS error_calls,
                     COUNT(*) FILTER (WHERE status = 'Incomplete')::int AS incomplete_calls,
                     ROUND(

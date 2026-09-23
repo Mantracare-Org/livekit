@@ -1,4 +1,25 @@
-# Changelog
+## 2026-09-23
+
+### Dashboard Attempt Badge Purple Styling & Retry Count
+
+- **feat:** Styled `Attempt #N` badges in Discord Blurple theme (`background: rgba(88, 101, 242, 0.15)`, `color: #5865F2`, `border: 1px solid rgba(88, 101, 242, 0.35)`).
+- **feat:** Explicitly included the retry count in attempt badges and modal timeline (e.g. `Attempt #2 (1 retry)`, `Attempt #3 (2 retries)`).
+- **Files:** `static/dashboard.html`, `static/dashboard.js`, `obsidian/Development/Changelog.md`.
+
+### Voicelink Missed Call Persistence & Dashboard Integration
+
+- **feat:** Updated `POST /v1/webhooks/voicelink/missed-call` in `mantra/ui_server.py` to insert missed calls into PostgreSQL `call_logs` with status `Missed Call`.
+- **fix:** Refined table badge styling — replaced bright purple attempt pill with subtle dark `#313338` pill with subtle border (`Attempt #N`).
+- **feat:** Added custom orange badge styling (`background: rgba(249, 115, 22, 0.15)`, `color: #f97316`) and orange status dot for `Missed Call` entries.
+- **Files:** `mantra/ui_server.py`, `static/dashboard.html`, `static/dashboard.js`, `obsidian/Architecture/APIs.md`, `obsidian/Development/Changelog.md`.
+
+## 2026-09-22
+
+### Voicelink Missed Call Webhook Endpoint
+
+- **feat:** Added `POST /v1/webhooks/voicelink/missed-call` endpoint in `mantra/ui_server.py` to ingest Voicelink missed call / hangup webhooks (e.g. channel limit exceeded events).
+- **feat:** Added robust payload parsing capable of extracting data from raw JSON strings, standard JSON objects, or Voicelink's key-as-JSON-string format.
+- **Files:** `mantra/ui_server.py`, `obsidian/Architecture/APIs.md`, `obsidian/Development/Changelog.md`.
 
 ## 2026-09-21
 
