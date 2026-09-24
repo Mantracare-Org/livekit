@@ -1,14 +1,12 @@
 # Changelog
 
-## 2026-09-23
+## 2026-09-24
 
-### Products/Services & Geopy Location Appointment Workflow
+### Native Python Geopy Tool & Product/Service Clinical Mapping
 
-- **feat:** Shifted appointment workflow from departments to **Products & Services** (`get_org_products_services`, `clarify_product_service`). Symptom clarification maps caller inquiries to the org's available products and services list.
-- **feat:** Added `find_nearest_location(user_address_or_area, org_id)` tool using `geopy` geodesic distance calculation to determine the closest hospital/clinic branch location based on the caller's whereabouts.
-- **feat:** Updated `check_doctor_availability` and `receive_doctor_availability` to accept `location` (hospital branch) and `product_service` alongside `date` and `doctor_name`, resolving location-specific doctor shift availability (e.g. morning at Branch A, evening at Branch B).
-- **feat:** Captured `product_service` and `location` in post-call `appointment_metadata` for webhook delivery.
-- **Files:** `mantra/core/assistant_functions.py`, `mantra/agent.py`, `mantra/prompts.py`, `mantra/utils.py`, `mantra/core/finalize.py`, `livekit-mcp/src/livekit_mcp/server.py`, `livekit-mcp/src/livekit_mcp/tools/products_services.py`, `livekit-mcp/src/livekit_mcp/tools/doctor_availability.py`.
+- **refactor:** Implemented `find_nearest_location(user_address_or_area)` as a native **Python Function Tool** (`@llm.function_tool`) in `mantra/core/assistant_functions.py` using `geopy` to geocode caller whereabouts and calculate geodesic distance to registered hospital branch locations.
+- **refactor:** Streamlined `clarify_product_service` to perform clinical symptom-to-product mapping directly within the Voice Agent context without making remote MCP network calls.
+- **Files:** `mantra/core/assistant_functions.py`, `mantra/agent.py`, `mantra/prompts.py`, `livekit-mcp/src/livekit_mcp/server.py`.
 
 ## 2026-09-12
 

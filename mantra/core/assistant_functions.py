@@ -330,42 +330,11 @@ class AssistantFunctions:
         self._disconnect_task = create_bg_task(graceful_disconnect())
         return ""
 
-    async def _load_product_service_options(self, org_id: int | str) -> list[str]:
-        """Load and remember the products and services available for this organization."""
-        from mantra.mcp_client import get_mcp_client
-
-        try:
-            raw_products = await get_mcp_client().call_tool(
-                "get_org_products_services",
-                {"org_id": org_id},
-            )
-            products_data = json.loads(raw_products) if isinstance(raw_products, str) else raw_products
-            if isinstance(products_data, dict):
-                products_list = products_data.get("products_services") or products_data.get("data") or []
-            elif isinstance(products_data, list):
-                products_list = products_data
-            else:
-                products_list = []
-
-            normalized = []
-            for item in products_list:
-                name = item.get("name") if isinstance(item, dict) else str(item).strip()
-                if name and name.casefold() not in {value.casefold() for value in normalized}:
-                    normalized.append(name)
-        except Exception as exc:
-            logger.warning(f"Failed to fetch products/services for org_id={org_id}: {exc}")
-            normalized = []
-
-        if self.call_state is not None:
-            self.call_state["product_service_options"] = normalized
-        return normalized
-
     @llm.function_tool(
         description=(
             "Use when the caller mentions a symptom, health inquiry, or appointment request without specifying a clear product or service. "
-            "Fetch the organization's available products and services list silently. Do not guess a product or service from one vague symptom. "
-            "Ask up to two concise clinical questions (onset, progression, severity, associated symptoms) to select the best matching product/service from the list. "
-            "Do not ask the caller to choose a product/service by name aloud. Do not explain internal routing. "
+            "Do not guess a product or service from one vague symptom. Ask up to two concise clinical questions (onset, progression, severity) "
+            "to map their symptom to the appropriate product or service. Do not ask the caller to pick a product/service by internal technical name aloud. "
             "Only proceed to date/location selection after the product or service is confirmed."
         )
     )
@@ -373,72 +342,110 @@ class AssistantFunctions:
         self,
         symptom: Annotated[str, "The caller's broad symptom or reason for the appointment."],
     ) -> str:
-        org_id = self.call_state.get("org_id") if self.call_state else None
-        if not org_id and self.job_metadata:
-            try:
-                payload = json.loads(self.job_metadata) if isinstance(self.job_metadata, str) else self.job_metadata
-                org_id = payload.get("org_id") or (
-                    payload.get("metadata", {}).get("org_id")
-                    if isinstance(payload.get("metadata"), dict)
-                    else None
-                )
-            except Exception as exc:
-                logger.warning(f"Could not parse job_metadata in clarify_product_service: {exc}")
-
-        if not org_id:
-            return "Ask the caller which specific consultation or service they need, then continue."
-
-        products = await self._load_product_service_options(org_id)
-
         if self.call_state is not None:
             self.call_state["symptom_clarification"] = symptom.strip()
 
-        if not products:
-            return (
-                "Product/Service discovery is unavailable for this organization. "
-                "Proceed directly by asking for date and location, or Doctor name if specified."
-            )
-
         return (
-            f"INTERNAL ROUTING CONTEXT ONLY. Caller symptom: {symptom.strip()}. "
-            f"Allowed products/services: {json.dumps(products)}. "
-            "Do not select a product/service yet if the symptom could match more than one option. Ask up to two concise questions about onset, progression, and severity. "
-            "After the caller answers, select the single best matching product/service from the allowed list."
+            f"INTERNAL CLINICAL MAPPING CONTEXT. Caller symptom: {symptom.strip()}. "
+            "Do not guess a product or service immediately if the symptom could match multiple offerings. "
+            "Ask up to two concise questions about onset, progression, and severity. "
+            "Use the caller's answers to select and confirm the appropriate product or service."
         )
 
     @llm.function_tool(
         description=(
-            "Calculate and find the nearest hospital or clinic branch based on the caller's whereabouts or address. "
+            "Calculate and find the nearest hospital or clinic branch based on the caller's whereabouts or address using geopy. "
             "ALWAYS use this tool whenever the caller asks for the nearest hospital/clinic branch or provides their area, city, landmark, or pincode."
+            "This tool will help you to identify the nearest location if necessary"
         )
     )
     async def find_nearest_location(
         self,
         user_address_or_area: Annotated[str, "The caller's address, landmark, city, neighborhood, or pincode."],
     ) -> str:
+        """Native Python function tool using geopy to compute nearest hospital/clinic location."""
+        user_location_str = str(user_address_or_area).strip()
+        logger.info(f"Agent executing Python tool find_nearest_location for '{user_location_str}'")
+
+        if not user_location_str:
+            return "Please ask the caller for their current area, landmark, or city to calculate the nearest hospital location."
+
         org_id = self.call_state.get("org_id") if self.call_state else None
-        logger.info(f"Agent executing find_nearest_location for '{user_address_or_area}' (org_id={org_id})")
+        branches = []
 
-        from mantra.mcp_client import get_mcp_client
+        # Query registered org locations from DB if pool available
+        try:
+            from mantra.dependencies.database import get_db_pool
+            pool = await get_db_pool()
+            if pool and org_id:
+                async with pool.acquire() as conn:
+                    rows = await conn.fetch(
+                        """
+                        SELECT id AS location_id, name, address, latitude, longitude
+                        FROM org_locations
+                        WHERE org_id::text = $1::text AND is_active = TRUE
+                        """,
+                        str(org_id),
+                    )
+                    if rows:
+                        branches = [dict(r) for r in rows]
+        except Exception as db_err:
+            logger.debug(f"DB lookup for org_locations skipped in python tool: {db_err}")
 
-        result = await get_mcp_client().call_tool(
-            "find_nearest_location",
-            {
-                "user_address_or_area": str(user_address_or_area).strip(),
-                "org_id": org_id,
-            },
-        )
+        # Geocode user address/area using geopy
+        user_coords = None
+        try:
+            from geopy.geocoders import Nominatim
+            geolocator = Nominatim(user_agent="mantra_voice_agent")
+            loc = geolocator.geocode(user_location_str, timeout=4)
+            if loc:
+                user_coords = (loc.latitude, loc.longitude)
+                logger.info(f"Geocoded '{user_location_str}' -> ({loc.latitude}, {loc.longitude})")
+        except Exception as exc:
+            logger.warning(f"Geocoding failed for '{user_location_str}': {exc}")
 
+        calculated_results = []
+        if user_coords and branches:
+            from geopy.distance import geodesic
+            for branch in branches:
+                if branch.get("latitude") and branch.get("longitude"):
+                    branch_coords = (float(branch["latitude"]), float(branch["longitude"]))
+                    dist_km = geodesic(user_coords, branch_coords).kilometers
+                    calculated_results.append({
+                        "name": branch["name"],
+                        "address": branch.get("address") or "",
+                        "distance_km": round(dist_km, 2),
+                    })
+            calculated_results.sort(key=lambda x: x["distance_km"])
+        elif branches:
+            for branch in branches:
+                calculated_results.append({
+                    "name": branch["name"],
+                    "address": branch.get("address") or "",
+                    "distance_km": None,
+                })
+
+        if calculated_results:
+            nearest = calculated_results[0]
+            dist_str = f" ({nearest['distance_km']} km away)" if nearest["distance_km"] is not None else ""
+            if self.call_state is not None:
+                self.call_state["selected_location"] = nearest["name"]
+
+            response_lines = [
+                f"Nearest Location: {nearest['name']}{dist_str}",
+                f"Address: {nearest['address']}",
+            ]
+            if len(calculated_results) > 1:
+                response_lines.append("\nOther Locations:")
+                for b in calculated_results[1:]:
+                    d_str = f" ({b['distance_km']} km)" if b["distance_km"] is not None else ""
+                    response_lines.append(f"• {b['name']}{d_str} - {b['address']}")
+            return "\n".join(response_lines)
+
+        # Fallback response if no branches registered in DB
         if self.call_state is not None:
-            # Parse top branch name if present
-            import re
-            m = re.search(r'Nearest Location:\s*([^(\n]+)', result, re.IGNORECASE)
-            if m:
-                loc_name = m.group(1).strip()
-                self.call_state["selected_location"] = loc_name
-                logger.info(f"Captured selected_location='{loc_name}' from find_nearest_location")
-
-        return result
+            self.call_state["selected_location"] = user_location_str
+        return f"Location '{user_location_str}' recorded for appointment scheduling."
 
     @llm.function_tool(
         description=(
@@ -482,31 +489,12 @@ class AssistantFunctions:
             except Exception as e:
                 logger.warning(f"Could not parse job_metadata in check_doctor_availability: {e}")
 
-        product_options = self.call_state.get("product_service_options", []) if self.call_state else []
-        if not product_options and org_id:
-            product_options = await self._load_product_service_options(org_id)
-
         requested_product = str(product_service).strip() if product_service else ""
-        matched_product = next(
-            (
-                option
-                for option in product_options
-                if option.casefold() == requested_product.casefold()
-            ),
-            None,
-        )
-        if not matched_product and product_options and requested_product:
-            if self.call_state is not None:
-                self.call_state["symptom_clarification"] = requested_product
-            return (
-                "Product/Service selection is invalid. Call clarify_product_service, choose one exact value from its "
-                "returned allowed products/services list, and retry availability."
-            )
-
         selected_loc = location or (self.call_state.get("selected_location") if self.call_state else None)
 
         if self.call_state is not None:
-            self.call_state["selected_product_service"] = matched_product or requested_product or None
+            if requested_product:
+                self.call_state["selected_product_service"] = requested_product
             if selected_loc:
                 self.call_state["selected_location"] = selected_loc
 
