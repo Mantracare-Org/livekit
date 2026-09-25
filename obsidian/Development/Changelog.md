@@ -1,12 +1,22 @@
 # Changelog
 
-## 2026-09-24
+## 2026-09-25
 
-### Native Python Geopy Tool & Product/Service Clinical Mapping
+### Integration of Backend Services & Locations API Endpoints & Bug Fixes
 
-- **refactor:** Implemented `find_nearest_location(user_address_or_area)` as a native **Python Function Tool** (`@llm.function_tool`) in `mantra/core/assistant_functions.py` using `geopy` to geocode caller whereabouts and calculate geodesic distance to registered hospital branch locations.
-- **refactor:** Streamlined `clarify_product_service` to perform clinical symptom-to-product mapping directly within the Voice Agent context without making remote MCP network calls.
-- **Files:** `mantra/core/assistant_functions.py`, `mantra/agent.py`, `mantra/prompts.py`, `livekit-mcp/src/livekit_mcp/server.py`.
+- **fix:** Fixed `AttributeError: type object 'datetime.datetime' has no attribute 'datetime'` in `mantra/utils.py` by replacing shadowed `datetime.datetime` references with `datetime.now()`.
+- **fix:** Removed stale `fnc_ctx._load_department_options` background call in `mantra/agent.py` entrypoint.
+- **feat:** Integrated `GET /v1/webhooks/mcp/services?org_id={org_id}` into `livekit-mcp` backend client to fetch organization-specific service offerings.
+- **feat:** Integrated `GET /v1/webhooks/mcp/locations?org_id={org_id}&caller_lat={lat}&caller_lng={lng}` into `find_nearest_location` Python function tool. Automatically geocodes caller address/whereabouts via `geopy`, sends `caller_lat` and `caller_lng` to backend API, and utilizes pre-calculated `distance_km` (or falls back to geodesic distance calculation) to return closest hospital branches.
+- **fix:** Synchronized `JWT_SECRET` in `lkt/.env.local` and `lkt/.env` to `fecceea3e629c131c7340e820da8f52d`, aligning with `mantra-auth` and `livekit-mcp` to resolve JWT verification errors (`invalid signature`) during token introspection.
+- **fix:** Updated OAuth token URL in `mantra/mcp_client.py` to route to `/api/oauth/token` instead of `/oauth/token`, resolving HTTP 404 Not Found errors from Next.js `mantra-auth`.
+- **feat:** Updated `recognize_client` in `livekit-mcp/src/livekit_mcp/clients/backend_client.py` to query `GET /v1/webhooks/mcp/lead?org_id={org_id}&phone_number={phone_number}` (with fallback to `POST /v1/webhooks/client-recognition`), correctly parsing `client_name` and `client_metadata` (`ai_summaries` + `custom_fields`). Updated `MANTRAASSIST_BACKEND_URL` in `livekit-mcp/.env`.
+- **feat:** Added `get_org_products_services` and `get_org_locations` as official MCP tools in `livekit-mcp/src/livekit_mcp/tools/products_services.py` and registered them in `server.py`.
+- **feat:** Refactored `clarify_product_service` and `find_nearest_location` in `mantra/core/assistant_functions.py` to execute `get_org_products_services` and `get_org_locations` over **MCP SSE JSON-RPC protocol via `MantraMCPClient`**, surfacing tool calls directly in `livekit-mcp` logs.
+- **feat:** Added call duration extension to 5 minutes (300 seconds) for both inbound and outbound calls upon positive intent and lead generation triggers (`clarify_product_service`, `find_nearest_location`, `check_doctor_availability`).
+- **fix:** Removed restrictive `is_inbound` checks in `mantra/call_duration.py` (`is_extendable`) and `mantra/core/call_monitors.py` (`positive_intent_monitor` and `call_limiter`), allowing inbound appointment leads to extend call time to 5 minutes seamlessly.
+- **fix:** Added guardrails against premature `end_call` invocation in `mantra/core/assistant_functions.py` and `mantra/prompts.py`. If the LLM attempts to call `end_call` while the user is requesting or agreeing to an appointment/lead booking, `end_call` is blocked with a helpful system feedback string, auto-extending the call duration to 5 minutes so appointment booking can complete.
+- **Files:** `mantra/call_duration.py`, `mantra/core/call_monitors.py`, `mantra/core/assistant_functions.py`, `mantra/prompts.py`, `obsidian/Development/Changelog.md`.
 
 ## 2026-09-12
 

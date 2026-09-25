@@ -311,13 +311,40 @@ class AssistantFunctions:
         result = await retriever.retrieve(query, kb_ids=self.kb_ids, tags=tags_to_search if tags_to_search else None)
         return result
 
+    async def _try_auto_extend(self, reason: str):
+        if self.call_state and not self.call_state.get("duration_extended"):
+            try:
+                from mantra.call_duration import extend_call
+                entrypoint = self.call_state.get("entrypoint_start_time")
+                now = asyncio.get_event_loop().time()
+                elapsed = (now - entrypoint) if entrypoint else 1.0
+                await extend_call(self.call_state, reason, max(1.0, elapsed))
+            except Exception as e:
+                logger.warning(f"Auto-extend failed: {e}")
+
     @llm.function_tool(
-        description="End the call. Call this tool ONLY when the conversation has reached its final conclusion (e.g. after saying final goodbye or when the user explicitly hangs up/declines). NEVER call this during the initial greeting or while the conversation is active."
+        description="End the call. Call this tool ONLY after saying final goodbye when the conversation has completely ended and the caller has confirmed they have no further questions. NEVER call this tool while booking an appointment, discussing products/services, answering questions, or when the user says 'yes', 'sure', or agrees to an appointment."
     )
     async def end_call(self):
         if self.call_state and not self.call_state.get("user_has_spoken", False) and not self.call_state.get("initial_greeting_done", False):
             logger.warning("[DIAG] end_call invoked prematurely during initial greeting / before user spoke. Ignoring tool call.")
             return "Call cannot be ended before the conversation starts. Please greet the user and proceed with the conversation."
+
+        if self.session and hasattr(self.session, "history") and self.session.history:
+            try:
+                msgs = list(self.session.history.messages())
+                if msgs:
+                    last_user_msgs = [m for m in msgs if str(getattr(m, "role", "")).lower() in ("user", "caller")]
+                    if last_user_msgs:
+                        last_content = str(getattr(last_user_msgs[-1], "content", "")).lower()
+                        booking_terms = ["book", "appointment", "schedule", "sure", "yes", "okay", "ok", "location", "timing", "doctor", "slot"]
+                        cancel_terms = ["bye", "goodbye", "no thanks", "hang up", "stop", "cancel", "not interested"]
+                        if any(term in last_content for term in booking_terms) and not any(term in last_content for term in cancel_terms):
+                            logger.warning(f"[DIAG] Premature end_call blocked! User utterance was: '{last_content}'")
+                            await self._try_auto_extend("Appointment booking requested")
+                            return "Call cannot be ended while appointment booking or user inquiry is active. Please proceed to book the appointment or answer the caller's request."
+            except Exception as check_err:
+                logger.warning(f"[DIAG] end_call safety check error: {check_err}")
 
         logger.info("Agent decided to end the call via function tool. Disconnecting shortly.")
         self._telemetry("Call ended by agent")
@@ -342,88 +369,162 @@ class AssistantFunctions:
         self,
         symptom: Annotated[str, "The caller's broad symptom or reason for the appointment."],
     ) -> str:
+        await self._try_auto_extend("Lead generation: product/service inquiry")
+        symptom_clean = symptom.strip()
         if self.call_state is not None:
-            self.call_state["symptom_clarification"] = symptom.strip()
+            self.call_state["symptom_clarification"] = symptom_clean
+
+        org_id = self.call_state.get("org_id") if self.call_state else None
+        if not org_id and self.job_metadata:
+            try:
+                payload = json.loads(self.job_metadata) if isinstance(self.job_metadata, str) else self.job_metadata
+                org_id = payload.get("org_id") or (payload.get("metadata", {}).get("org_id") if isinstance(payload.get("metadata"), dict) else None)
+            except Exception:
+                pass
+
+        services_summary = ""
+        if org_id:
+            try:
+                from mantra.mcp_client import get_mcp_client
+                mcp_res = await get_mcp_client().call_tool(
+                    "get_org_products_services",
+                    {"org_id": str(org_id).strip()},
+                )
+                logger.info(f"[MCP-CALL] clarify_product_service executed MCP tool get_org_products_services -> {mcp_res[:150]}")
+                if mcp_res and mcp_res != "No details returned.":
+                    try:
+                        res_json = json.loads(mcp_res)
+                        services_list = res_json.get("services", [])
+                        if services_list:
+                            services_str = ", ".join([s.get("name") or s.get("title") or str(s) for s in services_list if isinstance(s, dict)]) or ", ".join([str(s) for s in services_list])
+                            services_summary = f"\nAvailable Organization Services/Products: {services_str}."
+                    except Exception:
+                        services_summary = f"\nAvailable Organization Services/Products: {mcp_res}."
+            except Exception as api_err:
+                logger.warning(f"MCP get_org_products_services query failed in clarify_product_service: {api_err}")
 
         return (
-            f"INTERNAL CLINICAL MAPPING CONTEXT. Caller symptom: {symptom.strip()}. "
+            f"INTERNAL CLINICAL MAPPING CONTEXT. Caller symptom: {symptom_clean}.{services_summary} "
             "Do not guess a product or service immediately if the symptom could match multiple offerings. "
-            "Ask up to two concise questions about onset, progression, and severity. "
-            "Use the caller's answers to select and confirm the appropriate product or service."
+            "Ask up to two concise clinical questions (onset, progression, severity) to map their symptom directly to one of the available services listed above. "
+            "Once confirmed, store that service name for scheduling."
         )
 
     @llm.function_tool(
         description=(
-            "Calculate and find the nearest hospital or clinic branch based on the caller's whereabouts or address using geopy. "
-            "ALWAYS use this tool whenever the caller asks for the nearest hospital/clinic branch or provides their area, city, landmark, or pincode."
-            "This tool will help you to identify the nearest location if necessary"
+            "Find hospital/clinic branch locations or calculate the nearest branch based on caller location. "
+            "ALWAYS call this tool whenever the caller asks where hospitals/branches are located, asks for available locations, or provides their address/city/landmark."
         )
     )
     async def find_nearest_location(
         self,
-        user_address_or_area: Annotated[str, "The caller's address, landmark, city, neighborhood, or pincode."],
+        user_address_or_area: Annotated[str, "The caller's address, landmark, city, neighborhood, or pincode. Optional if asking generally for available branches."] = "",
     ) -> str:
-        """Native Python function tool using geopy to compute nearest hospital/clinic location."""
-        user_location_str = str(user_address_or_area).strip()
+        """Native Python function tool using geopy + backend API (GET /webhooks/mcp/locations) to compute nearest location."""
+        await self._try_auto_extend("Lead generation: location inquiry")
+        user_location_str = str(user_address_or_area or "").strip()
         logger.info(f"Agent executing Python tool find_nearest_location for '{user_location_str}'")
 
-        if not user_location_str:
-            return "Please ask the caller for their current area, landmark, or city to calculate the nearest hospital location."
-
         org_id = self.call_state.get("org_id") if self.call_state else None
+        if not org_id and self.job_metadata:
+            try:
+                payload = json.loads(self.job_metadata) if isinstance(self.job_metadata, str) else self.job_metadata
+                org_id = payload.get("org_id") or (payload.get("metadata", {}).get("org_id") if isinstance(payload.get("metadata"), dict) else None)
+            except Exception:
+                pass
+
+        # 1. Geocode user address/area using geopy to get lat/lng if location string provided
+        user_coords = None
+        if user_location_str:
+            try:
+                from geopy.geocoders import Nominatim
+                geolocator = Nominatim(user_agent="mantra_voice_agent")
+                loc = geolocator.geocode(user_location_str, timeout=4)
+                if loc:
+                    user_coords = (loc.latitude, loc.longitude)
+                    logger.info(f"Geocoded '{user_location_str}' -> ({loc.latitude}, {loc.longitude})")
+            except Exception as exc:
+                logger.warning(f"Geocoding failed for '{user_location_str}': {exc}")
+
+        user_lat = user_coords[0] if user_coords else None
+        user_lng = user_coords[1] if user_coords else None
+
         branches = []
 
-        # Query registered org locations from DB if pool available
-        try:
-            from mantra.dependencies.database import get_db_pool
-            pool = await get_db_pool()
-            if pool and org_id:
-                async with pool.acquire() as conn:
-                    rows = await conn.fetch(
-                        """
-                        SELECT id AS location_id, name, address, latitude, longitude
-                        FROM org_locations
-                        WHERE org_id::text = $1::text AND is_active = TRUE
-                        """,
-                        str(org_id),
-                    )
-                    if rows:
-                        branches = [dict(r) for r in rows]
-        except Exception as db_err:
-            logger.debug(f"DB lookup for org_locations skipped in python tool: {db_err}")
+        # 2. Query MCP server for locations via SSE JSON-RPC tool call 'get_org_locations'
+        if org_id:
+            try:
+                from mantra.mcp_client import get_mcp_client
+                mcp_args: dict[str, Any] = {"org_id": str(org_id).strip()}
+                if user_lat is not None and user_lng is not None:
+                    mcp_args["caller_lat"] = user_lat
+                    mcp_args["caller_lng"] = user_lng
 
-        # Geocode user address/area using geopy
-        user_coords = None
-        try:
-            from geopy.geocoders import Nominatim
-            geolocator = Nominatim(user_agent="mantra_voice_agent")
-            loc = geolocator.geocode(user_location_str, timeout=4)
-            if loc:
-                user_coords = (loc.latitude, loc.longitude)
-                logger.info(f"Geocoded '{user_location_str}' -> ({loc.latitude}, {loc.longitude})")
-        except Exception as exc:
-            logger.warning(f"Geocoding failed for '{user_location_str}': {exc}")
+                mcp_res = await get_mcp_client().call_tool("get_org_locations", mcp_args)
+                logger.info(f"[MCP-CALL] find_nearest_location executed MCP tool get_org_locations -> {mcp_res[:150]}")
+                if mcp_res and mcp_res != "No details returned.":
+                    try:
+                        res_data = json.loads(mcp_res)
+                        data_obj = res_data.get("locations") if isinstance(res_data, dict) and "locations" in res_data else res_data
+                        if isinstance(data_obj, list):
+                            branches = data_obj
+                    except Exception:
+                        pass
+            except Exception as api_err:
+                logger.warning(f"MCP get_org_locations query failed: {api_err}")
 
+        # 3. Fallback to DB query if backend API returned empty
+        if not branches and org_id:
+            try:
+                from mantra.dependencies.database import get_db_pool
+                pool = await get_db_pool()
+                if pool:
+                    async with pool.acquire() as conn:
+                        rows = await conn.fetch(
+                            """
+                            SELECT id AS location_id, name, address, latitude, longitude
+                            FROM org_locations
+                            WHERE org_id::text = $1::text AND is_active = TRUE
+                            """,
+                            str(org_id),
+                        )
+                        if rows:
+                            branches = [dict(r) for r in rows]
+            except Exception as db_err:
+                logger.debug(f"DB lookup for org_locations skipped: {db_err}")
+
+        # 4. Process and sort branches by distance
         calculated_results = []
-        if user_coords and branches:
-            from geopy.distance import geodesic
-            for branch in branches:
-                if branch.get("latitude") and branch.get("longitude"):
-                    branch_coords = (float(branch["latitude"]), float(branch["longitude"]))
-                    dist_km = geodesic(user_coords, branch_coords).kilometers
-                    calculated_results.append({
-                        "name": branch["name"],
-                        "address": branch.get("address") or "",
-                        "distance_km": round(dist_km, 2),
-                    })
-            calculated_results.sort(key=lambda x: x["distance_km"])
-        elif branches:
-            for branch in branches:
-                calculated_results.append({
-                    "name": branch["name"],
-                    "address": branch.get("address") or "",
-                    "distance_km": None,
-                })
+        for branch in branches:
+            b_name = branch.get("name") or branch.get("location_name") or "Hospital Branch"
+            b_addr = branch.get("address") or ""
+            dist_km = branch.get("distance_km")
+
+            if dist_km is not None:
+                try:
+                    dist_val = round(float(dist_km), 2)
+                except (ValueError, TypeError):
+                    dist_val = None
+            elif user_coords and (branch.get("lat") or branch.get("latitude")) and (branch.get("lng") or branch.get("longitude")):
+                try:
+                    b_lat = float(branch.get("lat") or branch.get("latitude"))
+                    b_lng = float(branch.get("lng") or branch.get("longitude"))
+                    from geopy.distance import geodesic
+                    dist_val = round(geodesic(user_coords, (b_lat, b_lng)).kilometers, 2)
+                except Exception:
+                    dist_val = None
+            else:
+                dist_val = None
+
+            calculated_results.append({
+                "name": b_name,
+                "address": b_addr,
+                "distance_km": dist_val,
+                "is_primary": branch.get("is_primary", False),
+            })
+
+        # Sort physical locations with valid distance first
+        calculated_results.sort(key=lambda x: (x["distance_km"] is None, x["distance_km"] if x["distance_km"] is not None else 99999))
 
         if calculated_results:
             nearest = calculated_results[0]
@@ -436,13 +537,12 @@ class AssistantFunctions:
                 f"Address: {nearest['address']}",
             ]
             if len(calculated_results) > 1:
-                response_lines.append("\nOther Locations:")
+                response_lines.append("\nOther Available Locations:")
                 for b in calculated_results[1:]:
                     d_str = f" ({b['distance_km']} km)" if b["distance_km"] is not None else ""
                     response_lines.append(f"• {b['name']}{d_str} - {b['address']}")
             return "\n".join(response_lines)
 
-        # Fallback response if no branches registered in DB
         if self.call_state is not None:
             self.call_state["selected_location"] = user_location_str
         return f"Location '{user_location_str}' recorded for appointment scheduling."
@@ -462,6 +562,7 @@ class AssistantFunctions:
         product_service: Annotated[Optional[str], "Optional product or healthcare service (e.g. 'General Physician Consultation', 'Cardiology Checkup')."] = None,
         location: Annotated[Optional[str], "Optional hospital/clinic branch location (e.g. 'City Central Hospital', 'Metro Care Specialty Clinic')."] = None,
     ) -> str:
+        await self._try_auto_extend("Lead generation: appointment availability check")
         org_id = None
         caller_phone = None
 

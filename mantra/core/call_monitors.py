@@ -49,7 +49,7 @@ async def positive_intent_monitor(cc: CallContext):
     await asyncio.sleep(5.0)
     while cc.ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
         try:
-            if cc.call_state.get("is_inbound") or cc.call_state.get("duration_extended"):
+            if cc.call_state.get("duration_extended"):
                 await asyncio.sleep(2.0)
                 continue
             elapsed = asyncio.get_event_loop().time() - cc.entrypoint_start_time
@@ -237,7 +237,7 @@ async def call_limiter(cc: CallContext):
                 return
 
         def _targets():
-            ext = bool(cc.call_state.get("duration_extended") and not cc.call_state.get("is_inbound"))
+            ext = bool(cc.call_state.get("duration_extended"))
             return current_limits(ext)
 
         elapsed = asyncio.get_event_loop().time() - cc.entrypoint_start_time
@@ -281,7 +281,7 @@ async def call_limiter(cc: CallContext):
                         await cc.agent.update_instructions(current_inst + "\n\n" + farewell_inst)
                     logger.info("Farewell instructions set.")
                     for _ in range(25):
-                        if cc.call_state.get("duration_extended") and not cc.call_state.get("is_inbound"):
+                        if cc.call_state.get("duration_extended"):
                             logger.info("[CALL_LIMITER] Farewell wait interrupted — call extended")
                             farewell_done = False
                             cc.call_state["farewell_triggered"] = False

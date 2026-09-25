@@ -282,8 +282,6 @@ async def entrypoint(ctx: JobContext):
         kb_tags=kb_tags_list,
         call_state=call_state,
     )
-    if call_state.get("org_id"):
-        create_bg_task(fnc_ctx._load_department_options(call_state["org_id"]))
     create_bg_task(fnc_ctx.warmup())
 
     # Session ID for S3 key naming

@@ -1,8 +1,16 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)  
-> **Last Updated:** 2026-09-23  
+> **Last Updated:** 2026-09-25  
 > **Status:** Active maintenance, Products/Services & Geopy Location Appointment Workflow
+
+- [x] **Lead Generation 5-Minute Call Extension & `end_call` Guardrails (2026-09-25):** Removed restrictive `is_inbound` checks in `mantra/call_duration.py` and `mantra/core/call_monitors.py` so both inbound and outbound calls extend to 5 minutes (300s) upon positive lead intent. Added automatic `_try_auto_extend` execution in `clarify_product_service`, `find_nearest_location`, and `check_doctor_availability`. Added safety check in `end_call` and `mantra/prompts.py` to prevent premature call disconnection when a caller requests or agrees to book an appointment. Files: `mantra/call_duration.py`, `mantra/core/call_monitors.py`, `mantra/core/assistant_functions.py`, `mantra/prompts.py`.
+
+- [x] **Location Tool Dynamic Fetch & Prompt Directive Fix (2026-09-25):** Made `user_address_or_area` optional in `find_nearest_location` (`user_address_or_area=""`) so general location queries (e.g. *"where are your branches available"*) invoke `GET /v1/webhooks/mcp/locations?org_id={org_id}` to retrieve dynamic locations. Reinforced prompt directive in `mantra/prompts.py` to enforce `find_nearest_location` tool execution instead of reading static locations from upfront KB text. Files: `mantra/core/assistant_functions.py`, `mantra/prompts.py`.
+
+- [x] **Client Recognition Lead Endpoint Integration (2026-09-25):** Updated `recognize_client` in `livekit-mcp` to query `GET /v1/webhooks/mcp/lead?org_id={org_id}&phone_number={phone_number}` as requested by backend team, extracting `client_name` and full `client_metadata` (`ai_summaries` + `custom_fields`). Updated `MANTRAASSIST_BACKEND_URL` in `livekit-mcp/.env`. Files: `livekit-mcp/src/livekit_mcp/clients/backend_client.py`, `livekit-mcp/.env`.
+
+- [x] **JWT Secret Synchronization & Mantra Auth Fix (2026-09-25):** Synchronized `JWT_SECRET` (`fecceea3e629c131c7340e820da8f52d`) across `lkt/.env.local`, `lkt/.env`, `livekit-mcp/.env`, and `mantra-auth/.env`. Fixed OAuth token URL path in `mantra/mcp_client.py` from `/oauth/token` to `/api/oauth/token` to resolve HTTP 404 errors. Files: `mantra/mcp_client.py`, `lkt/.env.local`, `lkt/.env`, `mantra-auth/.env`, `livekit-mcp/.env`.
 
 - [x] **Products/Services & Geopy Location Appointment Workflow (2026-09-23):** Shifted appointment mapping from departments to Products/Services (`get_org_products_services`, `clarify_product_service`), added `find_nearest_location(user_address_or_area, org_id)` tool using `geopy` distance calculation to find closest hospital branches, and updated `check_doctor_availability` / `receive_doctor_availability` to filter and return location-specific doctor shift schedules. Captured `product_service` and `location` in post-call `appointment_metadata` for webhooks. Files: `mantra/core/assistant_functions.py`, `mantra/agent.py`, `mantra/prompts.py`, `mantra/utils.py`, `mantra/core/finalize.py`, `livekit-mcp/src/livekit_mcp/tools/products_services.py`, `livekit-mcp/src/livekit_mcp/tools/doctor_availability.py`.
 
