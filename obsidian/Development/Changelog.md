@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-09-26
+
+### Merge Conflict Resolution
+
+- **fix:** Resolved merge conflict in `mantra/agent.py` by maintaining the modular `await asyncio.shield(finalize(cc, history_snapshot))` delegation to `mantra.core.finalize`.
+- **Files:** `mantra/agent.py`, `obsidian/Development/Changelog.md`.
+
 ## 2026-09-25
 
 ### Integration of Backend Services & Locations API Endpoints & Bug Fixes
