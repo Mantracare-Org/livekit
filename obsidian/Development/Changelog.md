@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-26
+
+### Inbound Call 5-Minute Duration Limit
+
+- **feat:** Inbound calls now run for 5 minutes (270s farewell warning / 300s hard limit) instead of 3 minutes (180s).
+- **feat:** Configured `CALL_INBOUND_FAREWELL_SECONDS` (default `270`) and `CALL_INBOUND_HARD_LIMIT_SECONDS` (default `300`) environment variables.
+- **Files:** `mantra/call_duration.py`, `mantra/agent.py`.
+
 ## 2026-09-21
 
 ### Zadarma Inbound SIP Domain Resolution Fix

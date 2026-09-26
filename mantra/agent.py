@@ -142,6 +142,8 @@ from mantra.call_duration import (
     BASE_HARD_LIMIT_SECONDS as CALL_BASE_HARD_LIMIT_SECONDS,
     EXTENDED_FAREWELL_SECONDS as CALL_EXTENDED_FAREWELL_SECONDS,
     EXTENDED_HARD_LIMIT_SECONDS as CALL_EXTENDED_HARD_LIMIT_SECONDS,
+    INBOUND_FAREWELL_SECONDS as CALL_INBOUND_FAREWELL_SECONDS,
+    INBOUND_HARD_LIMIT_SECONDS as CALL_INBOUND_HARD_LIMIT_SECONDS,
     current_limits,
     extend_call,
 )
@@ -2026,7 +2028,7 @@ Follow these specific instructions:
             except Exception as e:
                 logger.info(f"Farewell safety net error: {e}")
 
-    # Call duration limiter logic — supports 3m default to 5m extension on positive intent (outbound only)
+    # Call duration limiter logic — 3m default for outbound (extendable to 5m on positive intent) and 5m for inbound
     async def call_limiter():
         logger.info("[DIAG] call_limiter: Started — waiting for remote participant to join.")
         _force_disconnect_cancelled = call_state.get("_force_disconnect_cancelled")
@@ -2042,7 +2044,8 @@ Follow these specific instructions:
 
             def _targets():
                 ext = bool(call_state.get("duration_extended") and not call_state.get("is_inbound"))
-                return current_limits(ext)
+                is_inbound = bool(call_state.get("is_inbound"))
+                return current_limits(ext, is_inbound=is_inbound)
 
             elapsed = asyncio.get_event_loop().time() - entrypoint_start_time
             farewell_target, hard_target = _targets()

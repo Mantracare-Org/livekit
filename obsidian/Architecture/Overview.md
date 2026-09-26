@@ -12,7 +12,7 @@ Modular, asynchronous, multi-process architecture based on Python `asyncio`.
 | Dispatcher | `mantra/dispatcher.py` (~252 lines) | Background loop: pops Redis queue → checks capacity → dispatches to LiveKit + TOS telemetry |
 | UI/API Server | `mantra/ui_server.py` (~4,489 lines) | FastAPI HTTP server: webhooks, SIP trunk management, per-trunk capacity gating, health gate, dashboard APIs, KB ingestion, org config CRUD |
 | MCP Server | `mcp/server.py` (~1,073 lines, legacy local) + remote `livekit-mcp` (SSE/OAuth) | Local: PostgreSQL tools (patients, doctors, appointments, call logs). Live: `receive_doctor_availability`, `get_org_departments`, `fetch_org_processes`, `recognize_client` via `MantraMCPClient` (`mantra/mcp_client.py`) |
-| Call Duration | `mantra/call_duration.py` | Base limits 150s farewell / 180s hard; outbound positive-intent extension to 270s / 300s |
+| Call Duration | `mantra/call_duration.py` | Outbound base limits 150s farewell / 180s hard (extendable to 270s / 300s on positive intent); Inbound default 270s farewell / 300s hard (5 min) |
 | Positive Intent | `mantra/positive_intent.py` | Heuristic outbound monitor that triggers the 3m → 5m extension |
 
 ## System Diagram
