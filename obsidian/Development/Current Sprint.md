@@ -1,9 +1,10 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)  
-> **Last Updated:** 2026-09-10  
-> **Status:** Active maintenance, Doctor Availability Tool Integration, Org Processes & Stages MCP Tool, Inbound Post-Call Integration, Inbound SIP Lifecycle
+> **Last Updated:** 2026-09-29  
+> **Status:** Active maintenance, Doctor Availability Tool Integration, Org Processes & Stages MCP Tool, Inbound Post-Call Integration, Inbound SIP Lifecycle, LLM Latency Optimization
 
+- [x] **DeepSeek LLM Latency Fix (2026-09-29):** Fixed UX delay and intermittent 2-in-5 thinking stalls by replacing invalid DeepSeek model string `deepseek-v4-flash` with the official low-latency `deepseek-chat` (DeepSeek-V3) model. Benchmark showed `deepseek-v4-flash` failed/returned empty string completions in 60% of requests on `api.deepseek.com`, causing LiveKit LLM stream stalls; `deepseek-chat` provides ~500ms TTFT with 100% success rate. Introduced `DEEPSEEK_MODEL` env var in `mantra/agent.py`.
 - [x] **Inbound Call 5-Minute Duration Limit (2026-09-26):** Updated inbound call duration limit from 3 minutes (180s) to 5 minutes (270s farewell / 300s hard limit). Added `CALL_INBOUND_FAREWELL_SECONDS` (270s) and `CALL_INBOUND_HARD_LIMIT_SECONDS` (300s) env vars in `mantra/call_duration.py` and updated `current_limits(ext, is_inbound)` in `mantra/agent.py`.
 - [x] **Zadarma Inbound SIP Domain Fix (2026-09-21):** Corrected `LIVEKIT_SIP_DOMAIN` from stale/invalid `mantraassist-0ek43ife.india.sip.livekit.cloud` to the exact LiveKit Cloud project SIP domain `4mp2ouvchg3.sip.livekit.cloud`. Tested and verified end-to-end Zadarma inbound SIP trunking (`+14313030987`), creating LiveKit Inbound Trunk (`ST_69MYJWQZiong`), Dispatch Rule (`SDR_n8szQLWgAdtQ`), Zadarma REST API forwarding update, and `org_configs` DB persistence.
 - [x] **Inbound SIP Trunk and Dispatch Rule Lifecycle (2026-09-10):** Required an explicit provider with no primary default, validated it before inbound LiveKit provisioning, rolled back newly-created trunk/rule resources when provider forwarding failed, and made inbound trunk deletion remove associated LiveKit dispatch rules and `org_configs` mappings.

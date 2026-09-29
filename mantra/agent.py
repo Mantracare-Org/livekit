@@ -1518,6 +1518,7 @@ Follow these specific instructions:
                     limits=httpx.Limits(max_connections=50, max_keepalive_connections=20, keepalive_expiry=300.0),
                 )
 
+            deepseek_model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
             deepseek_base = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
             client = openai_client.AsyncClient(
                 api_key=deepseek_key,
@@ -1525,7 +1526,7 @@ Follow these specific instructions:
                 http_client=http_client,
             )
             llm_engine = openai.LLM(
-                model="deepseek-v4-flash",
+                model=deepseek_model,
                 client=client,
                 timeout=httpx.Timeout(connect=10.0, read=45.0, write=15.0, pool=15.0),
             )
@@ -1533,10 +1534,10 @@ Follow these specific instructions:
             # Fire background socket pre-warming ping to eliminate initial SSL/TCP handshake latency
             async def _prewarm_deepseek():
                 try:
-                    logger.info("[DEEPSEEK] Pre-warming DeepSeek API connection...")
+                    logger.info(f"[DEEPSEEK] Pre-warming DeepSeek API connection ({deepseek_model})...")
                     pw_start = asyncio.get_event_loop().time()
                     await client.chat.completions.create(
-                        model="deepseek-v4-flash",
+                        model=deepseek_model,
                         messages=[{"role": "user", "content": "hi"}],
                         max_tokens=1,
                     )
@@ -1592,10 +1593,10 @@ Follow these specific instructions:
     if model_name == "deepseek" and 'client' in locals():
         async def _prewarm_deepseek_with_ctx():
             try:
-                logger.info("[DEEPSEEK] Pre-warming KV cache with system prompt...")
+                logger.info(f"[DEEPSEEK] Pre-warming KV cache with system prompt ({deepseek_model})...")
                 pw_start = asyncio.get_event_loop().time()
                 await client.chat.completions.create(
-                    model="deepseek-v4-flash",
+                    model=deepseek_model,
                     messages=[
                         {"role": "system", "content": initial_instructions},
                         {"role": "user", "content": "hi"},

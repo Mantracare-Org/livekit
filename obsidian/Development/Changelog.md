@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-29
+
+### DeepSeek LLM Model Selection & Latency Fix
+
+- **fix:** Resolved intermittent thinking / response latency delays (2 in 5 turns stalled or empty response) by replacing invalid model name `deepseek-v4-flash` with official `deepseek-chat` (DeepSeek-V3).
+- **perf:** Benchmark showed `deepseek-v4-flash` returned empty completion responses (`''`) and failed 60% of requests on `https://api.deepseek.com`, causing LiveKit agent stream stalls; `deepseek-chat` achieved 100% success rate with ~500ms TTFT.
+- **feat:** Added `DEEPSEEK_MODEL` environment variable (default `deepseek-chat`) for live call LLM engine and KV cache pre-warming.
+- **Files:** `mantra/agent.py`.
+
 ## 2026-09-26
 
 ### Inbound Call 5-Minute Duration Limit
