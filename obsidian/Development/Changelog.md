@@ -2,6 +2,14 @@
 
 ## 2026-09-29
 
+### Indian Telephony Voice Prosody & STT Reliability Tuning
+
+- **fix:** Resolved speech recognition drops by isolating English mode from Hindi filler word insertion, preventing STT language switching stalls during English calls.
+- **perf:** Raised Deepgram STT `endpointing_ms` from `100ms` to `250ms`, preventing mid-sentence speech truncations during natural human micro-pauses.
+- **perf:** Tuned Silero VAD parameters (`min_speech_duration=0.12s`, `min_silence_duration=0.30s`) to eliminate false VAD triggers from SIP line static.
+- **feat:** Enhanced system prompts and dynamic language directives for Indian English, Hindi, and Hinglish phone conversations using commas (`,`), ellipses (`...`), and hyphens (`-`) for expressive TTS cadence.
+- **Files:** `mantra/agent.py`, `mantra/language_manager.py`.
+
 ### DeepSeek LLM Model Selection & Latency Fix
 
 - **fix:** Resolved intermittent thinking / response latency delays (2 in 5 turns stalled or empty response) by replacing invalid model name `deepseek-v4-flash` with official `deepseek-chat` (DeepSeek-V3).

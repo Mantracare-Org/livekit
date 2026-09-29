@@ -380,38 +380,41 @@ class LanguageManager:
 
         if self.response_mode == "en":
             return (
-                f"LANGUAGE RULE (PROFESSIONAL ENGLISH — CRITICAL):\n"
+                f"LANGUAGE RULE (PROFESSIONAL ENGLISH PROSODY — CRITICAL):\n"
                 f"- CURRENT DETECTED UTTERANCE LANGUAGE: {lang_name} ({lang_code}).\n"
-                f"- Respond entirely in clear, professional English.\n"
-                f"- Do not add Hindi words, Hinglish fillers, or Devanagari unless the caller explicitly switches languages.\n"
+                f"- Respond in clear, warm English with natural telephone cadence.\n"
+                f"- Use natural speech punctuation: commas (,), ellipses (...), and hyphens (-) for natural breathing pauses so the voice sounds like a live human on a phone call, not a monotone robot.\n"
+                f"- Natural English fillers: 'Got it...', 'Sure...', 'Right...', 'I see...'.\n"
+                f"- Do NOT insert Hindi words or Hinglish fillers when the caller is speaking English.\n"
                 f"- Keep the phone response concise, natural, and polite."
             )
 
         if self.response_mode == "hi":
             return (
-                f"LANGUAGE RULE (HINDI — CRITICAL):\n"
+                f"LANGUAGE RULE (HINDI PROSODY — CRITICAL):\n"
                 f"- CURRENT DETECTED UTTERANCE LANGUAGE: {lang_name} ({lang_code}).\n"
-                f"- Respond in natural Hindi, using Devanagari script.\n"
+                f"- Respond in natural, warm Hindi using Devanagari script.\n"
+                f"- Incorporate warm Indian honorifics and speech pauses: 'हाँ जी...', 'अच्छा...', 'बिलकुल जी', 'जी'.\n"
+                f"- Use commas and ellipses (...) for expressive, human phone cadence.\n"
                 f"- Keep commonly understood English product or medical terms when natural.\n"
                 f"- Keep the phone response concise, natural, and polite."
             )
 
         return (
-            f"LANGUAGE RULE (HINGLISH — CRITICAL):\n"
+            f"LANGUAGE RULE (HINGLISH INDIAN TELEPHONY — CRITICAL):\n"
             f"- CURRENT DETECTED UTTERANCE LANGUAGE: {lang_name} ({lang_code}).\n"
-            f"- ALWAYS speak in natural Hinglish (Hindi + English mixed the way Indians speak on phone calls).\n"
+            f"- ALWAYS speak in natural, expressive Hinglish (Hindi + English mixed the way Indians speak on phone calls).\n"
             f"- Default style: Mix Hindi words + English words in the same sentence. Prefer Hindi sentence structure with English nouns/verbs where it feels natural.\n"
-            f"- Good examples:\n"
-            f'  - "Haan ji, main aapki madad kar sakta hoon. Aapko appointment book karni hai kya?"\n'
-            f'  - "Theek hai, aapko kis location pe prefer karenge — Paschim Vihar ya Noida?"\n'
-            f'  - "Got it. Aapka naam kya hai?"\n'
-            f'  - "Sure, main check karta hoon... aapka preferred time morning hai ya evening?"\n'
+            f"- Good examples with natural Indian phone punctuation:\n"
+            f'  - "Haan ji, main aapki madad karta hoon... aapko appointment book karni hai kya?"\n'
+            f'  - "Theek hai ji... aap kis location ko prefer karenge — Paschim Vihar ya Noida?"\n'
+            f'  - "Got it... aapka naam kya hai?"\n'
+            f'  - "Sure ji, main check karta hoon... aapka preferred time morning hai ya evening?"\n'
+            f"- Use warm Indian conversational markers & fillers: 'Haan ji', 'Theek hai ji', 'Achha...', 'Bilkul', 'Got it...', 'Sure ji', 'Waise...'.\n"
+            f"- Use commas (,) and ellipses (...) for warm micro-pauses so the voice engine produces natural pitch variations and human cadence.\n"
             f"- Avoid pure English sentences and avoid pure Hindi (Devanagari-only) sentences.\n"
-            f"- Use simple everyday words. Prefer Roman script for Hindi words (Hinglish style) so the TTS sounds natural.\n"
-            f'- Fillers that sound natural in Hinglish: "Haan", "Theek hai", "Achha", "Bilkul", "Got it", "Sure", "Okay ji".\n'
-            f"- STRICT: Never switch to any other language (no Marathi, Kannada, Telugu, etc.). Only Hinglish / Hindi-English mix.\n"
-            f"- If the caller speaks pure English, still reply in light Hinglish (do not switch to pure English).\n"
-            f"- If the caller speaks pure Hindi, reply in Hinglish (do not go full Devanagari)."
+            f"- Use simple everyday words. Prefer Roman script for Hindi words so the TTS engine pronounces them naturally.\n"
+            f"- STRICT: Never switch to any other language. Only Hinglish / Hindi-English mix."
         )
 
 

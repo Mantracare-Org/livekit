@@ -1322,10 +1322,16 @@ PRONUNCIATION (CRITICAL):
 - ALWAYS write the brand name as "MantraCare" (single word). NEVER "Mantra Care".
 - ALWAYS write "MantraAssist" (single word). NEVER "Mantra Assist".
 
-PROSODY AND TONE (CRITICAL):
-- DO NOT use exclamation marks (!) or ALL CAPS.
-- Use only periods and commas. The voice engine treats ! and CAPS as shouting.
-- Write: "Hello." not "HELLO!" | "Great." not "Great!"
+PROSODY AND INDIAN PHONE PROSODY (CRITICAL):
+- SPEAK LIKE A LIVE HUMAN ON AN INDIAN PHONE CALL: Use expressive Indian speech rhythm and natural phone mannerisms.
+- NATURAL PUNCTUATION FOR EXPRESSIVE VOICE ENGINE:
+  * Use commas (,) for brief breathing pauses and warm cadence.
+  * Use ellipses (...) for natural micro-thinking pauses (e.g. "Haan ji... main check karta hoon.", "Got it... let me see.").
+  * Use hyphens (-) for conversational thought breaks.
+  * Avoid ALL CAPS or multiple exclamation marks (!!!) which cause shouting pitch spikes.
+- INDIAN CONVERSATIONAL FILLERS & HONORIFICS:
+  * Sprinkle warm Indian markers naturally: "Haan ji", "Achha", "Sure ji", "Got it", "Right ji", "Toh...", "Waise...".
+  * Sound warm, caring, and conversational — never robotic or monotone.
 
 Follow these specific instructions:
 """
@@ -1431,6 +1437,7 @@ Follow these specific instructions:
             initial_instructions += "4. If the user asks to speak to a human or asks to be transferred — apologize and explain that human transfer is currently unavailable. Do not promise transfer, and if they insist, politely end the call.\n"
             initial_instructions += "5. LANGUAGE CONSISTENCY: Always respond in the caller's current conversational language as specified in the CURRENT CONVERSATIONAL LANGUAGE directive.\n"
             initial_instructions += "6. NO SEARCH FILLERS: When retrieving information from the knowledge base, NEVER say 'Let me check that for you', 'Let me look that up', or any filler phrases. Execute the search silently and speak the final answer directly.\n"
+            initial_instructions += "7. INDIAN TELEPHONY PROSODY: Use natural speech punctuation (commas, ellipses '...', and hyphens) and warm Indian honorifics/fillers ('Haan ji...', 'Achha...', 'Sure ji...', 'Got it...') to make spoken responses sound warm, expressive, and like a live human on an Indian phone call. Never sound monotone or robotic.\n"
 
 
             if is_inbound:
@@ -1658,7 +1665,7 @@ Follow these specific instructions:
         "smart_format": True,
         "punctuate": True,
         "numerals": True,
-        "endpointing_ms": 100,
+        "endpointing_ms": 250,
         "no_delay": True,
     }
     if dynamic_keyterms:
@@ -1672,8 +1679,8 @@ Follow these specific instructions:
             turn_detection=inference.TurnDetector(),
             endpointing={
                 "mode": "dynamic",
-                "min_delay": 0.10,
-                "max_delay": 0.80,
+                "min_delay": 0.15,
+                "max_delay": 1.0,
             },
             interruption={
                 "mode": "vad",
@@ -1690,9 +1697,9 @@ Follow these specific instructions:
             },
         ),
         vad=silero.VAD.load(
-            min_speech_duration=0.08,
-            min_silence_duration=0.25,
-            prefix_padding_duration=0.10,
+            min_speech_duration=0.12,
+            min_silence_duration=0.30,
+            prefix_padding_duration=0.15,
         ),
         stt=stt_engine,
         llm=llm_engine,
