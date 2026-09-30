@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-30
+
+### Model Speed & Clean MCP Modular Architecture Integration
+
+- **merge:** Integrated `feature/doc-location` (clean MCP modular architecture) and `master` into `change/model`.
+- **feat:** Configured `DEEPSEEK_MODEL` env var (default `deepseek-chat`) in `mantra/core/engines.py` to eliminate LLM response stalls.
+- **perf:** Configured Deepgram STT `endpointing_ms` to `250ms` in `mantra/core/engines.py` and calibrated Silero VAD parameters for telephony.
+- **Files:** `mantra/core/engines.py`, `mantra/core/call_monitors.py`, `mantra/agent.py`, `obsidian/Development/Changelog.md`.
+
 ## 2026-09-29
 
 ### Indian Telephony Voice Prosody & STT Reliability Tuning
