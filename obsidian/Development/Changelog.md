@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-09-30
+
+### Model Speed & Clean MCP Modular Architecture Integration
+
+- **merge:** Integrated `feature/doc-location` (clean MCP modular architecture) and `master` into `change/model`.
+- **feat:** Configured `DEEPSEEK_MODEL` env var (default `deepseek-chat`) in `mantra/core/engines.py` to eliminate LLM response stalls.
+- **perf:** Configured Deepgram STT `endpointing_ms` to `250ms` in `mantra/core/engines.py` and calibrated Silero VAD parameters for telephony.
+- **Files:** `mantra/core/engines.py`, `mantra/core/call_monitors.py`, `mantra/agent.py`, `obsidian/Development/Changelog.md`.
+
+## 2026-09-29
+
+### Indian Telephony Voice Prosody & STT Reliability Tuning
+
+- **fix:** Resolved speech recognition drops by isolating English mode from Hindi filler word insertion, preventing STT language switching stalls during English calls.
+- **perf:** Raised Deepgram STT `endpointing_ms` from `100ms` to `250ms`, preventing mid-sentence speech truncations during natural human micro-pauses.
+- **perf:** Tuned Silero VAD parameters (`min_speech_duration=0.12s`, `min_silence_duration=0.30s`) to eliminate false VAD triggers from SIP line static.
+- **feat:** Enhanced system prompts and dynamic language directives for Indian English, Hindi, and Hinglish phone conversations using commas (`,`), ellipses (`...`), and hyphens (`-`) for expressive TTS cadence.
+- **Files:** `mantra/agent.py`, `mantra/language_manager.py`.
+
+### DeepSeek LLM Model Selection & Latency Fix
+
+- **fix:** Resolved intermittent thinking / response latency delays (2 in 5 turns stalled or empty response) by replacing invalid model name `deepseek-v4-flash` with official `deepseek-chat` (DeepSeek-V3).
+- **perf:** Benchmark showed `deepseek-v4-flash` returned empty completion responses (`''`) and failed 60% of requests on `https://api.deepseek.com`, causing LiveKit agent stream stalls; `deepseek-chat` achieved 100% success rate with ~500ms TTFT.
+- **feat:** Added `DEEPSEEK_MODEL` environment variable (default `deepseek-chat`) for live call LLM engine and KV cache pre-warming.
+- **Files:** `mantra/agent.py`.
+
 ## 2026-09-26
 
 ### Inbound Call 5-Minute Duration Limit
@@ -8,20 +34,44 @@
 - **feat:** Configured `CALL_INBOUND_FAREWELL_SECONDS` (default `270`) and `CALL_INBOUND_HARD_LIMIT_SECONDS` (default `300`) environment variables.
 - **Files:** `mantra/call_duration.py`, `mantra/agent.py`.
 
-## 2026-09-21
+## 2026-09-26
 
-### Zadarma Inbound SIP Domain Resolution Fix
+### Merge Conflict Resolution
 
-- **fix:** Fixed invalid `LIVEKIT_SIP_DOMAIN` setting (`mantraassist-0ek43ife.india.sip.livekit.cloud`) in `.env` by updating to the exact LiveKit Cloud project SIP domain (`4mp2ouvchg3.sip.livekit.cloud`).
-- **fix:** Verified end-to-end inbound Zadarma SIP trunking (`+14313030987`), successfully creating LiveKit Inbound Trunk (`ST_69MYJWQZiong`), Dispatch Rule (`SDR_n8szQLWgAdtQ`), updating Zadarma API forwarding, and storing configuration in `org_configs`.
-- **Files:** `.env`, `obsidian/Development/Changelog.md`, `obsidian/Development/Current Sprint.md`.
+- **fix:** Resolved merge conflict in `mantra/agent.py` by maintaining the modular `await asyncio.shield(finalize(cc, history_snapshot))` delegation to `mantra.core.finalize`.
+- **Files:** `mantra/agent.py`, `obsidian/Development/Changelog.md`.
 
-## 2026-09-19
+## 2026-09-25
 
-### Drop call_intent From Webhook Payloads
+### Integration of Backend Services & Locations API Endpoints & Bug Fixes
 
-- **fix:** Inbound (`CALL_DATA_INBOUND_UPDATE`) and outbound (`CALL_DATA_UPDATE`) webhook payloads now send only `user_intent`; `call_intent` removed.
-- **Files:** `mantra/agent.py`.
+- **fix:** Fixed `AttributeError: type object 'datetime.datetime' has no attribute 'datetime'` in `mantra/utils.py` by replacing shadowed `datetime.datetime` references with `datetime.now()`.
+- **fix:** Removed stale `fnc_ctx._load_department_options` background call in `mantra/agent.py` entrypoint.
+- **feat:** Integrated `GET /v1/webhooks/mcp/services?org_id={org_id}` into `livekit-mcp` backend client to fetch organization-specific service offerings.
+- **feat:** Integrated `GET /v1/webhooks/mcp/locations?org_id={org_id}&caller_lat={lat}&caller_lng={lng}` into `find_nearest_location` Python function tool. Automatically geocodes caller address/whereabouts via `geopy`, sends `caller_lat` and `caller_lng` to backend API, and utilizes pre-calculated `distance_km` (or falls back to geodesic distance calculation) to return closest hospital branches.
+- **fix:** Synchronized `JWT_SECRET` in `lkt/.env.local` and `lkt/.env` to `fecceea3e629c131c7340e820da8f52d`, aligning with `mantra-auth` and `livekit-mcp` to resolve JWT verification errors (`invalid signature`) during token introspection.
+- **fix:** Updated OAuth token URL in `mantra/mcp_client.py` to route to `/api/oauth/token` instead of `/oauth/token`, resolving HTTP 404 Not Found errors from Next.js `mantra-auth`.
+- **feat:** Updated `recognize_client` in `livekit-mcp/src/livekit_mcp/clients/backend_client.py` to query `GET /v1/webhooks/mcp/lead?org_id={org_id}&phone_number={phone_number}` (with fallback to `POST /v1/webhooks/client-recognition`), correctly parsing `client_name` and `client_metadata` (`ai_summaries` + `custom_fields`). Updated `MANTRAASSIST_BACKEND_URL` in `livekit-mcp/.env`.
+- **feat:** Added `get_org_products_services` and `get_org_locations` as official MCP tools in `livekit-mcp/src/livekit_mcp/tools/products_services.py` and registered them in `server.py`.
+- **feat:** Refactored `clarify_product_service` and `find_nearest_location` in `mantra/core/assistant_functions.py` to execute `get_org_products_services` and `get_org_locations` over **MCP SSE JSON-RPC protocol via `MantraMCPClient`**, surfacing tool calls directly in `livekit-mcp` logs.
+- **feat:** Added call duration extension to 5 minutes (300 seconds) for both inbound and outbound calls upon positive intent and lead generation triggers (`clarify_product_service`, `find_nearest_location`, `check_doctor_availability`).
+- **fix:** Removed restrictive `is_inbound` checks in `mantra/call_duration.py` (`is_extendable`) and `mantra/core/call_monitors.py` (`positive_intent_monitor` and `call_limiter`), allowing inbound appointment leads to extend call time to 5 minutes seamlessly.
+- **fix:** Added guardrails against premature `end_call` invocation in `mantra/core/assistant_functions.py` and `mantra/prompts.py`. If the LLM attempts to call `end_call` while the user is requesting or agreeing to an appointment/lead booking, `end_call` is blocked with a helpful system feedback string, auto-extending the call duration to 5 minutes so appointment booking can complete.
+- **Files:** `mantra/call_duration.py`, `mantra/core/call_monitors.py`, `mantra/core/assistant_functions.py`, `mantra/prompts.py`, `obsidian/Development/Changelog.md`.
+
+## 2026-09-12
+
+### Monolith Split — Modular Packages Refactor
+
+- **refactor:** Split `mantra/ui_server.py` (4,489 lines) into an app-assembly shim plus generated packages `mantra/dependencies/`, `mantra/services/`, and `mantra/routers/`; route table verified byte-identical to baseline (59 routes, sorted set diff clean).
+- **refactor:** Split `mantra/agent.py` (3,012 lines) into an orchestration shim backed by `mantra/core/` (`common`, `engines`, `inbound`, `assistant_functions`, `live_agent`, `call_monitors`, `finalize`, `room_control`) and `mantra/prompts.py`.
+- **key fix:** `ui_server.py` shim now runs `load_dotenv(".env.local")` before mantra imports so `JWT_SECRET` (defined in `.env.local`) is available to `dependencies.auth` at import time.
+- **key fix:** Route enumeration accounts for FastAPI's lazy `_IncludedRouter`; recursion into `original_router.routes` yields the exact 59-route baseline.
+- **behavior preserved:** OTEL suppression, PID-format logging, `base/dynamic` runtime prompt building (including the intentionally unused `context_header`/`context_body` block and literal-base no-metadata path), DeepSeek KV pre-warm, inbound context resolution, client recognition, AMD, all monitors (positive-intent, transcript+keyterm+language, inactivity, farewell safety net, call limiter), and shielded `finalize()`.
+- **verification:** `py_compile` passes for all modules; `import mantra.agent` and `import mantra.ui_server` boot cleanly; 59-route diff matches baseline.
+- **Files:** `mantra/ui_server.py`, `mantra/agent.py`, `mantra/prompts.py`, `mantra/core/*.py`, `mantra/{routers,services,dependencies}/*`.
+
+## 2026-09-10
 
 ### Organization-Agnostic Symptom Clarification
 

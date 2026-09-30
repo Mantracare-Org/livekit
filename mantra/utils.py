@@ -12,7 +12,7 @@ import httpx
 import numpy as np
 import asyncpg
 from typing import Dict, List, Optional, Union
-
+from datetime import datetime, timezone
 from livekit import rtc
 from livekit.agents import llm, APIConnectOptions
 import boto3
@@ -343,7 +343,7 @@ async def send_to_backend(payload: dict, max_retries: int = 3, force: bool = Fal
 
     timestamp = str(int(time.time()))
 
-    timestamp_iso = datetime.datetime.utcfromtimestamp(int(timestamp)).strftime("%Y-%m-%dT%H:%M:%S")
+    timestamp_iso = datetime.fromtimestamp(int(timestamp), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
     if not payload:
         payload_str = '{}'
@@ -546,7 +546,7 @@ class SessionRecorder:
     def __init__(self):
         self._tracks: Dict[str, List[bytes]] = {}
         self._recording_tasks: List[asyncio.Task] = []
-        self.start_time = datetime.datetime.now()
+        self.start_time = datetime.now()
         self.end_time = None
         self.recording_duration_seconds = 0.0
 
@@ -575,7 +575,7 @@ class SessionRecorder:
             await audio_stream.aclose()
 
     async def stop_recording(self):
-        self.end_time = datetime.datetime.now()
+        self.end_time = datetime.now()
         cancelled = []
         for task in self._recording_tasks:
             if not task.done():
@@ -586,7 +586,7 @@ class SessionRecorder:
         self._recording_tasks.clear()
 
     def get_combined_mp3_bytes(self) -> bytes:
-        self.end_time = datetime.datetime.now()
+        self.end_time = datetime.now()
         if not self._tracks:
             return b""
 
@@ -744,7 +744,7 @@ class SessionRecorder:
                 transcript_lines.append(f"{role_label}: {content}")
         transcript_text = "\n".join(transcript_lines)
 
-        current_time = datetime.datetime.now()
+        current_time = datetime.now()
         current_time_str = current_time.strftime("%Y-%m-%d %H:%M:%S")
 
         process_blocks = []
@@ -831,6 +831,8 @@ You MUST return your response as a valid JSON object with the following schema:
   "appointment_metadata": {{
     "provider_user_id": integer or null,
     "provider_name": "string or null",
+    "product_service": "string or null",
+    "location": "string or null",
     "preferred_datetime": "string or null",
     "appointment_title": "string or null",
     "appointment_notes": "string or null"
@@ -1065,27 +1067,27 @@ def normalize_datetime(dt_str: Optional[str], default_tz_str: str = "Asia/Kolkat
     val_clean = val.replace(" ", "T")
     try:
         if val_clean.endswith("Z"):
-            dt = datetime.datetime.fromisoformat(val_clean[:-1]).replace(tzinfo=datetime.timezone.utc)
+            dt = datetime.fromisoformat(val_clean[:-1]).replace(tzinfo=timezone.utc)
             return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        dt = datetime.datetime.fromisoformat(val_clean)
+        dt = datetime.fromisoformat(val_clean)
         if dt.tzinfo is None:
             try:
                 local_tz = zoneinfo.ZoneInfo(default_tz_str)
             except Exception:
                 local_tz = zoneinfo.ZoneInfo("Asia/Kolkata")
             dt = dt.replace(tzinfo=local_tz)
-        dt_utc = dt.astimezone(datetime.timezone.utc)
+        dt_utc = dt.astimezone(timezone.utc)
         return dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
     except Exception:
         pass
 
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
         try:
-            dt = datetime.datetime.strptime(val, fmt)
+            dt = datetime.strptime(val, fmt)
             local_tz = zoneinfo.ZoneInfo(default_tz_str)
             dt = dt.replace(tzinfo=local_tz)
-            dt_utc = dt.astimezone(datetime.timezone.utc)
+            dt_utc = dt.astimezone(timezone.utc)
             return dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
         except Exception:
             continue

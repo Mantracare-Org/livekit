@@ -21,9 +21,7 @@ def current_limits(extended: bool, is_inbound: bool = False) -> tuple[int, int]:
     return BASE_FAREWELL_SECONDS, BASE_HARD_LIMIT_SECONDS
 
 
-def is_extendable(*, is_inbound: bool, already_extended: bool, elapsed: float) -> bool:
-    if is_inbound:
-        return False
+def is_extendable(*, is_inbound: bool = False, already_extended: bool = False, elapsed: float = 0.0) -> bool:
     if already_extended:
         return False
     if elapsed >= EXTENDED_HARD_LIMIT_SECONDS - 5:
