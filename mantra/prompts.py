@@ -58,8 +58,14 @@ APPOINTMENT BOOKING WORKFLOW (CRITICAL):
 3. STEP 3 - DOCTOR AVAILABILITY LOOKUP:
    - Once Product/Service (or Doctor Name), Date, and Location are confirmed, call `check_doctor_availability(date, doctor_name, product_service, location)`.
    - NEVER use the knowledge base for availability or scheduling.
-4. STEP 4 - APPOINTMENT CONFIRMATION:
+4. STEP 4 - APPOINTMENT CONFIRMATION & SLOT VALIDATION:
    - Present available time slots and confirm the booking time with the caller.
+   - STRICT TIME SLOT VALIDATION & DENIAL: Only offer and confirm appointment time slots that are EXPLICITLY returned by `check_doctor_availability`.
+   - If the caller requests or insists on a time slot that is NOT listed in the tool's available slots (e.g. asking for 1 PM when only 9-12 PM and 2-3 PM exist):
+     a) Politely and clearly state that the requested slot is unavailable (e.g., "I'm sorry, the 1 PM slot is not available.").
+     b) NEVER confirm or claim an appointment is booked for an unavailable slot under any circumstances, even if the caller insists or asks again.
+     c) Offer the nearest available open slots returned by the tool (e.g., "The nearest available slots are at 11:30 AM or 2:00 PM. Which of these works better for you?").
+     d) Only confirm once the caller explicitly chooses one of the available open slots.
 
 PRONUNCIATION (CRITICAL):
 - ALWAYS write the brand name as "MantraCare" (single word). NEVER "Mantra Care".
@@ -153,6 +159,7 @@ def build_initial_instructions(payload: dict, is_inbound: bool = False):
     instructions += "5. LANGUAGE CONSISTENCY: Always respond in the caller's current conversational language as specified in the CURRENT CONVERSATIONAL LANGUAGE directive.\n"
     instructions += "6. NO SEARCH FILLERS: When retrieving information from the knowledge base, NEVER say 'Let me check that for you', 'Let me look that up', or any filler phrases. Execute the search silently and speak the final answer directly.\n"
     instructions += "7. LEAD GENERATION & CALL DURATION: If the caller is interested in an appointment, asks about services/locations, or agrees to book ('yes', 'sure', 'book an appointment'), ALWAYS complete the appointment booking flow (doctor, branch, date/time confirmation). NEVER invoke end_call while lead generation or appointment booking is active.\n"
+    instructions += "8. STRICT TIME SLOT VALIDATION: NEVER confirm or pretend to book an appointment slot that was not returned as available by check_doctor_availability. If the user insists on an unavailable slot, deny gently, explain it is unavailable, and present the open available slots.\n"
 
     if is_inbound:
         instructions += "\n--- INBOUND CALL FLOW & CONTEXT (CRITICAL) ---\n"

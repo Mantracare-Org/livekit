@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-01
+
+### Strict Appointment Time Slot Validation & Denial Prompt Rules
+
+- **fix:** Added strict time slot validation & denial rules to `APPOINTMENT BOOKING WORKFLOW (CRITICAL)` Step 4 and `CRITICAL OVERRIDING RULES` Rule 8 in `mantra/prompts.py`. Prevents live AI agent from hallucinating confirmations for unlisted/unavailable slots (e.g., confirming 1 PM when schedule only has 9–12 PM & 2–3 PM). The agent now explicitly denies unavailable slots gently, presents available open slots, and only confirms when an available slot is selected.
+- **Files:** `mantra/prompts.py`, `obsidian/Development/Changelog.md`, `obsidian/Development/Current Sprint.md`.
+
 ## 2026-09-30
 
 ### Model Speed & Clean MCP Modular Architecture Integration

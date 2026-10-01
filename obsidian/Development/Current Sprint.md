@@ -1,8 +1,10 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)  
-> **Last Updated:** 2026-09-25  
-> **Status:** Active maintenance, Products/Services & Geopy Location Appointment Workflow
+> **Last Updated:** 2026-10-01  
+> **Status:** Active maintenance, Appointment Time Slot Validation & Denial Prompt Rules
+
+- [x] **Strict Appointment Time Slot Validation & Denial Prompt Rules (2026-10-01):** Added strict time slot validation & denial rules to `APPOINTMENT BOOKING WORKFLOW (CRITICAL)` Step 4 and `CRITICAL OVERRIDING RULES` Rule 8 in `mantra/prompts.py`. Prevents live AI agent from hallucinating confirmations for unlisted/unavailable slots (e.g., confirming 1 PM when schedule only has 9–12 PM & 2–3 PM). The agent now explicitly denies unavailable slots gently, presents available open slots, and only confirms when an available slot is selected. Files: `mantra/prompts.py`.
 
 - [x] **Lead Generation 5-Minute Call Extension & `end_call` Guardrails (2026-09-25):** Removed restrictive `is_inbound` checks in `mantra/call_duration.py` and `mantra/core/call_monitors.py` so both inbound and outbound calls extend to 5 minutes (300s) upon positive lead intent. Added automatic `_try_auto_extend` execution in `clarify_product_service`, `find_nearest_location`, and `check_doctor_availability`. Added safety check in `end_call` and `mantra/prompts.py` to prevent premature call disconnection when a caller requests or agrees to book an appointment. Files: `mantra/call_duration.py`, `mantra/core/call_monitors.py`, `mantra/core/assistant_functions.py`, `mantra/prompts.py`.
 
