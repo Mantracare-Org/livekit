@@ -9,22 +9,14 @@ from mantra.services import clients as _svc_clients
 from mantra.services.clients import AGENT_NAME
 from mantra.services.telephony import _get_provider_from_trunk
 from mantra.utils import report_telemetry, save_call_event, send_to_backend
+from mantra.logging_config import get_logger
 import asyncio
 import json
 import os
 import time
 import traceback
 
-import logging
-import sys
-
-logger = logging.getLogger("mantra.telephony")
-logger.setLevel(logging.INFO)
-_handler = logging.StreamHandler(sys.stdout)
-_handler.setFormatter(logging.Formatter("%(asctime)s INFO %(name)s: %(message)s"))
-if not logger.handlers:
-    logger.addHandler(_handler)
-logger.propagate = False
+logger = get_logger("mantra.telephony")
 router = APIRouter()
 
 @router.post("/dispatch-test")

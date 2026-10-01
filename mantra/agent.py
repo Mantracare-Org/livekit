@@ -34,16 +34,18 @@ os.environ.pop("http_proxy", None)
 _is_inference = os.getenv("LIVEKIT_AGENTS_INFERENCE") == "1"
 _proc_type = "Inference Subprocess" if _is_inference else "Main Worker"
 
-_handler = logging.StreamHandler(sys.stdout)
-_handler.setFormatter(
-    logging.Formatter(
-        f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s"
-    )
-)
+from mantra.logging_config import configure_root_logger, get_logger
 
+configure_root_logger(level=logging.DEBUG)
+logger = get_logger("mantra.agent")
 
-logging.basicConfig(level=logging.DEBUG, handlers=[_handler])
-logger = logging.getLogger("mantra.agent")
+# Add process type to log format
+for handler in logger.handlers:
+    handler.setFormatter(logging.Formatter(
+        f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    ))
+
 logging.getLogger("livekit.agents").setLevel(logging.DEBUG)
 logger.info("Initializing process...")
 

@@ -44,13 +44,10 @@ from mantra.routers import (
 from mantra.routers.pages import STATIC_DIR
 
 
-logger = logging.getLogger("mantra.ui_server")
-logger.setLevel(logging.INFO)
-_handler = logging.StreamHandler(sys.stdout)
-_handler.setFormatter(logging.Formatter("%(asctime)s INFO %(name)s: %(message)s"))
-if not logger.handlers:
-    logger.addHandler(_handler)
-logger.propagate = True
+from mantra.logging_config import configure_root_logger, get_logger
+
+configure_root_logger()
+logger = get_logger("mantra.ui_server")
 
 
 @asynccontextmanager
