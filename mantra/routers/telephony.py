@@ -16,8 +16,15 @@ import time
 import traceback
 
 import logging
+import sys
 
 logger = logging.getLogger("mantra.telephony")
+logger.setLevel(logging.INFO)
+_handler = logging.StreamHandler(sys.stdout)
+_handler.setFormatter(logging.Formatter("%(asctime)s INFO %(name)s: %(message)s"))
+if not logger.handlers:
+    logger.addHandler(_handler)
+logger.propagate = False
 router = APIRouter()
 
 @router.post("/dispatch-test")
