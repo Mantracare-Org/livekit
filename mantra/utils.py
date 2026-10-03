@@ -654,10 +654,13 @@ class SessionRecorder:
     @staticmethod
     async def generate_summary(llm_engine: llm.LLM, history: list) -> str:
         summary_prompt = (
-            "Generate a call summary as a single, coherent paragraph. It must properly state: "
-            "what the patient concern/reason for calling was, the details discussed in the call, "
-            "the conclusion, and any other important patient details based on the transcript. "
-            "Keep it concise but detailed. Here is the transcript:\n"
+            "You are an expert conversation analyst and call summarizer for an AI voice assistant.\n"
+            "Generate a structured, comprehensive call summary that explicitly details:\n"
+            "1. REASON FOR CALL / INTENT: Primary goal of the caller or purpose of the outbound call.\n"
+            "2. KEY DISCUSSION DETAILS & REQUIREMENTS: Customer needs, symptoms or concerns, products/services, branch/location preferences, questions, or objections.\n"
+            "3. ACTION & BOOKING METADATA: If an appointment, meeting, consultation, demo, or visit was discussed or scheduled, state the provider/agent name, preferred/confirmed date and time, product/service, and location.\n"
+            "4. OUTCOME & CALL RESOLUTION: State clearly whether the call reached a successful resolution, agreed next steps, or ended unconfirmed/incomplete.\n\n"
+            "Write the summary as a detailed, well-structured paragraph. Here is the call transcript:\n"
         )
         for msg in history:
             role = msg.role.name if hasattr(msg.role, "name") else str(msg.role)

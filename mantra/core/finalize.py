@@ -268,98 +268,21 @@ async def finalize(cc: CallContext, history_snapshot: list):
                     break
             new_stage_id = not_answering_id
         else:
-            try:
-                target_llm = post_call_llm or cc.llm_engine
-                if target_llm and history_snapshot:
-                    logger.info(f"[DIAG] finalize(): Step 5 — Running analyze_call with {len(list(history_snapshot))} messages...")
-                    client_country_code = call_payload.get("client_country_code") or call_payload.get("country_code", "")
-
-                    analysis = await asyncio.wait_for(
-                        SessionRecorder.analyze_call(
-                            llm_engine=target_llm,
-                            history=list(history_snapshot),
-                            current_stage_id=current_stage_id,
-                            stage_details=stage_details,
-                            duration=duration,
-                            client_country_code=client_country_code,
-                            process_stage_data=kb_process_stage_data,
-                        ),
-                        timeout=10.0
+            logger.info("[DIAG] finalize(): Call connected. Generating detailed conversational summary of events and outcome...")
+            if post_call_llm and history_snapshot:
+                try:
+                    summary_text = await asyncio.wait_for(
+                        SessionRecorder.generate_summary(post_call_llm, list(history_snapshot)),
+                        timeout=8.0
                     )
-                    summary_text = analysis["summary"]
-                    new_stage_id = analysis["new_stage_id"]
-                    llm_analysis_ran = True
-                    derived_process_id = analysis.get("process_id")
-                    derived_user_intent = analysis.get("user_intent")
-                    extracted_client_name = analysis.get("client_name")
-
-                    if extracted_client_name:
-                        clean_name = str(extracted_client_name).strip()
-                        if clean_name and clean_name.lower() not in ["user", "unknown", "n/a", "none", "null", ""]:
-                            curr_name = str(call_payload.get("client_name") or "").strip()
-                            if not curr_name or curr_name.lower() in ["user", "unknown", "n/a"]:
-                                call_payload["client_name"] = clean_name
-                                logger.info(f"[DIAG] finalize(): Extracted client_name from call analysis: {clean_name}")
-
-                    if derived_process_id:
-                        call_payload["process_id"] = derived_process_id
-                    elif not call_payload.get("process_id") and call_payload.get("kb_tracked_process_id"):
-                        call_payload["process_id"] = call_payload.get("kb_tracked_process_id")
-
-                    next_call_on = normalize_datetime(analysis["next_call_on"])
-
-                    if analysis.get("appointment_date_time"):
-                        client_custom_fields["appointment_date_time"] = analysis["appointment_date_time"]
-                    if analysis.get("doctor"):
-                        client_custom_fields["doctor"] = analysis["doctor"]
-                    if analysis.get("hospital_location"):
-                        client_custom_fields["hospital_location"] = analysis["hospital_location"]
-
-                    appointment_metadata = analysis.get("appointment_metadata") if isinstance(analysis.get("appointment_metadata"), dict) else None
-                    if appointment_metadata:
-                        appointment_metadata.pop("preferred_end_datetime", None)
-                        if appointment_metadata.get("preferred_datetime"):
-                            appointment_metadata["preferred_datetime"] = normalize_datetime(appointment_metadata["preferred_datetime"])
-                        if appointment_metadata.get("provider_user_id") is not None:
-                            appointment_metadata["provider_user_id"] = _as_int(appointment_metadata["provider_user_id"])
-                        elif cc.call_state.get("provider_user_id") is not None:
-                            appointment_metadata["provider_user_id"] = _as_int(cc.call_state.get("provider_user_id"))
-                            logger.info(f"[DIAG] Auto-injected provider_user_id={appointment_metadata['provider_user_id']} into appointment_metadata from call_state")
-
-                        if not appointment_metadata.get("product_service") and cc.call_state.get("selected_product_service"):
-                            appointment_metadata["product_service"] = cc.call_state["selected_product_service"]
-                        if not appointment_metadata.get("location") and cc.call_state.get("selected_location"):
-                            appointment_metadata["location"] = cc.call_state["selected_location"]
-
-                    logger.info(
-                        f"Analysis completed. Process: {derived_process_id}, New Stage ID: {new_stage_id}, Next Call On: {next_call_on}, User Intent: {derived_user_intent}, Client Name: {call_payload.get('client_name')}"
-                    )
-                else:
-                    logger.warning(
-                        "Skipping analysis: LLM or history unavailable after session close"
-                    )
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                logger.warning("[DIAG] finalize(): analyze_call timed out or task cancelled — using fallback summary and captured state")
-                summary_text = "Call completed."
-                if cc.call_state.get("provider_user_id") and not appointment_metadata:
-                    appointment_metadata = {
-                        "provider_user_id": _as_int(cc.call_state.get("provider_user_id")),
-                        "provider_name": None,
-                        "preferred_datetime": None,
-                        "appointment_title": "Scheduled Appointment",
-                        "appointment_notes": "Appointment requested during call."
-                    }
-            except Exception as e:
-                logger.error(
-                    f"Analysis or summary generation failed: {e}", exc_info=True
-                )
+                    logger.info(f"[DIAG] finalize(): Summary generated successfully: {summary_text[:120]}...")
+                except Exception as e:
+                    logger.warning(f"[DIAG] finalize(): generate_summary failed or timed out: {e}")
+                    summary_text = None
 
         # Final fallback guarantee for summary_text if missing or empty
         if not summary_text or not str(summary_text).strip():
-            if transcript_data and transcript_data.strip():
-                summary_text = f"Call completed ({duration}s). Transcript snippet: {transcript_data[:180]}..."
-            else:
-                summary_text = "Call completed."
+            summary_text = f"Call completed ({duration}s)."
 
     except (Exception, asyncio.CancelledError) as e:
         logger.error(f"[DIAG] finalize(): Pipeline error in finalize: {e}", exc_info=True)
@@ -409,19 +332,9 @@ async def finalize(cc: CallContext, history_snapshot: list):
                 )
                 payload_stage_id = proc_stages[0]
 
-    # Enforce stage-based call status rule:
-    # If payload_new_stage_id == initial_stage_id (not updated) -> Incomplete
-    # If payload_new_stage_id != initial_stage_id (updated) -> Completed
     if call_status not in ["No Answer", "Busy", "Failed"]:
-        if payload_stage_id is not None and payload_new_stage_id != payload_stage_id:
-            call_status = "Completed"
-            logger.info(f"[DIAG] finalize(): Stage updated from {payload_stage_id} to {payload_new_stage_id} — call_status='Completed'")
-        elif payload_stage_id is None and payload_new_stage_id is not None:
-            call_status = "Completed"
-            logger.info(f"[DIAG] finalize(): New stage assigned ({payload_new_stage_id}) with no initial stage — call_status='Completed'")
-        else:
-            call_status = "Incomplete"
-            logger.info(f"[DIAG] finalize(): Stage not updated (new_stage_id={payload_new_stage_id}, initial={payload_stage_id}) — call_status='Incomplete'")
+        call_status = None
+        logger.info("[DIAG] finalize(): Connected call status set to None — delegating status evaluation to JEV AI Pro")
 
     if direction == "inbound":
         raw_caller_phone = cc.call_state.get("caller_phone_number") or call_payload.get("client_phone_number") or call_payload.get("client_phone") or ""
@@ -433,28 +346,18 @@ async def finalize(cc: CallContext, history_snapshot: list):
             "data": {
                 "org_id": _as_int(call_payload.get("org_id")),
                 "call_recording": recording_url or "",
-                "process_id": effective_process_id,
-                "stage_id": payload_stage_id,
-                "new_stage_id": payload_new_stage_id,
-                "call_status": call_status,
                 "client_name": call_payload.get("client_name") or "",
-                "client_email": call_payload.get("client_email") or "",
                 "client_phone_number": formatted_caller_phone,
                 "call_duration": duration,
                 "call_transcript": transcript_data or "",
                 "ai_summary": summary_text or "",
-                "next_call_on": normalize_datetime(next_call_on) or "",
                 "called_on": cc.call_state.get("call_initiated_at") or cc.call_state.get("agent_joined_at") or "",
-                "user_intent": derived_user_intent,
-                "call_intent": derived_user_intent,
                 "meta_data": {
                     "document_id": str(call_payload.get("call_id") or call_payload.get("voice_id") or (ctx.job.id if ctx.job else "")),
                     "provider": (call_payload.get("metadata", {}) or {}).get("provider", ""),
                 },
             }
         }
-        if appointment_metadata:
-            webhook_payload["data"]["appointment_metadata"] = appointment_metadata
     else:
         event_name = "CALL_RETRY" if call_status in ["No Answer", "Busy", "Failed"] else "CALL_DATA_UPDATE"
         if event_name == "CALL_RETRY":
@@ -473,26 +376,16 @@ async def finalize(cc: CallContext, history_snapshot: list):
                 "data": {
                     "client_id": call_payload.get("lead_id"),
                     "call_id": resolved_call_id,
-                    "call_status": call_status,
                     "call_transcript": transcript_data,
-                    "ai_summary": summary_text,
                     "recording_url": recording_url,
                     "call_duration_seconds": duration,
-                    "next_call_on": normalize_datetime(next_call_on) or "",
                     "called_on": cc.call_state.get("call_initiated_at") or cc.call_state.get("agent_joined_at") or None,
                     "ai_call_id": ctx.job.id if ctx.job else "",
                     "process_id": effective_process_id,
                     "stage_id": payload_stage_id,
-                    "new_stage_id": payload_new_stage_id,
-                    "user_intent": derived_user_intent,
-                    "call_intent": derived_user_intent,
-                    "metadata": call_payload.get("metadata", {}),
-                    "client_custom_fields": client_custom_fields or {},
-                    "call_custom_fields": call_payload.get("call_custom_fields", {}),
+                    "ai_summary": summary_text,
                 },
             }
-        if appointment_metadata:
-            webhook_payload["data"]["appointment_metadata"] = appointment_metadata
 
     # Prominently log the complete generated webhook payload for easy developer copying
     payload_json_str = json.dumps(webhook_payload, indent=2)

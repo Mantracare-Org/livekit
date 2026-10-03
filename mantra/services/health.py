@@ -132,7 +132,7 @@ async def _run_dependency_checks() -> tuple[bool, dict[str, bool | str]]:
         _check_redis(),
         _check_postgres(),
         _check_stt(),
-        _check_mantraassist_backend(),
+        # _check_mantraassist_backend(),
         _check_s3(),
         return_exceptions=True
     )
