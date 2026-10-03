@@ -1,8 +1,16 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)  
-> **Last Updated:** 2026-09-25  
-> **Status:** Active maintenance, Products/Services & Geopy Location Appointment Workflow
+> **Last Updated:** 2026-10-03  
+> **Status:** Active maintenance, Natural Voice Prosody (Em-Dashes & Semicolons) & Doctor Tool Guard
+
+- [x] **Natural Voice Prosody: Em-Dashes, Semicolons & Doctor Tool Guard (2026-10-03):** Enhanced TTS voice prosody formatting in `mantra/core/live_agent.py` and `mantra/prompts.py` (Rules 9 & 10). Replaced heavy `. ... ` trailing pause spam with a varied human punctuation mix — em-dashes (`—`) for intro bridges and thought transitions, semicolons (`;`) for clause connections without pitch drops, and commas (`,`) for light breath pauses. Restricted `check_doctor_availability` tool description and system prompt Step 3 in `mantra/core/assistant_functions.py` and `mantra/prompts.py` to **doctor and medical consultations exclusively**. Files: `mantra/core/assistant_functions.py`, `mantra/prompts.py`, `mantra/core/live_agent.py`.
+
+- [x] **Latency Optimization: Fixed Endpointing & DeepSeek KV-Cache Pre-Warm Fix (2026-10-03):** Fixed `NameError: name 'deepseek_model' is not defined` in `_prewarm_deepseek_with_ctx()` in `mantra/agent.py` so DeepSeek KV prefix cache pre-warming executes cleanly on call start, eliminating 2–3s TTFT latency re-computation on live turns. Changed LiveKit `endpointing` mode from `"dynamic"` (which dynamically ballooned `min_delay` from 0.15s to 0.934s on micro-pauses) to `"fixed"` (`min_delay: 0.15`, `max_delay: 0.25`) in `mantra/agent.py`. Turn response commitment now occurs within ~150-250ms of user silence. Files: `mantra/agent.py`.
+
+- [x] **TTS Speech Pacing & Punctuation Pause Directives (2026-10-03):** Added speech pacing guidelines (`PROSODY AND TONE & SPEECH PACING (CRITICAL)`) and Rule 9 in `CRITICAL OVERRIDING RULES` in `mantra/prompts.py`. Instructs the LLM to use ellipses (`...`), commas (`,`), and periods (`.`) between thoughts to force 200-300ms natural human breathing pauses in LiveKit's `sonic-3` TTS engine, eliminating unbroken monologues. Files: `mantra/prompts.py`.
+
+- [x] **Strict Appointment Time Slot Validation & Denial Prompt Rules (2026-10-01):** Added strict time slot validation & denial rules to `APPOINTMENT BOOKING WORKFLOW (CRITICAL)` Step 4 and `CRITICAL OVERRIDING RULES` Rule 8 in `mantra/prompts.py`. Prevents live AI agent from hallucinating confirmations for unlisted/unavailable slots (e.g., confirming 1 PM when schedule only has 9–12 PM & 2–3 PM). The agent now explicitly denies unavailable slots gently, presents available open slots, and only confirms when an available slot is selected. Files: `mantra/prompts.py`.
 
 - [x] **Lead Generation 5-Minute Call Extension & `end_call` Guardrails (2026-09-25):** Removed restrictive `is_inbound` checks in `mantra/call_duration.py` and `mantra/core/call_monitors.py` so both inbound and outbound calls extend to 5 minutes (300s) upon positive lead intent. Added automatic `_try_auto_extend` execution in `clarify_product_service`, `find_nearest_location`, and `check_doctor_availability`. Added safety check in `end_call` and `mantra/prompts.py` to prevent premature call disconnection when a caller requests or agrees to book an appointment. Files: `mantra/call_duration.py`, `mantra/core/call_monitors.py`, `mantra/core/assistant_functions.py`, `mantra/prompts.py`.
 

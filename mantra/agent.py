@@ -34,16 +34,18 @@ os.environ.pop("http_proxy", None)
 _is_inference = os.getenv("LIVEKIT_AGENTS_INFERENCE") == "1"
 _proc_type = "Inference Subprocess" if _is_inference else "Main Worker"
 
-_handler = logging.StreamHandler(sys.stdout)
-_handler.setFormatter(
-    logging.Formatter(
-        f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s"
-    )
-)
+from mantra.logging_config import configure_root_logger, get_logger
 
+configure_root_logger(level=logging.DEBUG)
+logger = get_logger("mantra.agent")
 
-logging.basicConfig(level=logging.DEBUG, handlers=[_handler])
-logger = logging.getLogger("mantra.agent")
+# Add process type to log format
+for handler in logger.handlers:
+    handler.setFormatter(logging.Formatter(
+        f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    ))
+
 logging.getLogger("livekit.agents").setLevel(logging.DEBUG)
 logger.info("Initializing process...")
 
@@ -396,6 +398,7 @@ async def entrypoint(ctx: JobContext):
     # first actual turn (e.g. user says "Yes") reuses the cached prefix
     # instead of recomputing the entire context → eliminates 2-3s TTFT on turn 2.
     if model_name == "deepseek" and client is not None:
+        deepseek_model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
         async def _prewarm_deepseek_with_ctx():
             try:
                 logger.info(f"[DEEPSEEK] Pre-warming KV cache with system prompt ({deepseek_model})...")
@@ -429,9 +432,9 @@ async def entrypoint(ctx: JobContext):
         turn_handling=TurnHandlingOptions(
             turn_detection=inference.TurnDetector(),
             endpointing={
-                "mode": "dynamic",
+                "mode": "fixed",
                 "min_delay": 0.15,
-                "max_delay": 1.0,
+                "max_delay": 0.25,
             },
             interruption={
                 "mode": "vad",

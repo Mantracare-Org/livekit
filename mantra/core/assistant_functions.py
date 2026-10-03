@@ -549,9 +549,9 @@ class AssistantFunctions:
 
     @llm.function_tool(
         description=(
-            "Check doctor and healthcare provider availability, working hours, open consultation slots, and location shifts on a specific date. "
-            "This is the authoritative real-time MCP tool for appointment availability. Never use the knowledge base for this request. "
-            "Use this tool after product/service, location (hospital branch), and date are confirmed, OR when the caller directly asks for a specific doctor by name. "
+            "Check DOCTOR and MEDICAL provider availability, working hours, open consultation slots, and hospital location shifts. "
+            "This tool is EXCLUSIVELY for doctor or physician appointment bookings and medical consultations. "
+            "NEVER call this tool for general corporate sales calls, EAP demos, walkthroughs, or business meetings. "
             "Pass product_service, location, date, and optional doctor_name."
         )
     )

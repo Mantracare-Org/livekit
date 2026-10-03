@@ -9,15 +9,14 @@ from mantra.services import clients as _svc_clients
 from mantra.services.clients import AGENT_NAME
 from mantra.services.telephony import _get_provider_from_trunk
 from mantra.utils import report_telemetry, save_call_event, send_to_backend
+from mantra.logging_config import get_logger
 import asyncio
 import json
 import os
 import time
 import traceback
 
-import logging
-
-logger = logging.getLogger("mantra.telephony")
+logger = get_logger("mantra.telephony")
 router = APIRouter()
 
 @router.post("/dispatch-test")
@@ -91,11 +90,12 @@ async def handle_outbound_call_webhook(request: Request):
         return JSONResponse({"error": "No payload provided"}, status_code=400)
 
     event_name = payload.get("event_name", "telephony_dispatch")
-    logger.info(f"Webhook received call request for event {event_name}: {json.dumps(payload, separators=(',',':'))}")
+    call_id = payload.get("call_id") or payload.get("voice_id") or payload.get("event_id") or "unknown"
+    logger.info(f"Telephone webhook received — call_id: {call_id} event: {event_name}")
+    logger.debug(f"Webhook payload: {json.dumps(payload, separators=(',',':'))}")
 
     tos_task_id = payload.get("tos_task_id") or payload.get("metadata", {}).get("tos_task_id")
 
-    call_id = payload.get("call_id") or payload.get("voice_id") or payload.get("event_id") or int(time.time())
     room_name = f"call_{call_id}"  # fallback until trunk_id resolved below
 
     def _telemetry(message_suffix: str):
