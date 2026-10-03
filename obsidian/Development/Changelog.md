@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-03
+
+### Natural Voice Prosody: Em-Dashes, Semicolons & Doctor Tool Guard
+
+- **feat:** Enhanced TTS voice prosody formatting in `mantra/core/live_agent.py` and `mantra/prompts.py` (Rules 9 & 10). Replaced heavy `. ... ` trailing pause spam with a varied human punctuation mix — em-dashes (`—`) for intro bridges and thought transitions, semicolons (`;`) for clause connections without pitch drops, and commas (`,`) for light breath pauses.
+- **fix:** Restricted `check_doctor_availability` tool description and system prompt Step 3 in `mantra/core/assistant_functions.py` and `mantra/prompts.py` to **doctor and medical consultations exclusively**. Prevents the AI from calling doctor availability APIs during corporate sales calls, EAP demos, or walkthrough meetings.
+- **fix:** Fixed `NameError: name 'deepseek_model' is not defined` in `_prewarm_deepseek_with_ctx()` in `mantra/agent.py` so DeepSeek KV prefix cache pre-warming executes cleanly on call start, eliminating 2–3s TTFT latency re-computation on live turns.
+- **perf:** Changed LiveKit `endpointing` mode from `"dynamic"` (which dynamically ballooned `min_delay` from 0.15s to 0.934s on micro-pauses) to `"fixed"` (`min_delay: 0.15`, `max_delay: 0.25`) in `mantra/agent.py`. Turn response commitment now occurs within ~150-250ms of user silence.
+- **Files:** `mantra/agent.py`, `mantra/prompts.py`, `mantra/core/assistant_functions.py`, `mantra/core/live_agent.py`, `obsidian/Development/Changelog.md`, `obsidian/Development/Current Sprint.md`.
+
 ## 2026-10-01
 
 ### Strict Appointment Time Slot Validation & Denial Prompt Rules

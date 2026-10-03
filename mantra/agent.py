@@ -398,6 +398,7 @@ async def entrypoint(ctx: JobContext):
     # first actual turn (e.g. user says "Yes") reuses the cached prefix
     # instead of recomputing the entire context → eliminates 2-3s TTFT on turn 2.
     if model_name == "deepseek" and client is not None:
+        deepseek_model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
         async def _prewarm_deepseek_with_ctx():
             try:
                 logger.info(f"[DEEPSEEK] Pre-warming KV cache with system prompt ({deepseek_model})...")
@@ -431,9 +432,9 @@ async def entrypoint(ctx: JobContext):
         turn_handling=TurnHandlingOptions(
             turn_detection=inference.TurnDetector(),
             endpointing={
-                "mode": "dynamic",
+                "mode": "fixed",
                 "min_delay": 0.15,
-                "max_delay": 1.0,
+                "max_delay": 0.25,
             },
             interruption={
                 "mode": "vad",

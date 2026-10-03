@@ -59,6 +59,12 @@ class MantraMultilingualAgent(Agent):
             logger.error(f"[LANG] Error aligning language in llm_node: {align_err}")
 
         async for chunk in Agent.default.llm_node(self, chat_ctx, tools, model_settings):
+            if isinstance(chunk, str):
+                chunk = chunk.replace(". ... ", " — ")
+            elif hasattr(chunk, "choices") and chunk.choices:
+                for choice in chunk.choices:
+                    if hasattr(choice, "delta") and choice.delta and hasattr(choice.delta, "content") and choice.delta.content:
+                        choice.delta.content = choice.delta.content.replace(". ... ", " — ")
             yield chunk
 
 
