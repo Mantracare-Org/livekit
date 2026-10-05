@@ -115,11 +115,14 @@ async def save_call_log_to_db(
 
         attempt_number = len(existing_attempts) + 1
 
+        # Status is no longer carried on the payload — store NULL rather than a stale carry-over
+        final_status = status or None
+
         attempt_entry = {
             "attempt_number": attempt_number,
             "retry_count": max(0, attempt_number - 1),
             "attempted_at": attempted_at,
-            "status": status,
+            "status": final_status,
             "ai_call_id": ai_call_id,
             "duration": duration,
             "recording_url": recording_url or "",
@@ -155,7 +158,7 @@ async def save_call_log_to_db(
             trunk_id = COALESCE(NULLIF(EXCLUDED.trunk_id, ''), call_logs.trunk_id),
             attempts = COALESCE(call_logs.attempts, '[]'::jsonb) || jsonb_build_array($8::jsonb)
         """
-        await conn.execute(query, str(call_id), call_log_final, status, recording_url or "", final_caller, final_called, trunk_id or "", json.dumps(attempt_entry))
+        await conn.execute(query, str(call_id), call_log_final, final_status, recording_url or "", final_caller, final_called, trunk_id or "", json.dumps(attempt_entry))
         logger.info(f"Successfully saved call log (attempt #{attempt_number}, retry_at={attempted_at}) to DB for call_id: {call_id}")
     except Exception as e:
         logger.error(f"Failed to save call log to DB: {e}")
@@ -262,6 +265,235 @@ async def save_call_event(
             await conn.close()
 
 
+async def record_backend_delivery(
+    call_id: str,
+    payload: Optional[dict],
+    state: str,
+    http_status: Optional[int] = None,
+    error: str = "",
+    attempts: Optional[int] = None,
+) -> None:
+    """Persist the delivery ledger for a post-call webhook on call_logs.
+
+    state: 'sent' | 'failed' | 'skipped_dedupe' | 'unconfigured'
+
+    Never raises — a ledger write must not break call finalization.
+    """
+    if not call_id:
+        return
+
+    db_user = os.getenv("POSTGRES_USER")
+    db_password = os.getenv("POSTGRES_PASSWORD")
+    db_name = os.getenv("POSTGRES_DB")
+    db_host = os.getenv("POSTGRES_HOST")
+    db_port = os.getenv("POSTGRES_PORT")
+
+    if not all([db_user, db_password, db_name, db_host, db_port]):
+        logger.warning("DB env vars missing — skipping backend delivery ledger write")
+        return
+
+    sent = True if state == "sent" else False
+    event_name = ""
+    payload_json = None
+    if isinstance(payload, dict):
+        event_name = str(payload.get("event") or "")[:64]
+        try:
+            payload_json = json.dumps(payload, default=str)
+        except Exception:
+            payload_json = None
+
+    conn = None
+    try:
+        conn = await asyncpg.connect(
+            user=db_user,
+            password=db_password,
+            database=db_name,
+            host=db_host,
+            port=db_port,
+            timeout=5.0,
+        )
+        await conn.execute(
+            """
+            INSERT INTO call_logs (
+                call_id, call_log, status,
+                backend_sent, backend_send_state, backend_payload, backend_event,
+                backend_http_status, backend_error, backend_attempts,
+                backend_sent_at, backend_last_try_at
+            )
+            VALUES ($1, COALESCE($2, '{}'), NULL, $3, $4, $5::jsonb, $6, $7, $8, $9, NOW(), NOW())
+            ON CONFLICT (call_id) DO UPDATE SET
+                backend_sent        = EXCLUDED.backend_sent,
+                backend_send_state  = EXCLUDED.backend_send_state,
+                backend_payload     = COALESCE(EXCLUDED.backend_payload, call_logs.backend_payload),
+                backend_event       = COALESCE(NULLIF(EXCLUDED.backend_event, ''), call_logs.backend_event),
+                backend_http_status = COALESCE(EXCLUDED.backend_http_status, call_logs.backend_http_status),
+                backend_error       = EXCLUDED.backend_error,
+                backend_attempts    = COALESCE(EXCLUDED.backend_attempts, call_logs.backend_attempts),
+                backend_sent_at     = NOW(),
+                backend_last_try_at = NOW();
+            """,
+            str(call_id),
+            payload_json,
+            sent,
+            state,
+            payload_json,
+            event_name or None,
+            http_status,
+            (error or "") or None,
+            attempts,
+        )
+        logger.info(
+            f"Delivery ledger updated call_id={call_id} state={state} "
+            f"http={http_status} attempts={attempts}"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to record backend delivery ledger for call_id={call_id}: {e}")
+    finally:
+        if conn:
+            await conn.close()
+
+
+async def record_delivery_attempt(
+    call_id: str,
+    payload: Optional[dict],
+    state: str,
+    endpoint: str,
+    payload_raw: Optional[str] = None,
+    ai_call_id: str = "",
+    http_status: Optional[int] = None,
+    error: str = "",
+    attempts: Optional[int] = None,
+    replay_of: Optional[int] = None,
+    increment_replay: bool = False,
+    event_type: str = "",
+) -> Optional[int]:
+    """Append one row to the webhook_deliveries outbox. Returns the new row id.
+
+    payload_raw preserves the exact bytes sent so a replay is byte-faithful
+    (JSONB does not preserve key order / number formatting, and the backend
+    verifies HMAC over the raw body).
+    """
+    if not call_id:
+        return None
+
+    db_user = os.getenv("POSTGRES_USER")
+    db_password = os.getenv("POSTGRES_PASSWORD")
+    db_name = os.getenv("POSTGRES_DB")
+    db_host = os.getenv("POSTGRES_HOST")
+    db_port = os.getenv("POSTGRES_PORT")
+
+    if not all([db_user, db_password, db_name, db_host, db_port]):
+        logger.warning("DB env vars missing — skipping webhook_deliveries insert")
+        return None
+
+    event_name = ""
+    payload_json = None
+    if isinstance(payload, dict):
+        event_name = str(payload.get("event") or "")[:64]
+        payload_json = json.dumps(payload, default=str)
+    if not event_name and event_type:
+        event_name = str(event_type)[:64]
+
+    if not payload_raw:
+        payload_raw = payload_json
+
+    conn = None
+    try:
+        conn = await asyncpg.connect(
+            user=db_user,
+            password=db_password,
+            database=db_name,
+            host=db_host,
+            port=db_port,
+            timeout=5.0,
+        )
+        row = await conn.fetchrow(
+            """
+            INSERT INTO webhook_deliveries (
+                call_id, ai_call_id, event_type, endpoint, payload, payload_raw,
+                send_state, attempts, http_status, last_error,
+                replay_of, replay_count, replayed_at
+            )
+            VALUES ($1, NULLIF($2,''), NULLIF($3,''), $4, COALESCE($5::jsonb, '{}'::jsonb), $6,
+                    $7, COALESCE($8,0), $9, NULLIF($10,''), $11,
+                    CASE WHEN $12 THEN 1 ELSE 0 END,
+                    CASE WHEN $12 THEN NOW() ELSE NULL END)
+            RETURNING id;
+            """,
+            str(call_id),
+            str(ai_call_id or ""),
+            event_name,
+            endpoint,
+            payload_json,
+            payload_raw,
+            state,
+            attempts,
+            http_status,
+            (error or "") or None,
+            replay_of,
+            increment_replay,
+        )
+        new_id = row["id"] if row else None
+        logger.info(
+            f"Outbox recorded id={new_id} call_id={call_id} state={state} "
+            f"http={http_status} attempts={attempts}"
+        )
+        return new_id
+    except Exception as e:
+        logger.warning(f"Failed to record webhook_deliveries row for call_id={call_id}: {e}")
+        return None
+    finally:
+        if conn:
+            await conn.close()
+
+
+async def deliver_signed_payload(
+    url: str,
+    payload_str: str,
+    webhook_secret: str,
+    max_retries: int = 3,
+):
+    """POST an HMAC-signed payload with retry. Returns (ok, http_status, attempts, error).
+
+    Shared by the live send path and the replay tool so a replayed delivery is
+    signed and retried identically to the original.
+    """
+    last_error = ""
+    last_status: Optional[int] = None
+
+    for attempt in range(1, max_retries + 1):
+        timestamp = str(int(time.time()))
+        timestamp_iso = datetime.fromtimestamp(int(timestamp), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+        headers = {
+            "Content-Type": "application/json",
+            "x-timestamp": timestamp,
+            "x-source": "n8n",
+            "x-timestamp-iso": timestamp_iso,
+        }
+
+        if webhook_secret:
+            data_to_sign = f"{payload_str}.{timestamp}"
+            headers["x-signature"] = hmac.new(
+                webhook_secret.encode("utf-8"), data_to_sign.encode("utf-8"), hashlib.sha256
+            ).hexdigest()
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(url, content=payload_str, headers=headers)
+                resp.raise_for_status()
+                return True, resp.status_code, attempt, ""
+        except Exception as e:
+            last_error = str(e)
+            last_status = getattr(getattr(e, "response", None), "status_code", None)
+            logger.error(f"Backend webhook attempt {attempt}/{max_retries} failed: {e}")
+
+        if attempt < max_retries:
+            await asyncio.sleep(2 ** (attempt - 1))
+
+    return False, last_status, max_retries, last_error
+
+
 async def _claim_backend_delivery(dedupe_key: str, force: bool = False) -> bool:
     """First writer wins per dedupe_key (call_id + ai_call_id). Prevents ui_server + agent double-webhooks."""
     if not dedupe_key:
@@ -318,6 +550,24 @@ async def send_to_backend(payload: dict, max_retries: int = 3, force: bool = Fal
 
     if not base_url:
         logger.warning("MANTRAASSIST_BACKEND_URL not set — skipping backend webhook")
+        unconf_call_id = ""
+        if isinstance(payload, dict):
+            unconf_data = payload.get("data")
+            if isinstance(unconf_data, dict):
+                unconf_call_id = str(unconf_data.get("call_id") or "")
+        await record_backend_delivery(
+            call_id=unconf_call_id,
+            payload=payload,
+            state="unconfigured",
+            error="MANTRAASSIST_BACKEND_URL not set",
+        )
+        await record_delivery_attempt(
+            call_id=unconf_call_id,
+            payload=payload,
+            state="unconfigured",
+            endpoint="",
+            error="MANTRAASSIST_BACKEND_URL not set",
+        )
         return False
 
     call_id = ""
@@ -337,13 +587,24 @@ async def send_to_backend(payload: dict, max_retries: int = 3, force: bool = Fal
     is_retry_payload = force or (event_type in ("CALL_RETRY", "call_retry"))
 
     if not await _claim_backend_delivery(dedupe_key, force=is_retry_payload):
+        # Another path (agent or ui_server) already owns this delivery — record that we skipped it.
+        await record_backend_delivery(
+            call_id=call_id,
+            payload=payload,
+            state="skipped_dedupe",
+            error="delivery already claimed by another path",
+        )
+        await record_delivery_attempt(
+            call_id=call_id,
+            payload=payload,
+            state="skipped_dedupe",
+            endpoint=f"{base_url}/v1/webhooks/n8n/summary",
+            ai_call_id=ai_call_id,
+            error="delivery already claimed by another path",
+        )
         return True  # already delivered (or in-flight) by the other path
 
-    url = f"{base_url}/v1/webhooks/n8n"
-
-    timestamp = str(int(time.time()))
-
-    timestamp_iso = datetime.fromtimestamp(int(timestamp), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    url = f"{base_url}/v1/webhooks/n8n/summary"
 
     if not payload:
         payload_str = '{}'
@@ -351,63 +612,80 @@ async def send_to_backend(payload: dict, max_retries: int = 3, force: bool = Fal
         payload_str = json.dumps(payload, separators=(',', ':'))
     logger.info(f"Payload: {payload_str}")
 
-    data_to_sign = f"{payload_str}.{timestamp}"
-
-    headers = {
-        "Content-Type": "application/json",
-        "x-timestamp": timestamp,
-        "x-source": "n8n",
-        "x-timestamp-iso": timestamp_iso
-    }
-
-    if webhook_secret:
-        signature = hmac.new(
-            webhook_secret.encode("utf-8"), data_to_sign.encode("utf-8"), hashlib.sha256
-        ).hexdigest()
-        headers["x-signature"] = signature
-        logger.info(f"Signing request with HMAC (timestamp: {timestamp})")
-    else:
+    if not webhook_secret:
         logger.warning("MANTRAASSIST_WEBHOOK_SECRET not set — sending unsigned request")
 
     logger.info(f"Delivering post-call webhook to: {url} call_id={call_id or 'unknown'}")
 
-    for attempt in range(1, max_retries + 1):
+    ok, http_status, attempts_made, last_error = await deliver_signed_payload(
+        url, payload_str, webhook_secret, max_retries=max_retries
+    )
+
+    if ok:
+        logger.info(
+            f"Backend webhook delivered successfully (HTTP {http_status}) call_id={call_id or 'unknown'}"
+        )
+
+        # Persist delivered payload to PostgreSQL call_logs table
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(url, content=payload_str, headers=headers)
-                resp.raise_for_status()
-                logger.info(
-                    f"Backend webhook delivered successfully (HTTP {resp.status_code}) call_id={call_id or 'unknown'}"
+            data_obj = payload.get("data") if isinstance(payload, dict) else {}
+            if isinstance(data_obj, dict) and call_id:
+                status_val = str(data_obj.get("call_status") or data_obj.get("status") or "")
+                recording_val = str(data_obj.get("recording_url") or data_obj.get("s3_recording") or "")
+                caller_num = str(data_obj.get("caller_number") or data_obj.get("client_phone") or "")
+                called_num = str(data_obj.get("called_number") or "")
+                trunk_val = str(data_obj.get("trunk_id") or data_obj.get("sip_trunk_id") or "")
+
+                await save_call_log_to_db(
+                    call_id=call_id,
+                    call_log=json.dumps(data_obj),
+                    status=status_val,
+                    recording_url=recording_val,
+                    caller_number=caller_num,
+                    called_number=called_num,
+                    trunk_id=trunk_val
                 )
-                
-                # Persist delivered payload to PostgreSQL call_logs table
-                try:
-                    data_obj = payload.get("data") if isinstance(payload, dict) else {}
-                    if isinstance(data_obj, dict) and call_id:
-                        status_val = str(data_obj.get("call_status") or data_obj.get("status") or "Completed")
-                        recording_val = str(data_obj.get("recording_url") or data_obj.get("s3_recording") or "")
-                        caller_num = str(data_obj.get("caller_number") or data_obj.get("client_phone") or "")
-                        called_num = str(data_obj.get("called_number") or "")
-                        trunk_val = str(data_obj.get("trunk_id") or data_obj.get("sip_trunk_id") or "")
-                        
-                        await save_call_log_to_db(
-                            call_id=call_id,
-                            call_log=json.dumps(data_obj),
-                            status=status_val,
-                            recording_url=recording_val,
-                            caller_number=caller_num,
-                            called_number=called_num,
-                            trunk_id=trunk_val
-                        )
-                except Exception as db_err:
-                    logger.warning(f"Failed to persist delivered webhook payload to DB for call_id={call_id}: {db_err}")
+        except Exception as db_err:
+            logger.warning(f"Failed to persist delivered webhook payload to DB for call_id={call_id}: {db_err}")
 
-                return True
-        except Exception as e:
-            logger.error(f"Backend webhook attempt {attempt}/{max_retries} failed: {e}")
+        await record_backend_delivery(
+            call_id=call_id,
+            payload=payload,
+            state="sent",
+            http_status=http_status,
+            attempts=attempts_made,
+        )
+        await record_delivery_attempt(
+            call_id=call_id,
+            payload=payload,
+            state="sent",
+            endpoint=url,
+            payload_raw=payload_str,
+            ai_call_id=ai_call_id,
+            http_status=http_status,
+            attempts=attempts_made,
+        )
+        return True
 
-        if attempt < max_retries:
-            await asyncio.sleep(2 ** (attempt - 1))
+    await record_backend_delivery(
+        call_id=call_id,
+        payload=payload,
+        state="failed",
+        http_status=http_status,
+        error=last_error,
+        attempts=attempts_made,
+    )
+    await record_delivery_attempt(
+        call_id=call_id,
+        payload=payload,
+        state="failed",
+        endpoint=url,
+        payload_raw=payload_str,
+        ai_call_id=ai_call_id,
+        http_status=http_status,
+        error=last_error,
+        attempts=attempts_made,
+    )
 
     await _release_backend_delivery(dedupe_key)
     return False
