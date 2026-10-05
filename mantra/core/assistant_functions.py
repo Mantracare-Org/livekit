@@ -96,6 +96,12 @@ class AssistantFunctions:
         return self._retriever
 
     @property
+    def used_kb_ids(self) -> list[str]:
+        if self._retriever is None:
+            return []
+        return list(self._retriever.accessed_kb_ids)
+
+    @property
     def used_kb_process_ids(self) -> list[str]:
         if self._retriever is None:
             return []

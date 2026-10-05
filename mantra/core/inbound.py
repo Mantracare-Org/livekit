@@ -44,16 +44,6 @@ async def _resolve_from_db(phone_number: str) -> dict | None:
                 logger.error(f"Failed to fetch kb_ids for org {result.get('org_id')}: {e}")
                 kb_ids = [result.get("org_id")]
 
-            process_id = None
-            stage_id = None
-            try:
-                col_details = await kb.get_collection_details_for_org(result["org_id"])
-                if col_details:
-                    process_id = col_details.get("process_id")
-                    stage_id = col_details.get("stage_id")
-            except Exception as e:
-                logger.error(f"Failed to fetch collection details for org {result.get('org_id')}: {e}")
-
             return {
                 "org_id": result.get("org_id"),
                 "kb_id": result.get("org_id"),
@@ -62,8 +52,6 @@ async def _resolve_from_db(phone_number: str) -> dict | None:
                 "prompt": result.get("prompt"),
                 "voice": result.get("voice"),
                 "model": result.get("model"),
-                "process_id": process_id,
-                "stage_id": stage_id,
                 "transfer_numbers": result.get("transfer_numbers", {}),
                 "client_name": result.get("client_name"),
             }

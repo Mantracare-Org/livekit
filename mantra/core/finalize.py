@@ -69,22 +69,6 @@ async def finalize(cc: CallContext, history_snapshot: list):
         except Exception as e:
             logger.error(f"[DIAG] finalize(): Failed to parse call metadata: {e}")
 
-        # For inbound calls, store KB tracked process_id and stage_id hints
-        if call_payload.get("direction") == "inbound":
-            try:
-                if cc.fnc_ctx and hasattr(cc.fnc_ctx, "used_kb_process_ids"):
-                    used_pids = cc.fnc_ctx.used_kb_process_ids
-                    if used_pids:
-                        call_payload["kb_tracked_process_id"] = used_pids[0]
-                        logger.info(f"KB-tracked process_id hint for inbound: {used_pids[0]}")
-                if cc.fnc_ctx and hasattr(cc.fnc_ctx, "used_kb_stage_ids"):
-                    used_sids = cc.fnc_ctx.used_kb_stage_ids
-                    if used_sids:
-                        call_payload["kb_tracked_stage_id"] = used_sids[0]
-                        logger.info(f"KB-tracked stage_id hint for inbound: {used_sids[0]}")
-            except Exception as e:
-                logger.error(f"Failed to extract KB usage metadata: {e}")
-
         # Determine call status based on whether user joined and spoke
         user_spoke = False
         for msg in history_snapshot:
@@ -165,79 +149,24 @@ async def finalize(cc: CallContext, history_snapshot: list):
 
         # 5. Run unified analysis (bounded by 70s timeout)
         direction = call_payload.get("direction")
-        if direction == "inbound":
-            try:
-                if cc.fnc_ctx and hasattr(cc.fnc_ctx, "used_kb_process_ids"):
-                    used_pids = cc.fnc_ctx.used_kb_process_ids
-                    if used_pids and not call_payload.get("kb_tracked_process_id"):
-                        call_payload["kb_tracked_process_id"] = used_pids[0]
-                        logger.info(f"Using KB-tracked process_id hint for inbound before analysis: {used_pids[0]}")
-                if cc.fnc_ctx and hasattr(cc.fnc_ctx, "used_kb_stage_ids"):
-                    used_sids = cc.fnc_ctx.used_kb_stage_ids
-                    if used_sids and not call_payload.get("kb_tracked_stage_id"):
-                        call_payload["kb_tracked_stage_id"] = used_sids[0]
-                        logger.info(f"Using KB-tracked stage_id hint for inbound before analysis: {used_sids[0]}")
-            except Exception as e:
-                logger.error(f"Failed to extract KB usage metadata before analysis: {e}")
-
-        current_stage_id = call_payload.get("stage_id") or call_payload.get("kb_tracked_stage_id")
+        current_stage_id = call_payload.get("stage_id")
         stage_details = call_payload.get("stageDetails", [])
-        kb_process_stage_data = (
-            cc.fnc_ctx.used_process_stage_data
-            if (cc.fnc_ctx and hasattr(cc.fnc_ctx, 'used_process_stage_data') and cc.fnc_ctx.used_process_stage_data)
-            else None
-        )
-        # For inbound calls, query org processes and stage descriptions via MCP before post-call analysis
-        if is_inbound and not kb_process_stage_data:
-            inbound_org_id = (
-                cc.call_state.get("org_id")
-                or call_payload.get("org_id")
-                or (cc.fnc_ctx.org_id if cc.fnc_ctx and hasattr(cc.fnc_ctx, 'org_id') else None)
-            )
-            if inbound_org_id:
-                try:
-                    from mantra.mcp_client import get_mcp_client
-                    logger.info(f"Fetching org processes via MCP for inbound post-call analysis: org_id={inbound_org_id}")
-                    mcp_client = get_mcp_client()
-                    mcp_res = await mcp_client.call_tool("fetch_org_processes", {"org_id": inbound_org_id})
-                    if mcp_res:
-                        items = []
-                        if isinstance(mcp_res, list):
-                            items = mcp_res
-                        elif isinstance(mcp_res, dict):
-                            items = [mcp_res]
-                        elif isinstance(mcp_res, str):
-                            mcp_res_str = mcp_res.strip()
-                            try:
-                                parsed = json.loads(mcp_res_str)
-                                if isinstance(parsed, list):
-                                    items = parsed
-                                elif isinstance(parsed, dict):
-                                    items = [parsed]
-                            except Exception:
-                                pass
-                            if not items:
-                                for line in mcp_res_str.splitlines():
-                                    line = line.strip()
-                                    if line:
-                                        try:
-                                            items.append(json.loads(line))
-                                        except Exception:
-                                            pass
-                        if items:
-                            kb_process_stage_data = items
-                            logger.info(f"[INBOUND-MCP] Loaded {len(kb_process_stage_data)} processes via MCP for org_id={inbound_org_id}:\n{json.dumps(kb_process_stage_data, indent=2)}")
-                except Exception as e:
-                    logger.warning(f"Failed to fetch org processes via MCP for inbound call: {e}")
+        kb_process_stage_data = None
 
-        if not kb_process_stage_data and cc.fnc_ctx and hasattr(cc.fnc_ctx, 'kb_ids') and cc.fnc_ctx.kb_ids:
-            try:
-                kb = get_global_kb()
-                kb_process_stage_data = await kb.get_process_stage_data_for_kb_ids(cc.fnc_ctx.kb_ids)
-                if kb_process_stage_data:
-                    logger.info(f"Loaded {len(kb_process_stage_data)} process_stage_data entries from DB for KB ids: {cc.fnc_ctx.kb_ids}")
-            except Exception as e:
-                logger.error(f"Failed to fetch fallback KB process_stage_data from DB: {e}")
+        if direction != "inbound":
+            kb_process_stage_data = (
+                cc.fnc_ctx.used_process_stage_data
+                if (cc.fnc_ctx and hasattr(cc.fnc_ctx, 'used_process_stage_data') and cc.fnc_ctx.used_process_stage_data)
+                else None
+            )
+            if not kb_process_stage_data and cc.fnc_ctx and hasattr(cc.fnc_ctx, 'kb_ids') and cc.fnc_ctx.kb_ids:
+                try:
+                    kb = get_global_kb()
+                    kb_process_stage_data = await kb.get_process_stage_data_for_kb_ids(cc.fnc_ctx.kb_ids)
+                    if kb_process_stage_data:
+                        logger.info(f"Loaded {len(kb_process_stage_data)} process_stage_data entries from DB for KB ids: {cc.fnc_ctx.kb_ids}")
+                except Exception as e:
+                    logger.error(f"Failed to fetch fallback KB process_stage_data from DB: {e}")
 
         summary_text = None
         new_stage_id = current_stage_id
@@ -290,47 +219,43 @@ async def finalize(cc: CallContext, history_snapshot: list):
     # 6. Build webhook payload — separate structures for inbound vs outbound
     resolved_call_id = call_payload.get("call_id") or call_payload.get("voice_id") or (ctx.job.id if ctx.job else "")
 
-    kb_referred = bool(direction == "inbound" and (call_payload.get("process_id") or call_payload.get("stage_id") or call_payload.get("kb_tracked_process_id") or derived_process_id))
-    if direction == "inbound":
-        effective_process_id = _as_int(derived_process_id or call_payload.get("process_id") or call_payload.get("kb_tracked_process_id")) if kb_referred else None
-    else:
-        effective_process_id = _as_int(derived_process_id or call_payload.get("process_id") or call_payload.get("kb_tracked_process_id"))
+    if direction != "inbound":
+        effective_process_id = _as_int(derived_process_id or call_payload.get("process_id"))
+        initial_stage_id = _as_int(current_stage_id if current_stage_id is not None else call_payload.get("stage_id"))
+        analysis_stage_id = _as_int(new_stage_id) if new_stage_id is not None else None
 
-    initial_stage_id = _as_int(current_stage_id if current_stage_id is not None else call_payload.get("stage_id") or call_payload.get("kb_tracked_stage_id"))
-    analysis_stage_id = _as_int(new_stage_id) if new_stage_id is not None else None
+        payload_stage_id = initial_stage_id
+        if analysis_stage_id is not None:
+            payload_new_stage_id = analysis_stage_id
+        else:
+            payload_new_stage_id = initial_stage_id
 
-    payload_stage_id = initial_stage_id
-    if analysis_stage_id is not None:
-        payload_new_stage_id = analysis_stage_id
-    else:
-        payload_new_stage_id = initial_stage_id
+        # Reconcile effective_process_id and payload_new_stage_id against kb_process_stage_data
+        if kb_process_stage_data:
+            effective_process_id, payload_new_stage_id = reconcile_process_and_stage_id(
+                process_id=effective_process_id,
+                stage_id=payload_new_stage_id,
+                process_stage_data=kb_process_stage_data,
+            )
 
-    # Reconcile effective_process_id and payload_new_stage_id against kb_process_stage_data
-    if kb_process_stage_data:
-        effective_process_id, payload_new_stage_id = reconcile_process_and_stage_id(
-            process_id=effective_process_id,
-            stage_id=payload_new_stage_id,
-            process_stage_data=kb_process_stage_data,
-        )
+            # Ensure payload_stage_id belongs to the effective_process_id
+            proc_stages = []
+            for p in kb_process_stage_data:
+                if isinstance(p, dict) and _as_int(p.get("process_id") or p.get("id")) == effective_process_id:
+                    stg_list = p.get("stages") or p.get("stageDetails") or []
+                    for s in stg_list:
+                        if isinstance(s, dict):
+                            sid = _as_int(s.get("stage_id") or s.get("id"))
+                            if sid is not None:
+                                proc_stages.append(sid)
 
-        # Ensure payload_stage_id belongs to the effective_process_id
-        proc_stages = []
-        for p in kb_process_stage_data:
-            if isinstance(p, dict) and _as_int(p.get("process_id") or p.get("id")) == effective_process_id:
-                stg_list = p.get("stages") or p.get("stageDetails") or []
-                for s in stg_list:
-                    if isinstance(s, dict):
-                        sid = _as_int(s.get("stage_id") or s.get("id"))
-                        if sid is not None:
-                            proc_stages.append(sid)
-
-        if proc_stages:
-            if payload_stage_id not in proc_stages:
-                logger.info(
-                    f"[DIAG] finalize(): payload_stage_id {payload_stage_id} does not belong to process {effective_process_id} "
-                    f"(available: {proc_stages}) — defaulting to initial stage {proc_stages[0]}"
-                )
-                payload_stage_id = proc_stages[0]
+            if proc_stages:
+                if payload_stage_id not in proc_stages:
+                    logger.info(
+                        f"[DIAG] finalize(): payload_stage_id {payload_stage_id} does not belong to process {effective_process_id} "
+                        f"(available: {proc_stages}) — defaulting to initial stage {proc_stages[0]}"
+                    )
+                    payload_stage_id = proc_stages[0]
 
     if call_status not in ["No Answer", "Busy", "Failed"]:
         call_status = None
@@ -340,6 +265,13 @@ async def finalize(cc: CallContext, history_snapshot: list):
         raw_caller_phone = cc.call_state.get("caller_phone_number") or call_payload.get("client_phone_number") or call_payload.get("client_phone") or ""
         cc_code = call_payload.get("client_country_code") or call_payload.get("country_code")
         formatted_caller_phone = format_e164_phone_number(raw_caller_phone, country_code=cc_code)
+
+        used_kb_ids_list = (
+            cc.fnc_ctx.used_kb_ids
+            if (cc.fnc_ctx and hasattr(cc.fnc_ctx, "used_kb_ids") and cc.fnc_ctx.used_kb_ids)
+            else (call_payload.get("kb_ids") or ([] if not call_payload.get("kb_id") else [str(call_payload["kb_id"])]))
+        )
+        primary_kb_id = used_kb_ids_list[0] if used_kb_ids_list else call_payload.get("kb_id")
 
         webhook_payload = {
             "event": "CALL_DATA_INBOUND_UPDATE",
@@ -352,9 +284,12 @@ async def finalize(cc: CallContext, history_snapshot: list):
                 "call_transcript": transcript_data or "",
                 "ai_summary": summary_text or "",
                 "called_on": cc.call_state.get("call_initiated_at") or cc.call_state.get("agent_joined_at") or "",
+                "kb_id": primary_kb_id,
                 "meta_data": {
                     "document_id": str(call_payload.get("call_id") or call_payload.get("voice_id") or (ctx.job.id if ctx.job else "")),
                     "provider": (call_payload.get("metadata", {}) or {}).get("provider", ""),
+                    "kb_id": primary_kb_id,
+                    "kb_ids": used_kb_ids_list,
                 },
             }
         }
