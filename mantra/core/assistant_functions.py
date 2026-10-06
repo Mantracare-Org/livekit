@@ -16,7 +16,8 @@ from mantra.core.inbound import format_upfront_kb_context, format_upfront_proces
 from mantra.core.room_control import _force_disconnect_room
 from mantra.knowledge_base import PostgresKnowledgeBase
 from mantra.retriever import KnowledgeRetriever
-from mantra.utils import report_telemetry
+from mantra.utils import report_telemetry, send_to_backend
+import datetime
 
 logger = logging.getLogger("mantra.assistant_functions")
 
@@ -190,106 +191,89 @@ class AssistantFunctions:
                         result.append(entry)
         return result
 
-    # @llm.function_tool(
-    #     description="Transfer the call to a human agent in a specific department when the user requests it, "
-    #                 "you cannot resolve their issue, or they seem frustrated. "
-    #                 "Specify the department (e.g., 'refund', 'support', 'billing', 'general') "
-    #                 "based on what the user needs."
-    # )
-    # async def transfer_to_human(
-    #     self,
-    #     reason: Annotated[str, "Why the human agent is needed — be specific about the user's request"],
-    #     department: Annotated[str, "The department to transfer to (e.g., refund, support, billing, general)"] = "general"
-    # ):
-    #     logger.info(f"Handoff requested. Reason: {reason}, Department: {department}")
-    #
-    #     # Guard: prevent duplicate transfers if LLM calls this twice
-    #     if self.handoff_triggered:
-    #         logger.warning("Handoff already in progress — ignoring duplicate request")
-    #         return "TRANSFER_ALREADY_IN_PROGRESS."
-    #
-    #     self.handoff_triggered = True
-    #     self.last_reason = reason
-    #     self.last_department = department
-    #
-    #     # Parse metadata to get call/lead IDs
-    #     try:
-    #         payload = json.loads(self.job_metadata) if self.job_metadata else {}
-    #     except Exception:
-    #         payload = {}
-    #
-    #     # Determine target number from department mapping
-    #     dept_lower = department.lower().strip()
-    #     target_number = TRANSFER_NUMBERS.get(dept_lower, TRANSFER_DEFAULT_NUMBER)
-    #     trunk_id = TRANSFER_SIP_TRUNK_ID or payload.get("trunk_id") or payload.get("call_from_id") or ""
-    #
-    #     if target_number and trunk_id:
-    #         try:
-    #             lk_api = api.LiveKitAPI(
-    #                 url=os.getenv("LIVEKIT_URL"),
-    #                 api_key=os.getenv("LIVEKIT_API_KEY"),
-    #                 api_secret=os.getenv("LIVEKIT_API_SECRET")
-    #             )
-    #             timestamp = datetime.datetime.now().strftime("%H%M%S%f")
-    #             call_id = payload.get("call_id") or payload.get("voice_id") or self.room_name
-    #             human_identity = f"human_{call_id}_{timestamp}"
-    #             await lk_api.sip.create_sip_participant(
-    #                 api.CreateSIPParticipantRequest(
-    #                     sip_trunk_id=trunk_id,
-    #                     sip_call_to=target_number,
-    #                     room_name=self.room_name,
-    #                     participant_identity=human_identity,
-    #                     participant_name=f"Human - {department.title()}"
-    #                 )
-    #             )
-    #             await lk_api.aclose()
-    #             logger.info(f"Human agent ({target_number}) added to room {self.room_name} for {department} department")
-    #         except Exception as e:
-    #             logger.error(f"Failed to add human agent via SIP: {e}")
-    #     else:
-    #         missing = []
-    #         if not target_number:
-    #             missing.append("target phone number")
-    #         if not trunk_id:
-    #             missing.append("SIP trunk ID")
-    #         logger.warning(f"Cannot transfer: missing {', '.join(missing)}. Backend notification sent anyway.")
-    #
-    #     # Notify backend (skip if no URL configured)
-    #     if os.getenv("MANTRAASSIST_BACKEND_URL"):
-    #         webhook_payload = {
-    #             "event": "HANDOFF_REQUESTED",
-    #             "data": {
-    #                 "room_name": self.room_name,
-    #                 "reason": reason,
-    #                 "department": department,
-    #                 "call_id": payload.get("call_id") or payload.get("voice_id"),
-    #                 "lead_id": payload.get("lead_id"),
-    #                 "client_name": payload.get("client_name", "User"),
-    #             }
-    #         }
-    #         await send_to_backend(webhook_payload)
-    #
-    #     # Override agent instructions to enforce absolute silence
-    #     if self.agent:
-    #         try:
-    #             await self.agent.update_instructions(
-    #                 "You are SILENT. The call has been transferred to a human agent. "
-    #                 "Say absolutely nothing. Do not speak, do not acknowledge, do not say goodbye. "
-    #                 "The human agent handles everything from here. SILENT."
-    #             )
-    #             logger.info("Agent instructions overridden to enforce silence")
-    #         except Exception as e:
-    #             logger.error(f"Failed to update agent instructions: {e}")
-    #
-    #     # Interrupt any in-progress speech from the agent
-    #     try:
-    #         if self.agent and self.agent._session:
-    #             self.agent._session.interrupt()
-    #             logger.info("Agent speech interrupted for handoff")
-    #     except Exception as e:
-    #         logger.debug(f"Agent interrupt unavailable (non-fatal): {e}")
-    #
-    #     return "TRANSFER_COMPLETE. Do not speak."
+    @llm.function_tool(
+        description="Transfer the call to a human manager (Manager Jignesh) when requested by the caller, "
+                    "when unable to resolve their issue, or when human escalation is requested."
+    )
+    async def transfer_to_human(
+        self,
+        reason: Annotated[str, "Why the human manager is needed — be specific about the user's request"],
+        department: Annotated[str, "The department to transfer to (e.g., refund, support, billing, general)"] = "general"
+    ):
+        logger.info(f"Warm Transfer requested to Manager Jignesh. Reason: {reason}, Department: {department}")
+
+        if self.handoff_triggered:
+            logger.warning("Handoff already in progress — ignoring duplicate request")
+            return "TRANSFER_ALREADY_IN_PROGRESS."
+
+        self.handoff_triggered = True
+
+        if self.call_state is not None:
+            self.call_state["handoff_triggered"] = True
+            self.call_state["silent_mode"] = True
+            self.call_state["transferred"] = True
+            self.call_state["manager_name"] = "Jignesh"
+
+        try:
+            payload = json.loads(self.job_metadata) if self.job_metadata else {}
+        except Exception:
+            payload = {}
+
+        manager_number = os.getenv("TRANSFER_DEFAULT_NUMBER") or os.getenv("MANAGER_PHONE_NUMBER") or "+919015982614"
+        trunk_id = os.getenv("TRANSFER_SIP_TRUNK_ID") or payload.get("trunk_id") or payload.get("call_from_id") or ""
+
+        if manager_number and trunk_id:
+            try:
+                lk_api = api.LiveKitAPI(
+                    url=os.getenv("LIVEKIT_URL"),
+                    api_key=os.getenv("LIVEKIT_API_KEY"),
+                    api_secret=os.getenv("LIVEKIT_API_SECRET")
+                )
+                timestamp = datetime.datetime.now().strftime("%H%M%S%f")
+                call_id = payload.get("call_id") or payload.get("voice_id") or self.room_name
+                human_identity = f"manager_jignesh_{call_id}_{timestamp}"
+                await lk_api.sip.create_sip_participant(
+                    api.CreateSIPParticipantRequest(
+                        sip_trunk_id=trunk_id,
+                        sip_call_to=manager_number,
+                        room_name=self.room_name,
+                        participant_identity=human_identity,
+                        participant_name="Manager - Jignesh"
+                    )
+                )
+                await lk_api.aclose()
+                logger.info(f"Manager Jignesh ({manager_number}) added to room {self.room_name} via SIP trunk {trunk_id}")
+            except Exception as e:
+                logger.error(f"Failed to add Manager Jignesh via SIP: {e}")
+        else:
+            logger.warning(f"Cannot dial Manager Jignesh: missing manager_number ({manager_number}) or trunk_id ({trunk_id}).")
+
+        if os.getenv("MANTRAASSIST_BACKEND_URL"):
+            try:
+                webhook_payload = {
+                    "event": "HANDOFF_REQUESTED",
+                    "data": {
+                        "room_name": self.room_name,
+                        "reason": reason,
+                        "department": department,
+                        "manager_name": "Jignesh",
+                        "manager_phone": manager_number,
+                        "call_id": payload.get("call_id") or payload.get("voice_id"),
+                        "lead_id": payload.get("lead_id"),
+                        "client_name": payload.get("client_name", "User"),
+                    }
+                }
+                create_bg_task(send_to_backend(webhook_payload))
+            except Exception as wb_err:
+                logger.error(f"Failed to send HANDOFF_REQUESTED webhook: {wb_err}")
+
+        try:
+            if self.agent and hasattr(self.agent, "_session") and self.agent._session:
+                self.agent._session.interrupt()
+        except Exception as e:
+            logger.debug(f"Agent interrupt unavailable (non-fatal): {e}")
+
+        return f"Transfer initiated to Manager Jignesh ({manager_number}). Agent is now in silent transcript recording mode."
 
     @llm.function_tool(
         description=(
@@ -629,40 +613,3 @@ class AssistantFunctions:
         return result
 
     # Removed query_knowledge_base tool as per user request to inject KB directly into the main job
-
-    # @llm.ai_callable(description="Transfer the call to a human assistant when requested or if the issue is too complex.")
-    # async def transfer_to_human(
-    #     self,
-    #     reason: Annotated[str, "The reason why a human is needed"]
-    # ):
-    #     logger.info(f"Handoff requested. Reason: {reason}")
-    #     self.handoff_triggered = True
-    #
-    #     # Parse metadata to get call/lead IDs
-    #     try:
-    #         payload = json.loads(self.job_metadata) if self.job_metadata else {}
-    #     except Exception:
-    #         payload = {}
-    #
-    #     # Notify backend
-    #     webhook_payload = {
-    #         "event": "HANDOFF_REQUESTED",
-    #         "data": {
-    #             "room_name": self.room_name,
-    #             "reason": reason,
-    #             "call_id": payload.get("call_id") or payload.get("voice_id"),
-    #             "lead_id": payload.get("lead_id"),
-    #             "client_name": payload.get("client_name", "User"),
-    #         }
-    #     }
-    #     await send_to_backend(webhook_payload)
-    #
-    #     if self.agent:
-    #         logger.info("Handoff triggered — switching to passive monitoring instructions")
-    #         await self.agent.update_instructions(
-    #             "A human has joined the call. You are now in PASSIVE MONITORING MODE. "
-    #             "DO NOT speak. DO NOT respond to the user. DO NOT generate any audio. "
-    #             "Just observe and maintain the transcript for the final summary."
-    #         )
-    #
-    #     return "I am connecting you to a human assistant now. Please stay on the line. I will remain on the call to record and summarize our conversation."

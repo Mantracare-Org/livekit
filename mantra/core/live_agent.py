@@ -26,6 +26,10 @@ class MantraMultilingualAgent(Agent):
         tools: list[llm.Tool],
         model_settings: ModelSettings,
     ):
+        if self._cs.get("silent_mode") or self._cs.get("handoff_triggered"):
+            logger.info("[SILENT_MODE] Agent in silent monitoring mode — suppressing LLM response generation")
+            return
+
         # Synchronously align language before LLM generates text
         try:
             msgs = list(chat_ctx.messages()) if callable(getattr(chat_ctx, "messages", None)) else (chat_ctx.messages if isinstance(getattr(chat_ctx, "messages", None), list) else [])

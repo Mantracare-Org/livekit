@@ -470,6 +470,7 @@ async def entrypoint(ctx: JobContext):
         fnc_ctx.clarify_product_service,
         fnc_ctx.find_nearest_location,
         fnc_ctx.check_doctor_availability,
+        fnc_ctx.transfer_to_human,
     ]
 
     agent = make_multilingual_agent(
