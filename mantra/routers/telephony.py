@@ -178,6 +178,7 @@ async def handle_outbound_call_webhook(request: Request):
         payload_meta = {}
     payload_meta["call_initiated_at"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     payload_meta.setdefault("provider", provider)
+    payload_meta.setdefault("direction", "outbound")
     payload["metadata"] = payload_meta
 
     if payload.get("org_id") and not payload.get("kb_ids"):

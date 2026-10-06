@@ -137,7 +137,7 @@ async def call_logs(log_data: dict) -> str:
         if conn:
             await conn.close()
         return "Error: call_id is required in log_data"
-
+    import json
     try:
         call_log_val = log_data.get("call_log")
         if isinstance(call_log_val, (dict, list)):
