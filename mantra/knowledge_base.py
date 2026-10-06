@@ -31,7 +31,7 @@ def build_search_query(use_generated_column: bool = True) -> str:
         SELECT id, kb_id, title, content, source_type, page_meta, content_in_text, created_at,
                ts_rank({vector_expr}, websearch_to_tsquery('{FTS_CONFIG}', $2)) as similarity
         FROM kb_pages
-        WHERE kb_id = ANY($1::text[])
+        WHERE (kb_id = ANY($1::text[]) OR page_meta->>'org_id' = ANY($1::text[]))
           AND {vector_expr} @@ websearch_to_tsquery('{FTS_CONFIG}', $2)
           AND ($4::text[] IS NULL OR 
               (jsonb_typeof(page_meta->'tags_name') = 'array' AND page_meta->'tags_name' ?| $4::text[]) OR
@@ -52,7 +52,7 @@ def build_loose_search_query(use_generated_column: bool = True) -> str:
         SELECT id, kb_id, title, content, source_type, page_meta, content_in_text, created_at,
                ts_rank({vector_expr}, plainto_tsquery('{FTS_CONFIG}', $2)) as similarity
         FROM kb_pages
-        WHERE kb_id = ANY($1::text[])
+        WHERE (kb_id = ANY($1::text[]) OR page_meta->>'org_id' = ANY($1::text[]))
           AND {vector_expr} @@ plainto_tsquery('{FTS_CONFIG}', $2)
           AND ($4::text[] IS NULL OR 
               (jsonb_typeof(page_meta->'tags_name') = 'array' AND page_meta->'tags_name' ?| $4::text[]) OR
@@ -102,7 +102,7 @@ def build_list_docs_query() -> str:
         SELECT id, kb_id, title, content, source_type, page_meta, content_in_text, created_at,
                0.0 as similarity
         FROM kb_pages
-        WHERE kb_id = ANY($1::text[])
+        WHERE (kb_id = ANY($1::text[]) OR page_meta->>'org_id' = ANY($1::text[]))
         ORDER BY created_at DESC
         LIMIT $2
     """
@@ -264,7 +264,7 @@ class PostgresKnowledgeBase(KnowledgeBase):
                 """
                 SELECT id, kb_id, title, content, source_type, page_meta, content_in_text, created_at
                 FROM kb_pages
-                WHERE kb_id = ANY($1)
+                WHERE (kb_id = ANY($1::text[]) OR page_meta->>'org_id' = ANY($1::text[]))
                 ORDER BY created_at ASC
                 """,
                 kb_ids,
@@ -736,11 +736,11 @@ class PostgresKnowledgeBase(KnowledgeBase):
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
-                "SELECT id FROM kb_collections WHERE org_id = $1", org_id
+                "SELECT id FROM kb_collections WHERE org_id::text = $1 OR id::text = $1", str(org_id)
             )
             kb_ids = [str(r["id"]) for r in rows]
-            if org_id not in kb_ids:
-                kb_ids.append(org_id)
+            if str(org_id) not in kb_ids:
+                kb_ids.append(str(org_id))
             return kb_ids
 
     async def get_process_stage_data_for_kb_ids(self, kb_ids: list[str]) -> list:
