@@ -1,8 +1,10 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)  
-> **Last Updated:** 2026-10-03  
-> **Status:** Active maintenance, Natural Voice Prosody (Em-Dashes & Semicolons) & Doctor Tool Guard
+> **Last Updated:** 2026-10-06  
+> **Status:** Active maintenance, Zero-Runtime Outbound KB Pre-Fetching & Action Payload Support
+
+- [x] **Zero-Runtime Outbound KB Pre-Fetching & Action Payload Support (2026-10-06):** Updated outbound call webhook metadata tagging in `mantra/routers/telephony.py` (`payload_meta["direction"] = "outbound"`) and agent job metadata context parsing in `mantra/agent.py` to recognize `"action": "outbound-call"`. Verified zero-runtime RAG pre-fetching: all `kb_collections` and KB document pages mapped to `org_id` are fetched during session `warmup()`, stored in memory, and injected into `agent.instructions` (`<!-- UPFRONT_KB_START -->`). Files: `mantra/agent.py`, `mantra/routers/telephony.py`.
 
 - [x] **Natural Voice Prosody: Em-Dashes, Semicolons & Doctor Tool Guard (2026-10-03):** Enhanced TTS voice prosody formatting in `mantra/core/live_agent.py` and `mantra/prompts.py` (Rules 9 & 10). Replaced heavy `. ... ` trailing pause spam with a varied human punctuation mix — em-dashes (`—`) for intro bridges and thought transitions, semicolons (`;`) for clause connections without pitch drops, and commas (`,`) for light breath pauses. Restricted `check_doctor_availability` tool description and system prompt Step 3 in `mantra/core/assistant_functions.py` and `mantra/prompts.py` to **doctor and medical consultations exclusively**. Files: `mantra/core/assistant_functions.py`, `mantra/prompts.py`, `mantra/core/live_agent.py`.
 

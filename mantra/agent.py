@@ -225,7 +225,7 @@ async def entrypoint(ctx: JobContext):
                         logger.warning(f"[DIAG] Inbound resolution failed for {routing_phone} — using dispatch rule defaults, call WILL connect")
                 else:
                     logger.warning("[DIAG] Inbound call has no routing phone in dispatch metadata")
-            elif meta_payload.get("direction") == "outbound":
+            elif meta_payload.get("direction") == "outbound" or meta_payload.get("action") == "outbound-call":
                 org_id = meta_payload.get("org_id")
                 logger.info(f"[DIAG] Outbound call detected — org_id={org_id}, resolving KB...")
                 if org_id:

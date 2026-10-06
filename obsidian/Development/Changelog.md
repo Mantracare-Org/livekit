@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-06
+
+### Zero-Runtime Outbound KB Pre-Fetching & Action Payload Support
+
+- **feat:** Updated outbound call webhook metadata tagging in `mantra/routers/telephony.py` (`payload_meta["direction"] = "outbound"`) and agent job metadata context parsing in `mantra/agent.py` to support `"action": "outbound-call"`.
+- **arch:** Verified end-to-end zero-runtime RAG flow for outbound calls: all `kb_collections` and KB documents associated with an `org_id` are resolved and pre-fetched into memory during session `warmup()`, then injected directly into `agent.instructions` (`<!-- UPFRONT_KB_START -->`). Ensures zero-latency KB document retrieval during live outbound turns without runtime database query delays.
+- **Files:** `mantra/agent.py`, `mantra/routers/telephony.py`, `obsidian/Development/Changelog.md`, `obsidian/Development/Current Sprint.md`.
+
 ## 2026-10-03
 
 ### Natural Voice Prosody: Em-Dashes, Semicolons & Doctor Tool Guard
