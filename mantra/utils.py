@@ -586,6 +586,9 @@ async def send_to_backend(payload: dict, max_retries: int = 3, force: bool = Fal
     dedupe_key = f"{call_id}_{ai_call_id}" if (call_id and ai_call_id) else call_id
     is_retry_payload = force or (event_type in ("CALL_RETRY", "call_retry"))
 
+    endpoint_path = "/v1/webhooks/n8n/" if is_retry_payload else "/v1/webhooks/n8n/summary"
+    url = f"{base_url}{endpoint_path}"
+
     if not await _claim_backend_delivery(dedupe_key, force=is_retry_payload):
         # Another path (agent or ui_server) already owns this delivery — record that we skipped it.
         await record_backend_delivery(
@@ -598,13 +601,11 @@ async def send_to_backend(payload: dict, max_retries: int = 3, force: bool = Fal
             call_id=call_id,
             payload=payload,
             state="skipped_dedupe",
-            endpoint=f"{base_url}/v1/webhooks/n8n/summary",
+            endpoint=url,
             ai_call_id=ai_call_id,
             error="delivery already claimed by another path",
         )
         return True  # already delivered (or in-flight) by the other path
-
-    url = f"{base_url}/v1/webhooks/n8n/summary"
 
     if not payload:
         payload_str = '{}'
