@@ -259,7 +259,6 @@ async def handle_outbound_call_webhook(request: Request):
                 "data": {
                     "client_id": payload.get("lead_id"),
                     "call_id": call_id,
-                    "call_status": sip_status,
                     "call_transcript": None,
                     "ai_summary": f"{reason}: {sip_status}",
                     "recording_url": None,

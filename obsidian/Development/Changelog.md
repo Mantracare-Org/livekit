@@ -10,6 +10,13 @@
 
 ## 2026-10-03
 
+### JEV AI Decision Processing Delegation & Domain-Agnostic Summary Refactor
+
+- **feat:** Delegated 100% of post-call CRM decision-making (`call_status`, `new_stage_id`, `user_intent`, `appointment_metadata`) from LiveKit to JEV AI Pro via Mantra Assist API (`apps/api`) BullMQ `CallSummaryQueue`.
+- **feat:** Refactored `SessionRecorder.generate_summary` prompt in `mantra/utils.py` to be **100% domain-agnostic** across healthcare, sales, support, real estate, education, and SaaS verticals. Outputs a 4-part structured narrative summary detailing: Intent, Key Discussion Details, Action & Booking Metadata, and Outcome & Resolution.
+- **perf:** Stripped all null, non-existent, and empty fields (`new_stage_id`, `call_status`, `user_intent`, `call_intent`, `next_call_on`, `appointment_metadata`, empty custom field objects) from LiveKit's outgoing webhook payloads (`CALL_DATA_INBOUND_UPDATE`, `CALL_DATA_UPDATE`, `CALL_RETRY`), drastically reducing payload weight.
+- **Files:** `mantra/core/finalize.py`, `mantra/utils.py`, `obsidian/Features/Post-Call Processing.md`, `obsidian/Architecture/Data Flow.md`, `obsidian/Development/Changelog.md`.
+
 ### Natural Voice Prosody: Em-Dashes, Semicolons & Doctor Tool Guard
 
 - **feat:** Enhanced TTS voice prosody formatting in `mantra/core/live_agent.py` and `mantra/prompts.py` (Rules 9 & 10). Replaced heavy `. ... ` trailing pause spam with a varied human punctuation mix — em-dashes (`—`) for intro bridges and thought transitions, semicolons (`;`) for clause connections without pitch drops, and commas (`,`) for light breath pauses.
