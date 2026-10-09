@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-08
+
+### Call Transfer Recording Track Overlap Fix
+
+- **fix:** Added track start time offset tracking (`self._track_offsets`) in `SessionRecorder` (`mantra/utils.py`). When a new audio track is subscribed (such as a late-joining human manager during call transfer), its start offset relative to `self.start_time` is recorded.
+- **fix:** In `get_combined_mp3_bytes()`, leading silence samples (`offset_sec * SAMPLE_RATE`) are prepended to each track array before audio mixing, ensuring chronological alignment across all participants without audio overlap.
+- **Files:** `mantra/utils.py`, `obsidian/Development/Changelog.md`, `obsidian/Development/Current Sprint.md`.
+
 ## 2026-10-06
 
 ### Zero-Runtime Outbound KB Pre-Fetching & Action Payload Support

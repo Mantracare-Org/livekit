@@ -545,6 +545,7 @@ class SessionRecorder:
     
     def __init__(self):
         self._tracks: Dict[str, List[bytes]] = {}
+        self._track_offsets: Dict[str, float] = {}
         self._recording_tasks: List[asyncio.Task] = []
         self.start_time = datetime.now()
         self.end_time = None
@@ -558,7 +559,10 @@ class SessionRecorder:
         track_id = track.sid or str(id(track))
         if track_id in self._tracks:
             return
+        offset_seconds = (datetime.now() - self.start_time).total_seconds()
+        self._track_offsets[track_id] = max(0.0, offset_seconds)
         self._tracks[track_id] = []
+        logger.info(f"[RECORDER] Started recording track '{label}' ({track_id}) with start offset {self._track_offsets[track_id]:.2f}s")
         task = asyncio.create_task(self._consume_track(track, track_id, label))
         self._recording_tasks.append(task)
 
@@ -591,9 +595,16 @@ class SessionRecorder:
             return b""
 
         track_arrays = []
-        for frames in self._tracks.values():
+        for track_id, frames in self._tracks.items():
             if frames:
-                track_arrays.append(np.frombuffer(b"".join(frames), dtype=np.int16))
+                raw_arr = np.frombuffer(b"".join(frames), dtype=np.int16)
+                offset_sec = self._track_offsets.get(track_id, 0.0)
+                leading_samples = int(offset_sec * self.SAMPLE_RATE)
+                if leading_samples > 0:
+                    padded_arr = np.pad(raw_arr, (leading_samples, 0), mode="constant")
+                else:
+                    padded_arr = raw_arr
+                track_arrays.append(padded_arr)
 
         if not track_arrays:
             return b""
