@@ -22,14 +22,14 @@ from livekit.plugins import deepgram
 
 logger = logging.getLogger("mantra.language_manager")
 
-SUPPORTED_LANGUAGES: Set[str] = {"en", "hi"}
+SUPPORTED_LANGUAGES: Set[str] = {"en", "hi", "mr"}
 
 LANGUAGE_NAMES: Dict[str, str] = {
     "en": "English",
     "hi": "Hindi",
     # "kn": "Kannada",
     # "te": "Telugu",
-    # "mr": "Marathi",
+    "mr": "Marathi",
 }
 
 NATIVE_SCRIPTS: Dict[str, str] = {
@@ -37,7 +37,7 @@ NATIVE_SCRIPTS: Dict[str, str] = {
     "hi": "Devanagari (हिन्दी)",
     # "kn": "Kannada (ಕನ್ನಡ)",
     # "te": "Telugu (తెలుగు)",
-    # "mr": "Devanagari (मराठी)",
+    "mr": "Devanagari (मराठी)",
 }
 
 def resolve_stt_keyterms(
@@ -155,18 +155,17 @@ def resolve_stt_language(
     """
     lang = (language or "en").strip().lower()
 
+    if lang in ("mr", "marathi", "mr-in"):
+        return "mr"
     if lang in ("hi", "hindi"):
         return "hi"
     if lang == "multi":
         return "multi"
-
-    # If it's already a non-English locale (e.g. 'en-US', 'en-GB', 'es', 'fr'), use it
     if "-" in lang and lang != "en-in":
         return lang
     elif lang not in ("en", "en-in"):
         return lang
 
-    # Check country code if provided
     cc = (country_code or "").strip().upper()
     if cc in ("IN", "IND", "INDIA"):
         return "en-IN"
@@ -179,7 +178,6 @@ def resolve_stt_language(
     elif cc in ("NZ", "NZL", "NEW ZEALAND"):
         return "en-NZ"
 
-    # Infer from E.164 phone number prefix
     phone = (phone_number or "").strip()
     if phone.startswith("sip_"):
         phone = phone[4:]
@@ -201,7 +199,6 @@ def resolve_stt_language(
     elif phone.startswith("64") and len(phone) >= 10:
         return "en-NZ"
 
-    # Default Indian English locale
     return "en-IN"
 
 
@@ -239,9 +236,17 @@ class NativeLanguageDetector:
         # if counts["telugu"] > 0 and counts["telugu"] >= max(counts["devanagari"], counts["kannada"], counts["latin"]):
         #     return "te", counts["telugu"] / total
 
-        # 3. Devanagari script block -> Hindi
+        # 3. Devanagari script block -> Hindi / Marathi
         if counts["devanagari"] > 0:
             ratio = counts["devanagari"] / total
+            if current_lang == "mr":
+                return "mr", max(ratio, 0.95)
+            try:
+                detected = langdetect.detect(text)
+                if detected in SUPPORTED_LANGUAGES:
+                    return detected, 0.95
+            except Exception:
+                pass
             return "hi", max(ratio, 0.95)
 
         # 4. Latin script block -> Statistical ML detection
@@ -314,18 +319,27 @@ class LanguageManager:
     Zero hardcoded keyword dictionaries.
     """
 
-    def __init__(self, initial_language: str = "en", response_mode: Optional[str] = None):
+    def __init__(
+        self,
+        initial_language: str = "en",
+        response_mode: Optional[str] = None,
+        marathi_allowed: bool = False,
+    ):
         normalized_init = self.normalize_language_code(initial_language)
         self.detector = NativeLanguageDetector()
         self.tracker = LanguageHysteresisTracker(normalized_init)
+        self.marathi_allowed = marathi_allowed or (normalized_init == "mr")
         requested_mode = str(response_mode or normalized_init).lower().strip()
         if requested_mode in {"hi", "hindi", "hi-in"}:
             self.response_mode = "hi"
+        elif requested_mode in {"mr", "marathi", "mr-in"}:
+            self.response_mode = "mr"
+            self.marathi_allowed = True
         elif requested_mode in {"en", "english", "en-us", "en-in", "en-gb"}:
             self.response_mode = "en"
         else:
             self.response_mode = "hinglish"
-        logger.info(f"[LANG] LanguageManager active with language='{self.tracker.current_language}'")
+        logger.info(f"[LANG] LanguageManager active with language='{self.tracker.current_language}', response_mode='{self.response_mode}', marathi_allowed={self.marathi_allowed}")
 
     @staticmethod
     def normalize_language_code(code: Optional[str]) -> str:
@@ -339,8 +353,8 @@ class LanguageManager:
             return "hi"
         # elif raw in ["te", "telugu", "te-in"]:
         #     return "te"
-        # elif raw in ["mr", "marathi", "mr-in"]:
-        #     return "mr"
+        elif raw in ["mr", "marathi", "mr-in"]:
+            return "mr"
         elif raw in ["en", "english", "en-us", "en-in", "en-gb", "multi", "multilingual", "bilingual", "hinglish", "en-hi", "hi-en"]:
             return "en"
         return "en"
@@ -355,6 +369,10 @@ class LanguageManager:
         if not detected_lang or detected_lang not in SUPPORTED_LANGUAGES:
             detected_lang = self.tracker.current_language
             confidence = 0.5
+
+        # Guard: Do not auto-switch to Marathi unless Marathi was explicitly allowed/mentioned in prompt
+        if detected_lang == "mr" and not self.marathi_allowed:
+            detected_lang = "hi" if self.tracker.current_language == "hi" else "en"
 
         language, switched = self.tracker.evaluate_transition(
             detected_lang=detected_lang,
@@ -386,6 +404,7 @@ class LanguageManager:
                 f"- Use natural speech punctuation: commas (,), ellipses (...), and hyphens (-) for natural breathing pauses so the voice sounds like a live human on a phone call, not a monotone robot.\n"
                 f"- Natural English fillers: 'Got it...', 'Sure...', 'Right...', 'I see...'.\n"
                 f"- Do NOT insert Hindi words or Hinglish fillers when the caller is speaking English.\n"
+                f"- Do NOT switch to Marathi unless explicitly mentioned to use Marathi in the prompt.\n"
                 f"- Keep the phone response concise, natural, and polite."
             )
 
@@ -397,7 +416,20 @@ class LanguageManager:
                 f"- Incorporate warm Indian honorifics and speech pauses: 'हाँ जी...', 'अच्छा...', 'बिलकुल जी', 'जी'.\n"
                 f"- Use commas and ellipses (...) for expressive, human phone cadence.\n"
                 f"- Keep commonly understood English product or medical terms when natural.\n"
+                f"- Do NOT switch to Marathi unless explicitly mentioned to use Marathi in the prompt.\n"
                 f"- Keep the phone response concise, natural, and polite."
+            )
+
+        if self.response_mode == "mr":
+            return (
+                f"LANGUAGE RULE (MARATHI PROSODY — CRITICAL):\n"
+                f"- CURRENT DETECTED UTTERANCE LANGUAGE: {lang_name} ({lang_code}).\n"
+                f"- Respond in natural, warm Marathi using Devanagari script.\n"
+                f"- Use warm Indian honorifics and speech pauses: 'हो...', 'नक्कीच...', 'नमस्कार', 'जी'.\n"
+                f"- Use commas and ellipses (...) for expressive, human phone cadence.\n"
+                f"- Keep commonly understood English product or medical terms when natural.\n"
+                f"- Keep the phone response concise, natural, and polite.\n"
+                f"- Do NOT switch to any other language unless explicitly requested in the prompt."
             )
 
         return (
@@ -414,7 +446,7 @@ class LanguageManager:
             f"- Use commas (,) and ellipses (...) for warm micro-pauses so the voice engine produces natural pitch variations and human cadence.\n"
             f"- Avoid pure English sentences and avoid pure Hindi (Devanagari-only) sentences.\n"
             f"- Use simple everyday words. Prefer Roman script for Hindi words so the TTS engine pronounces them naturally.\n"
-            f"- STRICT: Never switch to any other language. Only Hinglish / Hindi-English mix."
+            f"- STRICT: Never switch to any other language unless requested. Do NOT switch to Marathi unless mentioned to use Marathi in the prompt."
         )
 
 
@@ -438,8 +470,7 @@ def _score_transcript(lang: str, text: str, confidence: float) -> float:
     #     score += 0.5 + length_bonus
     # elif lang == "te" and has_telugu:
     #     score += 0.5 + length_bonus
-    # elif lang in ("mr", "hi") and has_devanagari:
-    if lang == "hi" and has_devanagari:
+    if lang in ("hi", "mr") and has_devanagari:
         score += 0.5 + length_bonus
         try:
             detected = langdetect.detect(text)
