@@ -1,8 +1,10 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)  
-> **Last Updated:** 2026-10-06  
-> **Status:** Active maintenance, Zero-Runtime Outbound KB Pre-Fetching & Action Payload Support
+> **Last Updated:** 2026-10-09  
+> **Status:** Active maintenance, Marathi Language Enablement & Prompt Guard
+
+- [x] **Marathi Language Enablement & Prompt Guard (2026-10-09):** Enabled Marathi (`mr`) language support across `mantra/language_manager.py` and `mantra/core/engines.py`. Added Marathi prosody directives and configured strict prompt guard directives and `marathi_allowed` state evaluation to ensure the agent does not switch to Marathi unless explicitly requested or mentioned in the call prompt. Files: `mantra/language_manager.py`, `mantra/core/engines.py`, `mantra/prompts.py`.
 
 - [x] **Zero-Runtime Outbound KB Pre-Fetching & Action Payload Support (2026-10-06):** Updated outbound call webhook metadata tagging in `mantra/routers/telephony.py` (`payload_meta["direction"] = "outbound"`) and agent job metadata context parsing in `mantra/agent.py` to recognize `"action": "outbound-call"`. Verified zero-runtime RAG pre-fetching: all `kb_collections` and KB document pages mapped to `org_id` are fetched during session `warmup()`, stored in memory, and injected into `agent.instructions` (`<!-- UPFRONT_KB_START -->`). Files: `mantra/agent.py`, `mantra/routers/telephony.py`.
 

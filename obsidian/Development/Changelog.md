@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-09
+
+### Marathi Language Enablement & Prompt Guard
+
+- **feat:** Re-enabled Marathi (`"mr"`) language support across `mantra/language_manager.py` (`SUPPORTED_LANGUAGES`, `LANGUAGE_NAMES`, `NATIVE_SCRIPTS`, `normalize_language_code`, `resolve_stt_language`, `NativeLanguageDetector`, `_score_transcript`) and `mantra/core/engines.py` (`build_language_manager`).
+- **feat:** Added Marathi prosody prompt directive (`LANGUAGE RULE (MARATHI PROSODY — CRITICAL)`) supporting warm Devanagari Marathi speech output.
+- **guard:** Implemented `marathi_allowed` state in `LanguageManager` and updated prompt directives/rules in `mantra/prompts.py` (`CRITICAL OVERRIDING RULES` Rule 5) and `mantra/language_manager.py` to strictly guard against automatic/dynamic switching to Marathi unless Marathi is explicitly mentioned or requested in the prompt/payload (`marathi_allowed=True`).
+- **Files:** `mantra/language_manager.py`, `mantra/core/engines.py`, `mantra/prompts.py`, `obsidian/Development/Changelog.md`, `obsidian/Development/Current Sprint.md`.
+
 ## 2026-10-06
 
 ### Zero-Runtime Outbound KB Pre-Fetching & Action Payload Support

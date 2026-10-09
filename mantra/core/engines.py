@@ -160,6 +160,7 @@ def build_language_manager(payload: dict | None):
     Returns (language_mgr, raw_lang, requested_lang, response_mode).
     """
     raw_lang = None
+    prompt_text = ""
     if isinstance(payload, dict):
         ai_p = payload.get("ai_payload") if isinstance(payload.get("ai_payload"), dict) else {}
         raw_lang = (
@@ -168,16 +169,29 @@ def build_language_manager(payload: dict | None):
             or ai_p.get("language")
             or ai_p.get("lang")
         )
+        prompt_text = str(payload.get("prompt") or "").lower()
 
     requested_lang = str(raw_lang or "").strip().lower()
+    marathi_in_prompt = "marathi" in prompt_text or "मराठी" in prompt_text or requested_lang in {"mr", "marathi", "mr-in"}
+
+    if marathi_in_prompt and requested_lang not in {"hi", "hindi", "hi-in", "en", "english", "en-us", "en-in"}:
+        raw_lang = "mr"
+        requested_lang = "mr"
+
     response_mode = (
         "hi"
         if requested_lang in {"hi", "hindi", "hi-in"}
+        else "mr"
+        if requested_lang in {"mr", "marathi", "mr-in"}
         else "en"
         if requested_lang in {"en", "english", "en-us", "en-in", "en-gb"}
         else "en"
     )
-    language_mgr = LanguageManager(initial_language=raw_lang, response_mode=response_mode)
+    language_mgr = LanguageManager(
+        initial_language=raw_lang,
+        response_mode=response_mode,
+        marathi_allowed=marathi_in_prompt,
+    )
     return language_mgr, raw_lang, requested_lang, response_mode
 
 
