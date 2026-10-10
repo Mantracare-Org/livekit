@@ -27,21 +27,7 @@ logger = logging.getLogger("mantra.call_monitors")
 
 _PIPELINE_ERROR_ALERT_COOLDOWN = 300.0  # seconds between alert emails per call
 
-INBOUND_FAREWELL_PHRASES = [
-    "goodbye",
-    "good bye",
-    "bye bye",
-    "take care",
-    "have a great day",
-    "have a good day",
-    "have a nice day",
-    "talk to you later",
-    "see you later",
-]
-OUTBOUND_FAREWELL_PHRASES = INBOUND_FAREWELL_PHRASES + [
-    "thanks for calling",
-    "thank you for calling",
-]
+# Farewell phrases removed — calls terminate exclusively via end_call tool, participant disconnect, or inactivity monitor.
 
 
 async def positive_intent_monitor(cc: CallContext):
@@ -188,47 +174,10 @@ async def inactivity_monitor(cc: CallContext):
 
 
 async def farewell_safety_net(cc: CallContext):
-    """Detect if the agent said goodbye without calling end_call, and force disconnect."""
-    logger.info("[DIAG] farewell_safety_net: Started")
-    await asyncio.sleep(10.0)  # Let the conversation warm up first
-    farewell_phrases = INBOUND_FAREWELL_PHRASES if cc.is_inbound else OUTBOUND_FAREWELL_PHRASES
-    while cc.ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
-        await asyncio.sleep(3.0)
-        if cc.call_state.get("end_call_triggered"):
-            logger.info("[DIAG] farewell_safety_net: end_call already handling disconnect. Exiting safety net.")
-            break
-        if not (cc.session and hasattr(cc.session, "history") and cc.session.history):
-            continue
-        try:
-            messages = list(cc.session.history.messages())
-            if not messages:
-                continue
-            last_msg = messages[-1]
-            role = getattr(last_msg, "role", "")
-            content = str(getattr(last_msg, "content", "")).lower()
-            if role == "assistant" and any(
-                phrase in content for phrase in farewell_phrases
-            ):
-                if cc.call_state.get("end_call_triggered"):
-                    logger.info("[DIAG] farewell_safety_net: end_call triggered concurrently. Exiting.")
-                    break
-                logger.warning(
-                    "[DIAG] farewell_safety_net: Agent said goodbye but end_call was never invoked. Disconnecting after speech completes."
-                )
-                cc.call_state["timeline"].append(
-                    {
-                        "event": "Farewell Safety Net Triggered",
-                        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
-                    }
-                )
-                await graceful_disconnect_after_speech(
-                    cc.ctx,
-                    session=cc.session,
-                    call_state=cc.call_state,
-                )
-                break
-        except Exception as e:
-            logger.info(f"Farewell safety net error: {e}")
+    """Deprecated: Hardcoded phrase scanning removed to prevent premature mid-call disconnections.
+    Calls terminate gracefully via end_call tool, participant disconnect, or inactivity monitor.
+    """
+    return
 
 
 async def call_limiter(cc: CallContext):
@@ -394,6 +343,7 @@ def register_session_handlers(cc: CallContext):
     @cc.session.on("user_state_changed")
     def on_user_state(ev):
         logger.info(f"[DIAG] User state change: {getattr(ev, 'old_state', 'None')} -> {ev.new_state}")
+        cc.call_state["user_state"] = ev.new_state
         if ev.new_state == "speaking":
             cc.call_state["last_activity"] = asyncio.get_event_loop().time()
             cc.call_state["prompted_inactivity"] = False

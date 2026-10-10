@@ -2,13 +2,13 @@
 
 ## 2026-10-10
 
-### End Call Graceful Disconnect & Speech Completion Guard
+### End Call Graceful Disconnect & Mid-Conversation Disconnect Prevention
 
-- **fix:** Fixed premature call disconnection/decline cutting off the agent's final farewell turn before it finishes speaking.
+- **fix:** Resolved mid-conversation disconnect where calls were dropped while the caller was speaking. Root cause: background `farewell_safety_net()` scanned messages for hardcoded phrases (e.g. "thanks for calling", "take care") and triggered a disconnect mid-call when the user was speaking because the user's utterance was not yet committed to history.
+- **fix:** Removed all hardcoded farewell phrase matching (`INBOUND_FAREWELL_PHRASES`, `OUTBOUND_FAREWELL_PHRASES`) and neutralized `farewell_safety_net()`. Calls now terminate exclusively through the `end_call` tool, remote participant hangup, or inactivity timeout.
+- **guard:** Added active user speaking guards in `graceful_disconnect_after_speech()` (`mantra/core/room_control.py`) and `AssistantFunctions.end_call()` (`mantra/core/assistant_functions.py`): if `session.user_state == "speaking"` at any point, disconnection is strictly blocked and aborted.
 - **feat:** Implemented `graceful_disconnect_after_speech()` in `mantra/core/room_control.py`: monitors the full speech lifecycle across `session.agent_state` (`thinking` -> `speaking` -> `listening`) and `session.output.audio._pending_playback_count`. Waits for the agent to finish thinking, stream TTS audio, and complete playout with a 300ms debounce and a 1.2s post-speech silence buffer to allow carrier SIP jitter buffers to drain cleanly before `_force_disconnect_room()` runs.
-- **fix:** Updated `AssistantFunctions.end_call()` in `mantra/core/assistant_functions.py` to trigger `graceful_disconnect_after_speech()` instead of an arbitrary 3-second sleep (`sleep(3.0)`), and synchronized `call_state["end_call_triggered"] = True` with timeline telemetry.
-- **fix:** Updated `farewell_safety_net()` in `mantra/core/call_monitors.py` to check `call_state.get("end_call_triggered")` (preventing duplicate/competing disconnect tasks) and migrated its fallback disconnect to `graceful_disconnect_after_speech()`.
-- **prompt:** Aligned system prompt instructions in `mantra/prompts.py` (`ENDING THE CALL`) and tool docstring in `mantra/core/assistant_functions.py` so the agent speaks a natural, unhurried warm goodbye while the line stays held until speech is completed.
+- **prompt:** Updated system prompt instructions in `mantra/prompts.py` (`ENDING THE CALL`) and tool docstrings in `mantra/core/assistant_functions.py` to enforce that the agent must complete its final closing statement first, and only call `end_call` after the statement is finished. Never invoke `end_call` while the user is talking.
 - **Files:** `mantra/core/room_control.py`, `mantra/core/assistant_functions.py`, `mantra/core/call_monitors.py`, `mantra/prompts.py`, `obsidian/Features/Voice Agent.md`, `obsidian/Development/Current Sprint.md`, `obsidian/Development/Changelog.md`.
 
 ## 2026-10-09

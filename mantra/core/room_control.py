@@ -80,16 +80,36 @@ async def graceful_disconnect_after_speech(
                         pass
         return False
 
+    def _user_is_speaking() -> bool:
+        if session is not None and hasattr(session, "user_state"):
+            return str(session.user_state) == "speaking"
+        if call_state is not None:
+            return str(call_state.get("user_state", "")) == "speaking"
+        return False
+
     def _is_speaking() -> bool:
         return _agent_state() == "speaking" or _has_pending_audio()
 
     def _is_thinking() -> bool:
         return _agent_state() in ("thinking", "initializing")
 
+    # If the user is actively speaking, never disconnect
+    if _user_is_speaking():
+        logger.info("[DIAG] graceful_disconnect_after_speech: User is actively speaking. Aborting disconnect.")
+        if call_state is not None:
+            call_state["end_call_triggered"] = False
+        return
+
     # Phase A: Wait for speech to start OR thinking to settle.
     # Give the LLM/TTS pipeline a moment to transition into thinking/speaking if tool just returned.
     has_spoken = False
     while _room_connected() and (loop.time() - start_time) < timeout:
+        if _user_is_speaking():
+            logger.info("[DIAG] graceful_disconnect_after_speech: User started speaking during Phase A. Aborting disconnect.")
+            if call_state is not None:
+                call_state["end_call_triggered"] = False
+            return
+
         if _is_speaking():
             has_spoken = True
             logger.info(f"[DIAG] graceful_disconnect_after_speech: Agent is actively speaking (state={_agent_state()}).")
@@ -114,6 +134,12 @@ async def graceful_disconnect_after_speech(
     if _is_speaking() or has_spoken:
         speaking_wait_start = loop.time()
         while _room_connected() and (loop.time() - start_time) < timeout:
+            if _user_is_speaking():
+                logger.info("[DIAG] graceful_disconnect_after_speech: User started speaking during Phase B. Aborting disconnect.")
+                if call_state is not None:
+                    call_state["end_call_triggered"] = False
+                return
+
             if _is_speaking():
                 await asyncio.sleep(0.1)
             else:
@@ -132,10 +158,21 @@ async def graceful_disconnect_after_speech(
         logger.info(f"[DIAG] graceful_disconnect_after_speech: Waiting {post_speech_silence:.1f}s post-speech silence buffer.")
         silence_waited = 0.0
         while _room_connected() and silence_waited < post_speech_silence:
+            if _user_is_speaking():
+                logger.info("[DIAG] graceful_disconnect_after_speech: User started speaking during Phase C. Aborting disconnect.")
+                if call_state is not None:
+                    call_state["end_call_triggered"] = False
+                return
+
             # If agent unexpectedly resumed speaking or thinking during buffer, resume waiting
             if _is_speaking() or _is_thinking():
                 logger.info("[DIAG] graceful_disconnect_after_speech: Agent resumed speech/thinking during buffer, resuming wait.")
                 while _room_connected() and (_is_speaking() or _is_thinking()) and (loop.time() - start_time) < timeout:
+                    if _user_is_speaking():
+                        logger.info("[DIAG] graceful_disconnect_after_speech: User started speaking while agent resumed. Aborting.")
+                        if call_state is not None:
+                            call_state["end_call_triggered"] = False
+                        return
                     await asyncio.sleep(0.1)
                 silence_waited = 0.0
             await asyncio.sleep(0.1)
@@ -143,6 +180,11 @@ async def graceful_disconnect_after_speech(
 
     # Phase D: Disconnect room
     if _room_connected():
+        if _user_is_speaking():
+            logger.info("[DIAG] graceful_disconnect_after_speech: User is speaking right before Phase D. Aborting disconnect.")
+            if call_state is not None:
+                call_state["end_call_triggered"] = False
+            return
         total_waited = loop.time() - start_time
         logger.info(f"[DIAG] graceful_disconnect_after_speech: Disconnecting room after {total_waited:.1f}s total wait.")
         await _force_disconnect_room(ctx)

@@ -330,12 +330,16 @@ class AssistantFunctions:
                 logger.warning(f"Auto-extend failed: {e}")
 
     @llm.function_tool(
-        description="End the call when the conversation is finished and the caller has no further questions. Invoke this tool when saying your final warm goodbye to the caller. The call will automatically stay connected until your goodbye line is completely finished speaking. NEVER call this tool while booking an appointment, discussing products/services, answering questions, or when the user says 'yes', 'sure', or agrees to an appointment."
+        description="End the call. Call this tool ONLY after your final closing statement has completely finished speaking to the caller and the conversation is done. NEVER call this tool while the caller is speaking, booking an appointment, discussing products/services, answering questions, or when the user says 'yes', 'sure', or agrees to an appointment."
     )
     async def end_call(self):
         if self.call_state and not self.call_state.get("user_has_spoken", False) and not self.call_state.get("initial_greeting_done", False):
             logger.warning("[DIAG] end_call invoked prematurely during initial greeting / before user spoke. Ignoring tool call.")
             return "Call cannot be ended before the conversation starts. Please greet the user and proceed with the conversation."
+
+        if (self.session and hasattr(self.session, "user_state") and str(self.session.user_state) == "speaking") or (self.call_state and self.call_state.get("user_state") == "speaking"):
+            logger.warning("[DIAG] end_call invoked while user is speaking. Ignoring tool call.")
+            return "The user is currently speaking. Do not end the call while the user is talking."
 
         if self.session and hasattr(self.session, "history") and self.session.history:
             try:
