@@ -64,7 +64,7 @@ Fetches the org's department list via `get_org_departments`, keeps names interna
 Authoritative MCP tool for scheduling (`receive_doctor_availability`). Validates `department` exactly against the org list (rejects invented values like `Ophthalmology` with a retry directive), captures `provider_user_id` into `appointment_metadata`, and never falls back to KB.
 
 ### `end_call()`
-Graceful disconnect. Triggers a 3s delay then force-disconnects the room. Guarded before greeting completion / user speech so turn-1 hallucinations can't kill the call. Required for LLM to end calls — safety net catches cases where LLM says goodbye without calling this.
+Graceful disconnect. Automatically monitors speech playout via `graceful_disconnect_after_speech`: waits for the agent's final farewell turn to generate, TTS audio frames to finish playing out (`session.agent_state != "speaking"` and `_pending_playback_count == 0`), plus a 1.2s post-speech silence buffer for telephony jitter buffers, before force-disconnecting the room. Guarded before greeting completion / user speech and during active appointment booking. Safety net yields if `end_call` is already triggered or gracefully waits for speech completion as well.
 
 ### `recognize_client` (pre-greeting, not an LLM tool)
 Bounded (3s) MCP call before the inbound greeting: resolves `org_id` from the dispatch DID, reads the caller number from LiveKit SIP participant metadata (never the routing DID), queries `GET /webhooks/mcp/lead?org_id=&phone=`. Accepts direct or nested names; null/timeout → anonymous, never blocks the call.

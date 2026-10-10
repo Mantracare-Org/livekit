@@ -1,8 +1,10 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)  
-> **Last Updated:** 2026-10-09  
-> **Status:** Active maintenance, Marathi Language Enablement & Prompt Guard
+> **Last Updated:** 2026-10-10  
+> **Status:** Active maintenance, End Call Graceful Disconnect & Speech Completion Guard
+
+- [x] **End Call Graceful Disconnect & Speech Completion Guard (2026-10-10):** Fixed premature call decline/disconnection cutting off the agent's final goodbye turn. Replaced arbitrary `sleep(3.0)` in `AssistantFunctions.end_call()` and `farewell_safety_net` with `graceful_disconnect_after_speech()` in `mantra/core/room_control.py`. Monitors `session.agent_state` (`thinking` -> `speaking` -> `listening`) and `session.output.audio._pending_playback_count` with a 300ms debounce and 1.2s post-speech silence buffer to guarantee the agent's closing sentence and carrier SIP jitter buffer play out completely before room teardown. Synchronized `call_state["end_call_triggered"]` to prevent `farewell_safety_net` racing, and aligned `end_call` prompt and tool docstrings in `mantra/prompts.py` and `mantra/core/assistant_functions.py`. Files: `mantra/core/room_control.py`, `mantra/core/assistant_functions.py`, `mantra/core/call_monitors.py`, `mantra/prompts.py`.
 
 - [x] **Marathi Language Enablement & Prompt Guard (2026-10-09):** Enabled Marathi (`mr`) language support across `mantra/language_manager.py` and `mantra/core/engines.py`. Added Marathi prosody directives and configured strict prompt guard directives and `marathi_allowed` state evaluation to ensure the agent does not switch to Marathi unless explicitly requested or mentioned in the call prompt. Files: `mantra/language_manager.py`, `mantra/core/engines.py`, `mantra/prompts.py`.
 

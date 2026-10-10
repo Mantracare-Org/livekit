@@ -18,7 +18,7 @@ from mantra.call_duration import (
     extend_call,
 )
 from mantra.core.common import CallContext, create_bg_task
-from mantra.core.room_control import _force_disconnect_room
+from mantra.core.room_control import _force_disconnect_room, graceful_disconnect_after_speech
 from mantra.email_alerts import send_crash_email
 from mantra.positive_intent import should_extend_from_history
 from mantra.utils import report_telemetry
@@ -194,6 +194,9 @@ async def farewell_safety_net(cc: CallContext):
     farewell_phrases = INBOUND_FAREWELL_PHRASES if cc.is_inbound else OUTBOUND_FAREWELL_PHRASES
     while cc.ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
         await asyncio.sleep(3.0)
+        if cc.call_state.get("end_call_triggered"):
+            logger.info("[DIAG] farewell_safety_net: end_call already handling disconnect. Exiting safety net.")
+            break
         if not (cc.session and hasattr(cc.session, "history") and cc.session.history):
             continue
         try:
@@ -206,8 +209,11 @@ async def farewell_safety_net(cc: CallContext):
             if role == "assistant" and any(
                 phrase in content for phrase in farewell_phrases
             ):
+                if cc.call_state.get("end_call_triggered"):
+                    logger.info("[DIAG] farewell_safety_net: end_call triggered concurrently. Exiting.")
+                    break
                 logger.warning(
-                    "[DIAG] farewell_safety_net: Agent said goodbye but end_call was never invoked. Force disconnecting."
+                    "[DIAG] farewell_safety_net: Agent said goodbye but end_call was never invoked. Disconnecting after speech completes."
                 )
                 cc.call_state["timeline"].append(
                     {
@@ -215,8 +221,11 @@ async def farewell_safety_net(cc: CallContext):
                         "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
                     }
                 )
-                await asyncio.sleep(3.0)  # Give TTS time to finish speaking
-                await _force_disconnect_room(cc.ctx)
+                await graceful_disconnect_after_speech(
+                    cc.ctx,
+                    session=cc.session,
+                    call_state=cc.call_state,
+                )
                 break
         except Exception as e:
             logger.info(f"Farewell safety net error: {e}")

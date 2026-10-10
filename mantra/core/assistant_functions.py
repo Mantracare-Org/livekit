@@ -13,7 +13,7 @@ from livekit.agents import Agent, JobContext, llm
 
 from mantra.core.common import create_bg_task, get_global_kb
 from mantra.core.inbound import format_upfront_kb_context, format_upfront_process_context
-from mantra.core.room_control import _force_disconnect_room
+from mantra.core.room_control import _force_disconnect_room, graceful_disconnect_after_speech
 from mantra.knowledge_base import PostgresKnowledgeBase
 from mantra.retriever import KnowledgeRetriever
 from mantra.utils import report_telemetry
@@ -35,6 +35,7 @@ class AssistantFunctions:
         self.room_name = room_name
         self.handoff_triggered = False
         self._end_call_triggered = False
+        self._disconnect_task = None
         self.call_state = call_state
         self.agent = None
         self.session = None
@@ -329,7 +330,7 @@ class AssistantFunctions:
                 logger.warning(f"Auto-extend failed: {e}")
 
     @llm.function_tool(
-        description="End the call. Call this tool ONLY after saying final goodbye when the conversation has completely ended and the caller has confirmed they have no further questions. NEVER call this tool while booking an appointment, discussing products/services, answering questions, or when the user says 'yes', 'sure', or agrees to an appointment."
+        description="End the call when the conversation is finished and the caller has no further questions. Invoke this tool when saying your final warm goodbye to the caller. The call will automatically stay connected until your goodbye line is completely finished speaking. NEVER call this tool while booking an appointment, discussing products/services, answering questions, or when the user says 'yes', 'sure', or agrees to an appointment."
     )
     async def end_call(self):
         if self.call_state and not self.call_state.get("user_has_spoken", False) and not self.call_state.get("initial_greeting_done", False):
@@ -352,15 +353,28 @@ class AssistantFunctions:
             except Exception as check_err:
                 logger.warning(f"[DIAG] end_call safety check error: {check_err}")
 
-        logger.info("Agent decided to end the call via function tool. Disconnecting shortly.")
+        logger.info("Agent decided to end the call via function tool. Disconnecting after final speech completes.")
         self._telemetry("Call ended by agent")
         self._end_call_triggered = True
-        async def graceful_disconnect():
-            await asyncio.sleep(3.0)
-            if self.ctx:
-                await _force_disconnect_room(self.ctx)
+        if self.call_state is not None:
+            self.call_state["end_call_triggered"] = True
+            if "timeline" in self.call_state:
+                import datetime
+                self.call_state["timeline"].append(
+                    {
+                        "event": "End Call Tool Invoked",
+                        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+                    }
+                )
 
-        self._disconnect_task = create_bg_task(graceful_disconnect())
+        if not hasattr(self, "_disconnect_task") or self._disconnect_task is None or self._disconnect_task.done():
+            self._disconnect_task = create_bg_task(
+                graceful_disconnect_after_speech(
+                    self.ctx,
+                    session=self.session,
+                    call_state=self.call_state,
+                )
+            )
         return ""
 
     @llm.function_tool(
