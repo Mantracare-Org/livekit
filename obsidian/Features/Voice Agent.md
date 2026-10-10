@@ -46,7 +46,7 @@ Hinglish telesales style (Roman-script, short 1-2 sentence turns, active listeni
 ## Safety Systems
 
 - **Inactivity Monitor:** 15s nudge → 30s silence disconnect (greeting tracked strictly after agent finishes speaking, so line noise can't start the timer early)
-- **Farewell Safety Net:** Detects goodbye without `end_call` → force disconnect after 10s warmup, 3s poll (directional — different phrases for inbound vs outbound)
+- **Farewell Safety Net:** Deprecated / Neutralized — hardcoded farewell phrase scanning removed to prevent false mid-call drops while user is speaking. Calls disconnect exclusively via `end_call`, participant hangup, or inactivity timeout.
 - **Call Limiter:** 150s → farewell instructions; 180s → hard kill; outbound calls with positive intent extend to 270s / 300s (`mantra/call_duration.py` + `mantra/positive_intent.py`)
 - **Crash Email:** `send_crash_email()` on entrypoint exceptions + `session.on("error")` pipeline alerts (LLM/STT/TTS, e.g. 402 balance), rate-limited to 1 per call per 5 min
 
@@ -64,7 +64,7 @@ Fetches the org's department list via `get_org_departments`, keeps names interna
 Authoritative MCP tool for scheduling (`receive_doctor_availability`). Validates `department` exactly against the org list (rejects invented values like `Ophthalmology` with a retry directive), captures `provider_user_id` into `appointment_metadata`, and never falls back to KB.
 
 ### `end_call()`
-Graceful disconnect. Triggers a 3s delay then force-disconnects the room. Guarded before greeting completion / user speech so turn-1 hallucinations can't kill the call. Required for LLM to end calls — safety net catches cases where LLM says goodbye without calling this.
+Graceful disconnect. Invoked when the conversation is finished or caller says goodbye. Automatically monitors speech playout via `graceful_disconnect_after_speech`: waits for the agent's final farewell turn to generate, TTS audio frames to finish playing out (`session.agent_state != "speaking"` and `_pending_playback_count == 0`), plus a 1.2s post-speech silence buffer for telephony jitter buffers, before force-disconnecting the room. If the caller interrupts with a new utterance during farewell or silence buffer, disconnection is immediately aborted so the agent can respond. Guarded against premature execution before greeting completion / initial user speech.
 
 ### `recognize_client` (pre-greeting, not an LLM tool)
 Bounded (3s) MCP call before the inbound greeting: resolves `org_id` from the dispatch DID, reads the caller number from LiveKit SIP participant metadata (never the routing DID), queries `GET /webhooks/mcp/lead?org_id=&phone=`. Accepts direct or nested names; null/timeout → anonymous, never blocks the call.

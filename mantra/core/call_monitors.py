@@ -18,7 +18,7 @@ from mantra.call_duration import (
     extend_call,
 )
 from mantra.core.common import CallContext, create_bg_task
-from mantra.core.room_control import _force_disconnect_room
+from mantra.core.room_control import _force_disconnect_room, graceful_disconnect_after_speech
 from mantra.email_alerts import send_crash_email
 from mantra.positive_intent import should_extend_from_history
 from mantra.utils import report_telemetry
@@ -27,21 +27,7 @@ logger = logging.getLogger("mantra.call_monitors")
 
 _PIPELINE_ERROR_ALERT_COOLDOWN = 300.0  # seconds between alert emails per call
 
-INBOUND_FAREWELL_PHRASES = [
-    "goodbye",
-    "good bye",
-    "bye bye",
-    "take care",
-    "have a great day",
-    "have a good day",
-    "have a nice day",
-    "talk to you later",
-    "see you later",
-]
-OUTBOUND_FAREWELL_PHRASES = INBOUND_FAREWELL_PHRASES + [
-    "thanks for calling",
-    "thank you for calling",
-]
+# Farewell phrases removed — calls terminate exclusively via end_call tool, participant disconnect, or inactivity monitor.
 
 
 async def positive_intent_monitor(cc: CallContext):
@@ -188,38 +174,10 @@ async def inactivity_monitor(cc: CallContext):
 
 
 async def farewell_safety_net(cc: CallContext):
-    """Detect if the agent said goodbye without calling end_call, and force disconnect."""
-    logger.info("[DIAG] farewell_safety_net: Started")
-    await asyncio.sleep(10.0)  # Let the conversation warm up first
-    farewell_phrases = INBOUND_FAREWELL_PHRASES if cc.is_inbound else OUTBOUND_FAREWELL_PHRASES
-    while cc.ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
-        await asyncio.sleep(3.0)
-        if not (cc.session and hasattr(cc.session, "history") and cc.session.history):
-            continue
-        try:
-            messages = list(cc.session.history.messages())
-            if not messages:
-                continue
-            last_msg = messages[-1]
-            role = getattr(last_msg, "role", "")
-            content = str(getattr(last_msg, "content", "")).lower()
-            if role == "assistant" and any(
-                phrase in content for phrase in farewell_phrases
-            ):
-                logger.warning(
-                    "[DIAG] farewell_safety_net: Agent said goodbye but end_call was never invoked. Force disconnecting."
-                )
-                cc.call_state["timeline"].append(
-                    {
-                        "event": "Farewell Safety Net Triggered",
-                        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
-                    }
-                )
-                await asyncio.sleep(3.0)  # Give TTS time to finish speaking
-                await _force_disconnect_room(cc.ctx)
-                break
-        except Exception as e:
-            logger.info(f"Farewell safety net error: {e}")
+    """Deprecated: Hardcoded phrase scanning removed to prevent premature mid-call disconnections.
+    Calls terminate gracefully via end_call tool, participant disconnect, or inactivity monitor.
+    """
+    return
 
 
 async def call_limiter(cc: CallContext):
@@ -385,12 +343,15 @@ def register_session_handlers(cc: CallContext):
     @cc.session.on("user_state_changed")
     def on_user_state(ev):
         logger.info(f"[DIAG] User state change: {getattr(ev, 'old_state', 'None')} -> {ev.new_state}")
+        cc.call_state["user_state"] = ev.new_state
+        now = asyncio.get_event_loop().time()
         if ev.new_state == "speaking":
-            cc.call_state["last_activity"] = asyncio.get_event_loop().time()
+            cc.call_state["last_activity"] = now
             cc.call_state["prompted_inactivity"] = False
             cc.call_state["user_has_spoken"] = True
+            cc.call_state["user_speaking_timestamp"] = now
         elif getattr(ev, "old_state", None) == "speaking" and ev.new_state != "speaking":
-            cc.call_state["user_finished_speaking_at"] = asyncio.get_event_loop().time()
+            cc.call_state["user_finished_speaking_at"] = now
 
     @cc.session.on("error")
     def on_session_error(ev):

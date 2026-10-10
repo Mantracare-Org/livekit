@@ -1,8 +1,10 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)  
-> **Last Updated:** 2026-10-09  
-> **Status:** Active maintenance, Marathi Language Enablement & Prompt Guard
+> **Last Updated:** 2026-10-10  
+> **Status:** Active maintenance, End Call Graceful Disconnect & Speech Completion Guard
+
+- [x] **End Call Graceful Disconnect & Mid-Conversation Disconnect Prevention (2026-10-10):** Resolved premature call decline/disconnection and mid-conversation drops while user speaks. Removed hardcoded farewell phrase lists (`INBOUND_FAREWELL_PHRASES`, `OUTBOUND_FAREWELL_PHRASES`), neutralized background `farewell_safety_net()` polling, and removed hardcoded `booking_terms`/`cancel_terms` phrase blocking from `AssistantFunctions.end_call()`. Replaced arbitrary `sleep(3.0)` in `end_call()` with `graceful_disconnect_after_speech()` in `mantra/core/room_control.py`. Agent invokes `end_call` while speaking its closing goodbye; system monitors `session.agent_state` and `session.output.audio._pending_playback_count` with a 300ms debounce and 1.2s post-speech silence buffer to guarantee closing words play out to caller's ear before room teardown. Added interruption abort guard via `_new_user_speech_detected()`: if the caller interrupts with new speech after disconnect began, disconnect is cancelled and `end_call_triggered` reset so conversation continues. Aligned prompt directives in `mantra/prompts.py` (`ENDING THE CALL`) and tool docstrings in `mantra/core/assistant_functions.py`. Files: `mantra/core/room_control.py`, `mantra/core/assistant_functions.py`, `mantra/core/call_monitors.py`, `mantra/prompts.py`, `obsidian/Features/Voice Agent.md`, `obsidian/Development/Current Sprint.md`, `obsidian/Development/Changelog.md`.
 
 - [x] **Marathi Language Enablement & Prompt Guard (2026-10-09):** Enabled Marathi (`mr`) language support across `mantra/language_manager.py` and `mantra/core/engines.py`. Added Marathi prosody directives and configured strict prompt guard directives and `marathi_allowed` state evaluation to ensure the agent does not switch to Marathi unless explicitly requested or mentioned in the call prompt. Files: `mantra/language_manager.py`, `mantra/core/engines.py`, `mantra/prompts.py`.
 

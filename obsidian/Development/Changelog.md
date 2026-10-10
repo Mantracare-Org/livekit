@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-10-10
+
+### End Call Graceful Disconnect & Mid-Conversation Disconnect Prevention
+
+- **fix:** Resolved mid-conversation disconnect where calls were dropped while the caller was speaking. Root cause: background `farewell_safety_net()` scanned messages for hardcoded phrases (e.g. "thanks for calling", "take care") and triggered a disconnect mid-call when the user was speaking because the user's utterance was not yet committed to history.
+- **fix:** Removed all hardcoded farewell phrase matching (`INBOUND_FAREWELL_PHRASES`, `OUTBOUND_FAREWELL_PHRASES`) and neutralized `farewell_safety_net()`. Also removed hardcoded `booking_terms`/`cancel_terms` phrase scanning from `AssistantFunctions.end_call()` that previously blocked valid call ends when callers said "ok" or "sure".
+- **feat:** Enabled seamless `end_call()` invocation: agent speaks its warm farewell and calls `end_call` in the same turn. `graceful_disconnect_after_speech()` monitors `session.agent_state` and `session.output.audio._pending_playback_count` (with 300ms debounce + 1.2s post-speech silence buffer), allowing the agent's complete closing statement to play out to caller's ear before room teardown.
+- **guard:** Interruption protection via `_new_user_speech_detected()`: if the caller interrupts with a new utterance (`user_speaking_timestamp > start_time`) during the agent's farewell or post-speech buffer, disconnection is immediately aborted, resetting `end_call_triggered = False` so the agent can answer the caller.
+- **prompt:** Updated system instructions in `mantra/prompts.py` (`ENDING THE CALL`) and tool docstring in `mantra/core/assistant_functions.py` directing the agent to speak its closing goodbye and invoke `end_call` in that turn.
+- **Files:** `mantra/core/room_control.py`, `mantra/core/assistant_functions.py`, `mantra/core/call_monitors.py`, `mantra/prompts.py`, `obsidian/Features/Voice Agent.md`, `obsidian/Development/Current Sprint.md`, `obsidian/Development/Changelog.md`.
+
 ## 2026-10-09
 
 ### Marathi Language Enablement & Prompt Guard
