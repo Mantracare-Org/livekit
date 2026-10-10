@@ -80,11 +80,19 @@ async def graceful_disconnect_after_speech(
                         pass
         return False
 
-    def _user_is_speaking() -> bool:
-        if session is not None and hasattr(session, "user_state"):
-            return str(session.user_state) == "speaking"
+    def _new_user_speech_detected() -> bool:
+        """Check if the caller started speaking a NEW utterance AFTER disconnect was scheduled."""
         if call_state is not None:
-            return str(call_state.get("user_state", "")) == "speaking"
+            user_speaking_ts = call_state.get("user_speaking_timestamp", 0.0)
+            if user_speaking_ts > start_time:
+                if call_state.get("user_state") == "speaking":
+                    return True
+                if session is not None and hasattr(session, "user_state") and str(session.user_state) == "speaking":
+                    return True
+        elif session is not None and hasattr(session, "user_state"):
+            # Fallback if no call_state: check session user_state only after 1.0s grace period
+            if (loop.time() - start_time) > 1.0 and str(session.user_state) == "speaking":
+                return True
         return False
 
     def _is_speaking() -> bool:
@@ -93,19 +101,12 @@ async def graceful_disconnect_after_speech(
     def _is_thinking() -> bool:
         return _agent_state() in ("thinking", "initializing")
 
-    # If the user is actively speaking, never disconnect
-    if _user_is_speaking():
-        logger.info("[DIAG] graceful_disconnect_after_speech: User is actively speaking. Aborting disconnect.")
-        if call_state is not None:
-            call_state["end_call_triggered"] = False
-        return
-
     # Phase A: Wait for speech to start OR thinking to settle.
     # Give the LLM/TTS pipeline a moment to transition into thinking/speaking if tool just returned.
     has_spoken = False
     while _room_connected() and (loop.time() - start_time) < timeout:
-        if _user_is_speaking():
-            logger.info("[DIAG] graceful_disconnect_after_speech: User started speaking during Phase A. Aborting disconnect.")
+        if _new_user_speech_detected():
+            logger.info("[DIAG] graceful_disconnect_after_speech: New caller speech detected during Phase A. Aborting disconnect.")
             if call_state is not None:
                 call_state["end_call_triggered"] = False
             return
@@ -120,13 +121,13 @@ async def graceful_disconnect_after_speech(
             await asyncio.sleep(0.1)
             continue
 
-        # Give a minimum grace window of 1.5s after tool invocation before concluding agent won't speak
+        # Give a minimum grace window of 1.0s after tool invocation before concluding agent won't speak
         elapsed = loop.time() - start_time
-        if elapsed < 1.5:
+        if elapsed < 1.0:
             await asyncio.sleep(0.1)
             continue
 
-        # Neither speaking nor thinking after 1.5s: turn completed without further speech
+        # Neither speaking nor thinking after 1.0s: turn completed without further speech
         logger.info(f"[DIAG] graceful_disconnect_after_speech: Agent neither speaking nor thinking after {elapsed:.1f}s.")
         break
 
@@ -134,8 +135,8 @@ async def graceful_disconnect_after_speech(
     if _is_speaking() or has_spoken:
         speaking_wait_start = loop.time()
         while _room_connected() and (loop.time() - start_time) < timeout:
-            if _user_is_speaking():
-                logger.info("[DIAG] graceful_disconnect_after_speech: User started speaking during Phase B. Aborting disconnect.")
+            if _new_user_speech_detected():
+                logger.info("[DIAG] graceful_disconnect_after_speech: Caller interrupted agent speech during Phase B. Aborting disconnect.")
                 if call_state is not None:
                     call_state["end_call_triggered"] = False
                 return
@@ -158,8 +159,8 @@ async def graceful_disconnect_after_speech(
         logger.info(f"[DIAG] graceful_disconnect_after_speech: Waiting {post_speech_silence:.1f}s post-speech silence buffer.")
         silence_waited = 0.0
         while _room_connected() and silence_waited < post_speech_silence:
-            if _user_is_speaking():
-                logger.info("[DIAG] graceful_disconnect_after_speech: User started speaking during Phase C. Aborting disconnect.")
+            if _new_user_speech_detected():
+                logger.info("[DIAG] graceful_disconnect_after_speech: Caller started speaking during Phase C. Aborting disconnect.")
                 if call_state is not None:
                     call_state["end_call_triggered"] = False
                 return
@@ -168,8 +169,8 @@ async def graceful_disconnect_after_speech(
             if _is_speaking() or _is_thinking():
                 logger.info("[DIAG] graceful_disconnect_after_speech: Agent resumed speech/thinking during buffer, resuming wait.")
                 while _room_connected() and (_is_speaking() or _is_thinking()) and (loop.time() - start_time) < timeout:
-                    if _user_is_speaking():
-                        logger.info("[DIAG] graceful_disconnect_after_speech: User started speaking while agent resumed. Aborting.")
+                    if _new_user_speech_detected():
+                        logger.info("[DIAG] graceful_disconnect_after_speech: Caller started speaking while agent resumed. Aborting.")
                         if call_state is not None:
                             call_state["end_call_triggered"] = False
                         return
@@ -180,8 +181,8 @@ async def graceful_disconnect_after_speech(
 
     # Phase D: Disconnect room
     if _room_connected():
-        if _user_is_speaking():
-            logger.info("[DIAG] graceful_disconnect_after_speech: User is speaking right before Phase D. Aborting disconnect.")
+        if _new_user_speech_detected():
+            logger.info("[DIAG] graceful_disconnect_after_speech: Caller is speaking right before Phase D. Aborting disconnect.")
             if call_state is not None:
                 call_state["end_call_triggered"] = False
             return

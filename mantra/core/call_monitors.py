@@ -344,12 +344,14 @@ def register_session_handlers(cc: CallContext):
     def on_user_state(ev):
         logger.info(f"[DIAG] User state change: {getattr(ev, 'old_state', 'None')} -> {ev.new_state}")
         cc.call_state["user_state"] = ev.new_state
+        now = asyncio.get_event_loop().time()
         if ev.new_state == "speaking":
-            cc.call_state["last_activity"] = asyncio.get_event_loop().time()
+            cc.call_state["last_activity"] = now
             cc.call_state["prompted_inactivity"] = False
             cc.call_state["user_has_spoken"] = True
+            cc.call_state["user_speaking_timestamp"] = now
         elif getattr(ev, "old_state", None) == "speaking" and ev.new_state != "speaking":
-            cc.call_state["user_finished_speaking_at"] = asyncio.get_event_loop().time()
+            cc.call_state["user_finished_speaking_at"] = now
 
     @cc.session.on("error")
     def on_session_error(ev):

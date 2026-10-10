@@ -330,32 +330,12 @@ class AssistantFunctions:
                 logger.warning(f"Auto-extend failed: {e}")
 
     @llm.function_tool(
-        description="End the call. Call this tool ONLY after your final closing statement has completely finished speaking to the caller and the conversation is done. NEVER call this tool while the caller is speaking, booking an appointment, discussing products/services, answering questions, or when the user says 'yes', 'sure', or agrees to an appointment."
+        description="End the call when the conversation is finished, all questions are answered, or the caller says goodbye. Invoke this tool while speaking your closing goodbye. The call will automatically stay connected until your speech has finished playing to the caller."
     )
     async def end_call(self):
         if self.call_state and not self.call_state.get("user_has_spoken", False) and not self.call_state.get("initial_greeting_done", False):
             logger.warning("[DIAG] end_call invoked prematurely during initial greeting / before user spoke. Ignoring tool call.")
             return "Call cannot be ended before the conversation starts. Please greet the user and proceed with the conversation."
-
-        if (self.session and hasattr(self.session, "user_state") and str(self.session.user_state) == "speaking") or (self.call_state and self.call_state.get("user_state") == "speaking"):
-            logger.warning("[DIAG] end_call invoked while user is speaking. Ignoring tool call.")
-            return "The user is currently speaking. Do not end the call while the user is talking."
-
-        if self.session and hasattr(self.session, "history") and self.session.history:
-            try:
-                msgs = list(self.session.history.messages())
-                if msgs:
-                    last_user_msgs = [m for m in msgs if str(getattr(m, "role", "")).lower() in ("user", "caller")]
-                    if last_user_msgs:
-                        last_content = str(getattr(last_user_msgs[-1], "content", "")).lower()
-                        booking_terms = ["book", "appointment", "schedule", "sure", "yes", "okay", "ok", "location", "timing", "doctor", "slot"]
-                        cancel_terms = ["bye", "goodbye", "no thanks", "hang up", "stop", "cancel", "not interested"]
-                        if any(term in last_content for term in booking_terms) and not any(term in last_content for term in cancel_terms):
-                            logger.warning(f"[DIAG] Premature end_call blocked! User utterance was: '{last_content}'")
-                            await self._try_auto_extend("Appointment booking requested")
-                            return "Call cannot be ended while appointment booking or user inquiry is active. Please proceed to book the appointment or answer the caller's request."
-            except Exception as check_err:
-                logger.warning(f"[DIAG] end_call safety check error: {check_err}")
 
         logger.info("Agent decided to end the call via function tool. Disconnecting after final speech completes.")
         self._telemetry("Call ended by agent")
