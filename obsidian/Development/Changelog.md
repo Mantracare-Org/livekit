@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-11
+
+### End Call Speech Suppression (StopResponse) & Definitive Disconnect
+
+- **fix:** Suppressed agent hallucinated follow-up speech (*"The call has ended. Is there anything else I can help you with?"*) after invoking `end_call`. In LiveKit Agents, tool return values set `_reply_required = True` in `fnc_executed_ev`, prompting the LLM for a follow-up turn. Replaced return value with `raise StopResponse()` from `livekit.agents`, which sets `fnc_call_out = None` and cleanly stops the LiveKit generation loop.
+- **fix:** Eliminated disconnect abort loops in `graceful_disconnect_after_speech()`. Removed `_new_user_speech_detected()` checks across all disconnect phases. Previously, any caller noise, farewell ("bye"), or breath during the 1.2s post-speech silence buffer cancelled the teardown task (`end_call_triggered = False`), keeping the room open and causing the agent to hallucinate line reconnections (*"नमस्ते जी — कॉल फिर से जुड़ गई है"*). Disconnection is now definitive once triggered.
+- **Files:** `mantra/core/assistant_functions.py`, `mantra/core/room_control.py`, `obsidian/Features/Voice Agent.md`, `obsidian/Development/Current Sprint.md`, `obsidian/Development/Changelog.md`.
+
 ## 2026-10-10
 
 ### End Call Graceful Disconnect & Mid-Conversation Disconnect Prevention

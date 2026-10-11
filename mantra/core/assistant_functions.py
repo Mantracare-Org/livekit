@@ -9,7 +9,7 @@ import os
 from typing import Annotated, Any, Optional
 
 from livekit import api
-from livekit.agents import Agent, JobContext, llm
+from livekit.agents import Agent, JobContext, StopResponse, llm
 
 from mantra.core.common import create_bg_task, get_global_kb
 from mantra.core.inbound import format_upfront_kb_context, format_upfront_process_context
@@ -359,7 +359,7 @@ class AssistantFunctions:
                     call_state=self.call_state,
                 )
             )
-        return ""
+        raise StopResponse()
 
     @llm.function_tool(
         description=(

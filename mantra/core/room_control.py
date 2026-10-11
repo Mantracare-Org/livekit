@@ -80,21 +80,6 @@ async def graceful_disconnect_after_speech(
                         pass
         return False
 
-    def _new_user_speech_detected() -> bool:
-        """Check if the caller started speaking a NEW utterance AFTER disconnect was scheduled."""
-        if call_state is not None:
-            user_speaking_ts = call_state.get("user_speaking_timestamp", 0.0)
-            if user_speaking_ts > start_time:
-                if call_state.get("user_state") == "speaking":
-                    return True
-                if session is not None and hasattr(session, "user_state") and str(session.user_state) == "speaking":
-                    return True
-        elif session is not None and hasattr(session, "user_state"):
-            # Fallback if no call_state: check session user_state only after 1.0s grace period
-            if (loop.time() - start_time) > 1.0 and str(session.user_state) == "speaking":
-                return True
-        return False
-
     def _is_speaking() -> bool:
         return _agent_state() == "speaking" or _has_pending_audio()
 
@@ -105,12 +90,6 @@ async def graceful_disconnect_after_speech(
     # Give the LLM/TTS pipeline a moment to transition into thinking/speaking if tool just returned.
     has_spoken = False
     while _room_connected() and (loop.time() - start_time) < timeout:
-        if _new_user_speech_detected():
-            logger.info("[DIAG] graceful_disconnect_after_speech: New caller speech detected during Phase A. Aborting disconnect.")
-            if call_state is not None:
-                call_state["end_call_triggered"] = False
-            return
-
         if _is_speaking():
             has_spoken = True
             logger.info(f"[DIAG] graceful_disconnect_after_speech: Agent is actively speaking (state={_agent_state()}).")
@@ -135,12 +114,6 @@ async def graceful_disconnect_after_speech(
     if _is_speaking() or has_spoken:
         speaking_wait_start = loop.time()
         while _room_connected() and (loop.time() - start_time) < timeout:
-            if _new_user_speech_detected():
-                logger.info("[DIAG] graceful_disconnect_after_speech: Caller interrupted agent speech during Phase B. Aborting disconnect.")
-                if call_state is not None:
-                    call_state["end_call_triggered"] = False
-                return
-
             if _is_speaking():
                 await asyncio.sleep(0.1)
             else:
@@ -157,35 +130,10 @@ async def graceful_disconnect_after_speech(
     # Phase C: Post-speech silence buffer (allows SIP jitter buffer and telephony audio playout to reach caller ear)
     if _room_connected():
         logger.info(f"[DIAG] graceful_disconnect_after_speech: Waiting {post_speech_silence:.1f}s post-speech silence buffer.")
-        silence_waited = 0.0
-        while _room_connected() and silence_waited < post_speech_silence:
-            if _new_user_speech_detected():
-                logger.info("[DIAG] graceful_disconnect_after_speech: Caller started speaking during Phase C. Aborting disconnect.")
-                if call_state is not None:
-                    call_state["end_call_triggered"] = False
-                return
-
-            # If agent unexpectedly resumed speaking or thinking during buffer, resume waiting
-            if _is_speaking() or _is_thinking():
-                logger.info("[DIAG] graceful_disconnect_after_speech: Agent resumed speech/thinking during buffer, resuming wait.")
-                while _room_connected() and (_is_speaking() or _is_thinking()) and (loop.time() - start_time) < timeout:
-                    if _new_user_speech_detected():
-                        logger.info("[DIAG] graceful_disconnect_after_speech: Caller started speaking while agent resumed. Aborting.")
-                        if call_state is not None:
-                            call_state["end_call_triggered"] = False
-                        return
-                    await asyncio.sleep(0.1)
-                silence_waited = 0.0
-            await asyncio.sleep(0.1)
-            silence_waited += 0.1
+        await asyncio.sleep(post_speech_silence)
 
     # Phase D: Disconnect room
     if _room_connected():
-        if _new_user_speech_detected():
-            logger.info("[DIAG] graceful_disconnect_after_speech: Caller is speaking right before Phase D. Aborting disconnect.")
-            if call_state is not None:
-                call_state["end_call_triggered"] = False
-            return
         total_waited = loop.time() - start_time
         logger.info(f"[DIAG] graceful_disconnect_after_speech: Disconnecting room after {total_waited:.1f}s total wait.")
         await _force_disconnect_room(ctx)
