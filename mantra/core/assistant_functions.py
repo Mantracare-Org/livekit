@@ -330,7 +330,15 @@ class AssistantFunctions:
                 logger.warning(f"Auto-extend failed: {e}")
 
     @llm.function_tool(
-        description="End the call when the conversation is finished, all questions are answered, or the caller says goodbye. Invoke this tool while speaking your closing goodbye. The call will automatically stay connected until your speech has finished playing to the caller."
+        description=(
+            "End the call when the conversation has reached its natural conclusion and there is nothing left to speak. "
+            "Invoke this tool in the SAME TURN while speaking your final closing sentence. "
+            "Use this when: (1) caller requests a callback or to talk later ('call me after 10 minutes', 'busy right now', 'call tomorrow') "
+            "and you speak your acknowledgment/confirmation; (2) appointment or demo booking is confirmed and you speak your parting words; "
+            "(3) all questions are answered or caller says goodbye/thanks; (4) caller clearly declines. "
+            "The call will automatically stay connected until your closing speech has finished playing to the caller, then disconnect cleanly. "
+            "NEVER call this prematurely while active inquiry, discussion, or booking is still underway."
+        )
     )
     async def end_call(self):
         if self.call_state and not self.call_state.get("user_has_spoken", False) and not self.call_state.get("initial_greeting_done", False):

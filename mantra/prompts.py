@@ -121,6 +121,12 @@ def build_initial_instructions(payload: dict, is_inbound: bool = False):
     if "client_name" in payload:
         client_name = payload["client_name"]
 
+    # Inject client / recipient name for outbound calls so the LLM knows who it is calling
+    if not is_inbound and client_name and str(client_name).strip() and str(client_name).strip().lower() != "user":
+        instructions += f"\n\n--- RECIPIENT INFORMATION ---\n"
+        instructions += f"- Client Name: {str(client_name).strip()}\n"
+        instructions += f"- The person you are calling is {str(client_name).strip()}.\n"
+
     # 2. Extract ALL other features as context for the LLM
     context_header = "\n\n--- ADDITIONAL CALL CONTEXT ---\n"
     context_body = ""
@@ -164,10 +170,22 @@ def build_initial_instructions(payload: dict, is_inbound: bool = False):
     instructions += "4. If the user asks to speak to a human or asks to be transferred — apologize and explain that human transfer is currently unavailable. Do not promise transfer, and if they insist, politely end the call.\n"
     instructions += "5. LANGUAGE CONSISTENCY: Always respond in the caller's current conversational language as specified in the CURRENT CONVERSATIONAL LANGUAGE directive. Do NOT switch to Marathi unless explicitly mentioned or instructed to use Marathi in the prompt.\n"
     instructions += "6. NO SEARCH FILLERS: When retrieving information from the knowledge base, NEVER say 'Let me check that for you', 'Let me look that up', or any filler phrases. Execute the search silently and speak the final answer directly.\n"
-    instructions += "7. LEAD GENERATION & CALL DURATION: If the caller is interested in an appointment, asks about services/locations, or agrees to book ('yes', 'sure', 'book an appointment'), ALWAYS complete the appointment booking flow (doctor, branch, date/time confirmation). NEVER invoke end_call while lead generation or appointment booking is active.\n"
+    instructions += "7. LEAD GENERATION & CALL DURATION: If the caller is interested in an appointment, asks about services/locations, or agrees to book ('yes', 'sure', 'book an appointment'), ALWAYS complete the appointment booking flow (doctor, branch, date/time confirmation). NEVER invoke end_call while active booking discussion or qualification is underway; invoke it only when the final confirmation and closing words are spoken.\n"
     instructions += "8. STRICT TIME SLOT VALIDATION: NEVER confirm or pretend to book an appointment slot that was not returned as available by check_doctor_availability. If the user insists on an unavailable slot, deny gently, explain it is unavailable, and present the open available slots.\n"
     instructions += "9. NATURAL SPEECH PROSODY & PUNCTUATION: Vary your punctuation for realistic human speech rhythm — use em-dashes (—) for intro bridges and thought shifts, semicolons (;) for smooth clause connections, commas (,) for breath breaks, and ellipses (...) before questions or choices.\n"
     instructions += "10. SCRIPT CHUNKING: When delivering opening scripts or introductions, NEVER speak in 1 unbroken monotone flow. Use em-dashes (—) and commas (,) between clauses (e.g. 'Hi Himanshu — this is Arushi from MantraCare, offering a complimentary trial...') for a natural human cadence.\n"
+    instructions += (
+        "11. NATURAL CALL CONCLUSION & DISCONNECT: When you realize there is nothing left in the call to speak or discuss "
+        "— for example: (a) the caller requests a callback, says they are busy, or asks to talk later (e.g. 'call me after 10 minutes', 'call me later', 'busy right now', 'call back tomorrow'), "
+        "and you acknowledge/confirm it (e.g. 'Got it — I\\'ll call you back in 10 minutes. Talk soon.'); "
+        "(b) demo or appointment booking details are confirmed and you deliver your parting words; "
+        "(c) all caller questions have been answered and they indicate they are done (e.g. 'that\\'s all, thank you'); "
+        "(d) the closing goodbye or thank you has been delivered; or "
+        "(e) the offer was clearly declined — "
+        "then AND ONLY THEN call the `end_call` tool in that exact same turn as your closing words. "
+        "NEVER hang up prematurely while the caller is still actively inquiring, speaking, or booking. But once the conversation has reached its natural conclusion and there is nothing left to say, "
+        "invoke `end_call` immediately so the call ends cleanly without lingering in silence.\n"
+    )
 
     if is_inbound:
         instructions += "\n--- INBOUND CALL FLOW & CONTEXT (CRITICAL) ---\n"
