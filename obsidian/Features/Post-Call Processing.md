@@ -10,9 +10,9 @@
 4. **Stop recording & upload to S3** — Mix tracks → trim silence → MP3 → S3
 5. **Build transcript** — JSON array of `{bot/user: message}`
 6. **Generate structured summary** — Calls `SessionRecorder.generate_summary(post_call_llm, list(history_snapshot))` to produce a 4-part domain-agnostic summary (Reason for Call/Intent, Key Discussion Details & Requirements, Action & Booking Metadata, Outcome & Resolution). Heavy post-call LLM decision-making (`analyze_call()`) is bypassed, moving 100% of stage transition, status classification, and appointment metadata extraction to JEV AI Pro.
-7. **Build clean webhook payload** — Direction-aware: `CALL_DATA_INBOUND_UPDATE` (inbound), `CALL_DATA_UPDATE` (outbound connected), or **`CALL_RETRY`** (outbound failed/unanswered). All null, non-existent, and empty fields (`new_stage_id`, `user_intent`, `call_intent`, `next_call_on`, `appointment_metadata`, empty custom field objects) are stripped from connected call payloads to keep payload weight minimal.
+7. **Build clean webhook payload** — Direction-aware: `CALL_DATA_INBOUND_UPDATE` (inbound), `CALL_DATA_UPDATE` (outbound connected), or **`CALL_RETRY`** (outbound failed/unanswered). Forwards `prompt` from the initial call trigger so agent persona and instructions are available downstream. All null, non-existent, and empty decision fields (`new_stage_id`, `user_intent`, `call_intent`, `next_call_on`, `appointment_metadata`, empty custom field objects) are stripped from connected call payloads to keep payload weight minimal.
 8. **Save to local DB** — `save_call_log_to_db()` upsert
-9. **Queue to UI Server via Redis** — Delivered to MantraAssist backend (`/v1/webhooks/n8n/summary`), which enqueues `{ call_id }` into BullMQ `CallSummaryQueue` for JEV evaluation and database updates (`call_Logs`, `clientProcesses`, `appointments`).
+9. **Queue to UI Server via Redis** — Delivered to MantraAssist backend (`/v1/webhooks/n8n/summary`), which enqueues `{ call_id }` into BullMQ `CallSummaryQueue` for JEV evaluation and database updates (`call_Logs`, `clientProcesses`, `appointments`). Ingests Process DNA, agent prompt, and stage criteria (with `stage.prompt` fallback) to evaluate `new_stage_id` and extract `appointment_metadata` across both INBOUND and OUTBOUND calls.
 10. **TOS telemetry** — Post-call summary with call_status, duration, S3 status, transcript flag
 
 ## SessionRecorder (`utils.py`)
@@ -26,7 +26,7 @@ In-memory audio recording system and structured summary generator:
 ## Webhook Delivery & Payloads
 
 - HMAC-SHA256 signed (`x-signature` header) with 3 retries and replay protection (`x-timestamp`)
-- **`CALL_DATA_INBOUND_UPDATE`**: `org_id` (int), `call_recording`, `client_name`, `client_phone_number`, `call_duration`, `call_transcript`, `ai_summary`, `called_on`, `meta_data`
-- **`CALL_DATA_UPDATE`**: `client_id`, `call_id`, `call_transcript`, `recording_url`, `call_duration_seconds`, `called_on`, `ai_call_id`, `process_id`, `stage_id`, `ai_summary`
+- **`CALL_DATA_INBOUND_UPDATE`**: `org_id` (int), `call_recording`, `client_name`, `client_phone_number`, `call_duration`, `call_transcript`, `ai_summary`, `prompt`, `called_on`, `meta_data`
+- **`CALL_DATA_UPDATE`**: `client_id`, `call_id`, `call_transcript`, `recording_url`, `call_duration_seconds`, `called_on`, `ai_call_id`, `process_id`, `stage_id`, `ai_summary`, `prompt`
 - **`CALL_RETRY`**: `call_id`, `called_on`, `call_status`, `ai_call_id`
-- **Lightweight Payload guarantee**: All null/empty decision fields are omitted from connected call payloads so decision processing is strictly handled downstream by JEV AI Pro.
+- **Lightweight Payload guarantee**: All null/empty decision fields are omitted from connected call payloads so decision processing (stage transitions, appointment extraction) is strictly handled downstream by JEV AI Pro in MantraAssist API.

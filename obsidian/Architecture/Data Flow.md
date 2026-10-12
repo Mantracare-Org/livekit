@@ -32,9 +32,10 @@ Step 4: POST-CALL (finalize.py)
   ├── Stop recording → mix audio → upload MP3 to S3
   ├── Fast structured summary → generate 4-part domain-agnostic summary via SessionRecorder.generate_summary
   ├── Connected calls set call_status: null (delegated to JEV AI Pro in Mantra Assist API)
-  ├── Build clean webhook payload → strip null/empty decision fields to reduce payload weight
+  ├── Build clean webhook payload → forward `prompt` from initial trigger; strip null/empty decision fields to reduce payload weight
   ├── Save call log to local PostgreSQL
-  ├── Deliver to MantraAssist backend (/v1/webhooks/n8n/summary) → queued to Redis/BullMQ CallSummaryQueue for JEV decision processing
+  ├── Deliver to MantraAssist backend (/v1/webhooks/n8n/summary) → queued to Redis/BullMQ CallSummaryQueue
+  │     └── Worker merges Process DNA, prompt, stage descriptions → JEV evaluates new_stage_id & extracts appointments for inbound/outbound calls
   └── TOS telemetry with duration, S3 status, transcript flag
 ```
 

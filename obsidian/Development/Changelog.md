@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-10-12
+
+### Prompt Forwarding & Bidirectional JEV Stage & Appointment Evaluation
+
+- **feat:** Forwarded `prompt` from initial outbound/inbound call payloads through `mantra/core/finalize.py` into `/v1/webhooks/n8n/summary` webhooks, ensuring agent instructions and persona are preserved for post-call AI analysis without re-introducing legacy decision fields.
+- **feat:** Updated Mantra Assist API schemas (`packages/types`) and `apps/api/src/modules/webhooks/n8n-webhook/n8n.service.ts` to accept `prompt`, saving it to `call_logs.metadata.prompt`.
+- **feat:** Enhanced `call-summary.worker.ts` context builder: enriched `call_data.summary` with Process DNA (`processes.name` and `processes.description`) and agent `prompt`. Added fallback to `stage.prompt` whenever `stage.description` is empty, ensuring JEV receives complete stage criteria.
+- **feat:** Enabled bidirectional appointment extraction: updated JEV appointment instructions to extract bookings across both `INBOUND` and `OUTBOUND` calls, auto-creating `CONFIRMED` appointment records in PostgreSQL upon successful evaluation.
+- **feat:** Hardened stage matching and database updates in `call-summary.worker.ts`: supports numeric IDs, string IDs, and fuzzy stage name matching, updating `call_logs.stage_id`, setting `call_logs.call_status = 'completed'`, and syncing `client_processes.stageid` (preserving `previous_stage_id`).
+- **feat:** Added direct `new_stage_id` / `stage_id` handling in `handleCallUpdateSummary` (`n8n.service.ts`) for both new and existing call logs.
+- **fix:** Fixed BullMQ deduplication in `call-summary.queue.ts` by generating dynamic job IDs (`call-${payload.call_id}-${Date.now()}`), allowing immediate re-runs on replayed webhooks.
+- **Files:** `mantra/core/finalize.py`, `assist-monorepo/packages/types/src/schemas/n8n.schema.ts`, `assist-monorepo/apps/api/src/modules/webhooks/n8n-webhook/n8n.service.ts`, `assist-monorepo/apps/api/src/jobs/workers/call-summary.worker.ts`, `assist-monorepo/apps/api/src/jobs/queues/call-summary.queue.ts`.
+
 ## 2026-10-09
 
 ### Marathi Language Enablement & Prompt Guard

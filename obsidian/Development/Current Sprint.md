@@ -1,8 +1,10 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)  
-> **Last Updated:** 2026-10-09  
-> **Status:** Active maintenance, Marathi Language Enablement & Prompt Guard
+> **Last Updated:** 2026-10-12  
+> **Status:** Active maintenance, Prompt Forwarding & Bidirectional JEV Stage & Appointment Evaluation
+
+- [x] **Prompt Forwarding & Bidirectional JEV Stage & Appointment Evaluation (2026-10-12):** Forwarded `prompt` from call payload in `mantra/core/finalize.py` to `/v1/webhooks/n8n/summary`. In MantraAssist API (`apps/api`), enabled `call-summary.worker.ts` context injection (Process DNA + prompt + stage.prompt fallback), bidirectional inbound/outbound appointment extraction and Postgres booking, direct `new_stage_id` sync in `/summary` webhook, and fixed BullMQ retry job deduplication. Files: `mantra/core/finalize.py`, `assist-monorepo/packages/types/src/schemas/n8n.schema.ts`, `assist-monorepo/apps/api/src/modules/webhooks/n8n-webhook/n8n.service.ts`, `assist-monorepo/apps/api/src/jobs/workers/call-summary.worker.ts`, `assist-monorepo/apps/api/src/jobs/queues/call-summary.queue.ts`.
 
 - [x] **Marathi Language Enablement & Prompt Guard (2026-10-09):** Enabled Marathi (`mr`) language support across `mantra/language_manager.py` and `mantra/core/engines.py`. Added Marathi prosody directives and configured strict prompt guard directives and `marathi_allowed` state evaluation to ensure the agent does not switch to Marathi unless explicitly requested or mentioned in the call prompt. Files: `mantra/language_manager.py`, `mantra/core/engines.py`, `mantra/prompts.py`.
 
