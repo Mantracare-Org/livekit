@@ -112,7 +112,7 @@ load_dotenv(
 AGENT_NAME = os.getenv("AGENT_NAME", "mantra-agent")
 logger.info(f"Agent name configured as: {AGENT_NAME}")
 
-AMD_ENABLED = os.getenv("AMD_ENABLED", "0") == "1"
+AMD_ENABLED = os.getenv("AMD_ENABLED", "1") == "1"
 
 server = AgentServer(num_idle_processes=20, shutdown_process_timeout=120.0)
 
