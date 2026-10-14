@@ -13,6 +13,30 @@
 - **fix:** Fixed BullMQ deduplication in `call-summary.queue.ts` by generating dynamic job IDs (`call-${payload.call_id}-${Date.now()}`), allowing immediate re-runs on replayed webhooks.
 - **Files:** `mantra/core/finalize.py`, `assist-monorepo/packages/types/src/schemas/n8n.schema.ts`, `assist-monorepo/apps/api/src/modules/webhooks/n8n-webhook/n8n.service.ts`, `assist-monorepo/apps/api/src/jobs/workers/call-summary.worker.ts`, `assist-monorepo/apps/api/src/jobs/queues/call-summary.queue.ts`.
 
+## 2026-10-11
+
+### End Call Speech Suppression (StopResponse) & Definitive Disconnect
+
+- **fix:** Suppressed agent hallucinated follow-up speech (*"The call has ended. Is there anything else I can help you with?"*) after invoking `end_call`. In LiveKit Agents, tool return values set `_reply_required = True` in `fnc_executed_ev`, prompting the LLM for a follow-up turn. Replaced return value with `raise StopResponse()` from `livekit.agents`, which sets `fnc_call_out = None` and cleanly stops the LiveKit generation loop.
+- **fix:** Eliminated disconnect abort loops in `graceful_disconnect_after_speech()`. Removed `_new_user_speech_detected()` checks across all disconnect phases. Previously, any caller noise, farewell ("bye"), or breath during the 1.2s post-speech silence buffer cancelled the teardown task (`end_call_triggered = False`), keeping the room open and causing the agent to hallucinate line reconnections (*"नमस्ते जी — कॉल फिर से जुड़ गई है"*). Disconnection is now definitive once triggered.
+- **fix:** Injected recipient `client_name` into agent instructions for outbound calls in `mantra/prompts.py`. Previously, `context_header`/`context_body` was constructed but never appended, leaving the LLM with no knowledge of the contact's name. When callers asked "Who do you want to speak with?", the agent claimed it had no name on its end despite `client_name` being present in metadata.
+- **fix:** Respected payload prompt opening rules in `mantra/agent.py`. If the payload prompt instructs the agent to wait for the caller to speak first, the agent listens silently on connect without forcing premature speech. Initial greeting generation is only called if the prompt directs the agent to speak first.
+- **prompt & tool:** Expanded Rule 11 in `mantra/prompts.py` and the `end_call` tool description in `mantra/core/assistant_functions.py` to enforce that when the agent realizes there is nothing left in the call to speak or discuss — including when the caller requests a callback or says they are busy (e.g. 'call me after 10 minutes', 'call back tomorrow'), demo/appointment booking is confirmed, all questions are answered, closing goodbye is delivered, or offer is declined — it speaks its acknowledgment/parting words and invokes `end_call` in that exact same turn. Guarded so `end_call` is never invoked while active discussion, inquiry, or booking is underway.
+- **perf & latency:** Defaulted `AMD_ENABLED` from `"1"` to `"0"` in `mantra/agent.py`. LiveKit's AMD (`detect_voicemail()`) previously paused user audio input authorization (`_pause_authorization()`) for 2.5 seconds on outbound calls to detect answering machines, discarding any initial "Hello" spoken by the caller during pickup and forcing them to repeat "Hello" multiple times. Defaulting to `"0"` keeps the listening gate wide open from millisecond zero.
+- **perf & vad:** Calibrated Silero VAD parameters in `mantra/agent.py` (`min_speech_duration=0.05s`, `prefix_padding_duration=0.50s`, `activation_threshold=0.45`) while keeping VAD fully active. Preserves the first 500ms audio buffer so the initial consonant of "Hello" reaches STT intact without clipping short telephony utterances.
+- **Files:** `mantra/agent.py`, `mantra/prompts.py`, `mantra/core/assistant_functions.py`, `mantra/core/room_control.py`, `obsidian/Features/Voice Agent.md`, `obsidian/Development/Current Sprint.md`, `obsidian/Development/Changelog.md`.
+
+## 2026-10-10
+
+### End Call Graceful Disconnect & Mid-Conversation Disconnect Prevention
+
+- **fix:** Resolved mid-conversation disconnect where calls were dropped while the caller was speaking. Root cause: background `farewell_safety_net()` scanned messages for hardcoded phrases (e.g. "thanks for calling", "take care") and triggered a disconnect mid-call when the user was speaking because the user's utterance was not yet committed to history.
+- **fix:** Removed all hardcoded farewell phrase matching (`INBOUND_FAREWELL_PHRASES`, `OUTBOUND_FAREWELL_PHRASES`) and neutralized `farewell_safety_net()`. Also removed hardcoded `booking_terms`/`cancel_terms` phrase scanning from `AssistantFunctions.end_call()` that previously blocked valid call ends when callers said "ok" or "sure".
+- **feat:** Enabled seamless `end_call()` invocation: agent speaks its warm farewell and calls `end_call` in the same turn. `graceful_disconnect_after_speech()` monitors `session.agent_state` and `session.output.audio._pending_playback_count` (with 300ms debounce + 1.2s post-speech silence buffer), allowing the agent's complete closing statement to play out to caller's ear before room teardown.
+- **guard:** Interruption protection via `_new_user_speech_detected()`: if the caller interrupts with a new utterance (`user_speaking_timestamp > start_time`) during the agent's farewell or post-speech buffer, disconnection is immediately aborted, resetting `end_call_triggered = False` so the agent can answer the caller.
+- **prompt:** Updated system instructions in `mantra/prompts.py` (`ENDING THE CALL`) and tool docstring in `mantra/core/assistant_functions.py` directing the agent to speak its closing goodbye and invoke `end_call` in that turn.
+- **Files:** `mantra/core/room_control.py`, `mantra/core/assistant_functions.py`, `mantra/core/call_monitors.py`, `mantra/prompts.py`, `obsidian/Features/Voice Agent.md`, `obsidian/Development/Current Sprint.md`, `obsidian/Development/Changelog.md`.
+
 ## 2026-10-09
 
 ### Marathi Language Enablement & Prompt Guard

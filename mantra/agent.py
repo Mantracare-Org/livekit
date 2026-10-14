@@ -451,9 +451,10 @@ async def entrypoint(ctx: JobContext):
             },
         ),
         vad=silero.VAD.load(
-            min_speech_duration=0.12,
+            min_speech_duration=0.05,
             min_silence_duration=0.30,
-            prefix_padding_duration=0.15,
+            prefix_padding_duration=0.50,
+            activation_threshold=0.45,
         ),
         stt=stt_engine,
         llm=llm_engine,
@@ -672,19 +673,49 @@ async def entrypoint(ctx: JobContext):
         # Give tiny 0.05s delay for WebRTC track binding before requesting initial greeting
         await asyncio.sleep(0.05)
 
-        logger.info(f"[DIAG] Generating explicit initial greeting for {client_name} (inbound={is_inbound})...")
-        try:
-            if is_inbound:
-                session.generate_reply(
-                    instructions="Initiate the conversation according to your system prompt. Introduce yourself and ask how you can help."
-                )
-            else:
-                session.generate_reply(
-                    instructions=f"Greet the user named {client_name} and follow the opening script in your instructions."
-                )
-            logger.info("[DIAG] Greeting generation requested immediately upon connect.")
-        except RuntimeError as e:
-            logger.warning(f"[DIAG] Could not generate greeting (session may be closed): {e}")
+        # Check if the payload prompt explicitly instructs the agent to wait for caller first
+        raw_prompt = ""
+        if isinstance(_effective_call_metadata, dict):
+            raw_prompt = _effective_call_metadata.get("prompt") or ""
+        elif ctx.job.metadata:
+            try:
+                raw_prompt = json.loads(ctx.job.metadata).get("prompt") or ""
+            except Exception:
+                pass
+
+        prompt_lower = (raw_prompt or "").lower()
+        should_wait_for_user = (
+            not is_inbound
+            and any(
+                phrase in prompt_lower
+                for phrase in [
+                    "wait for the caller",
+                    "wait for caller",
+                    "do not speak immediately",
+                    "wait for the user",
+                    "wait for user",
+                    "do not introduce yourself before the caller speaks",
+                    "do not introduce yourself before the user speaks",
+                ]
+            )
+        )
+
+        if should_wait_for_user:
+            logger.info("[DIAG] Payload prompt instructs agent to wait for caller first. Listening silently.")
+        else:
+            logger.info(f"[DIAG] Generating explicit initial greeting for {client_name} (inbound={is_inbound})...")
+            try:
+                if is_inbound:
+                    session.generate_reply(
+                        instructions="Initiate the conversation according to your system prompt. Introduce yourself and ask how you can help."
+                    )
+                else:
+                    session.generate_reply(
+                        instructions=f"Greet the user named {client_name} and follow the opening script in your instructions."
+                    )
+                logger.info("[DIAG] Greeting generation requested immediately upon connect.")
+            except RuntimeError as e:
+                logger.warning(f"[DIAG] Could not generate greeting (session may be closed): {e}")
 
         logger.info(f"[DIAG] Entering main loop — blocking until room disconnects. connection_state={ctx.room.connection_state}")
         # Block until the room connection drops or the session closes
