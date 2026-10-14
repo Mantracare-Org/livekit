@@ -6,7 +6,7 @@
 | 2 | **Three LiveKit API clients** | Plivo India + VoiceLink need proxy routing; Twilio/Zadarma use direct connection | 2025 |
 | 3 | **In-memory audio recording** | Avoids disk I/O in container; mixed via numpy → pydub → MP3 in-memory | 2025 |
 | 4 | **HMAC-signed webhooks** | Ensures authenticity of post-call data to MantraAssist backend | 2025 |
-| 5 | **LiveKit native sonic-3 TTS** | Removed Cartesia dependency entirely — TTS runs natively via LiveKit Inference, zero external API keys needed | 2026-07 |
+| 5 | **TTS: LiveKit native sonic-3** (cloud) / **direct Cartesia plugin** (self-host) | Cloud inference (`inference.TTS`) is keyless but routes through `agent-gateway.livekit.cloud`, which accepts **cloud** credentials only — a self-hosted dev keypair gets 401. The self-host path (`.env.self`) builds a direct `livekit-plugins-cartesia` `cartesia.TTS` (still `sonic-3`, needs a valid `CARTESIA_API_KEY`). | 2026-07 / 2026-09 |
 | 6 | **Multilingual STT + language matching** | Deepgram Nova-3 dynamic locale (`en-IN`/`en-US`/`hi`/`multi`) + per-call keyterm memory + Hinglish prompt directives so agent mirrors caller language each turn | 2026-09 |
 | 7 | **Per-trunk capacity gating** | Plivo=2, Zadarma=3, VoiceLink=5, Twilio=3 with global cap=5; trunk embedded in room name (`call_{trunk_id}_{call_id}`); explicit provider required on inbound setup with rollback + cascading delete | 2026-08/09 |
 | 8 | **Call limiter + outbound extension** | Base 150s farewell / 180s hard kill; outbound positive-intent extends to 270s / 300s (`call_duration.py` + `positive_intent.py`) | 2026-09 |

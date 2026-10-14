@@ -53,6 +53,7 @@ Telephony Provider → Webhook → FastAPI → Agent Dispatch → LiveKit Cloud 
 
 ## Recent Changelog
 
+- **2026-09-15:** Self-hosted TTS fix — `inference.TTS` (LiveKit cloud inference gateway) returns 401 for a self-hosted agent, so `engines.py` now builds direct `cartesia.TTS` via `livekit-plugins-cartesia` (sonic-3); also root-caused an invalid `CARTESIA_API_KEY` (401) and placed a valid key in `.env.self`. Tracked files, `007_sip_trunks.py`, and `selfhost/` config restored after a git cleanup incident (backup branch consumed).
 - **2026-09-10:** Inbound SIP trunk lifecycle — explicit `provider` required (no default), rollback of newly-created trunk/dispatch-rule on provider-forwarding failure, cascading delete (dispatch rules → trunk → `org_configs` → Redis `trunk:provider`)
 - **2026-09-09:** `clarify_medical_department` + availability MCP routing (KB excluded for scheduling, failed department discovery no longer blocks MCP), VAD barge-in (`vad` mode, 0.15s), inbound client recognition metadata (`ai_summaries` + `custom_fields`)
 - **2026-09-08:** Inbound client recognition via LiveKit SIP participant caller number → `recognize_client` (`GET /webhooks/mcp/lead`); `/api/*` → `/v1/*` route prefix migration

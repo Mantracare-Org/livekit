@@ -501,7 +501,7 @@ async def plivo_xml(request: Request):
     sip_domain = _get_sip_domain()
         
     # Build absolute action URL dynamically using headers for ngrok support
-    req_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or "localhost:8081"
+    req_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or os.getenv("PUBLIC_HOST") or os.getenv("SERVER_HOST") or "localhost:8081"
     req_scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
     action_url = f"{req_scheme}://{req_host}/v1/sip/plivo-dial-status"
 

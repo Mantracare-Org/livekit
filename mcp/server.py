@@ -5,18 +5,20 @@ import asyncpg
 import datetime
 from dotenv import load_dotenv
 import logging
+import json
 
 load_dotenv()
+load_dotenv(".env.self", override=True)  # Self-host override (if present)
 
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP("Postgres-Database-Server")
 
-DB_USER = os.getenv("POSTGRES_USER", "user")
-DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "")
-DB_NAME = os.getenv("POSTGRES_DB", "main_db")
+DB_USER = os.getenv("POSTGRES_USER", "redscarf")
+DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "nowandforever")
+DB_NAME = os.getenv("POSTGRES_DB", "livekit_db")
 DB_HOST = os.getenv("POSTGRES_HOST", "localhost")
-DB_PORT = os.getenv("POSTGRES_PORT", "5433")
+DB_PORT = os.getenv("POSTGRES_PORT", "5440")
 
 
 async def get_db_connection():

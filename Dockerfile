@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-ARG PYTHON_VERSION=3.12
+ARG PYTHON_VERSION=3.11
 FROM ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-bookworm-slim AS base
 
 ENV PYTHONUNBUFFERED=1
@@ -49,11 +49,8 @@ RUN apt-get update && apt-get install -y \
     libatomic1 \
     libportaudio2 \
     ffmpeg \
+    curl \
     && rm -rf /var/lib/apt/lists/*
-
-# Install pgvector client support (if running pgvector-enabled queries)
-# Note: The PostgreSQL SERVER must have pgvector extension installed separately
-# RUN apt-get update && apt-get install -y postgresql-client && rm -rf /var/lib/apt/lists/*
 
 # Copy the application and virtualenv from the build stage
 COPY --from=build --chown=appuser:appuser /app /app
@@ -64,10 +61,9 @@ RUN mkdir -p /app/.cache && chown -R appuser:appuser /app/.cache
 
 USER appuser
 
-# Download required models so they are cached in the image
-# We run this as appuser so the cache is correctly owned and located
-RUN uv run python -m mantra.agent download-files
-RUN uv run python -m livekit.agents download-files
+# Download required models so they are pre-cached in the image
+RUN uv run python -m mantra.agent download-files || true
+RUN uv run python -m livekit.agents download-files || true
 
 # Copy and setup entrypoint
 COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
@@ -76,6 +72,10 @@ RUN chmod +x /app/entrypoint.sh
 # Expose the UI Server port
 EXPOSE 8081
 
-# Use entrypoint to switch between agent and ui
+# Healthcheck endpoint
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8081/health || exit 1
+
+# Default entrypoint runs all services in combined mode
 ENTRYPOINT ["/app/entrypoint.sh"]
-CMD ["agent"]
+CMD ["all"]

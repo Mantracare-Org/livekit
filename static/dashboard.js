@@ -46,9 +46,59 @@ async function loadMetrics() {
     }
 }
 
+async function loadSystemStatus() {
+    const indicator = document.getElementById('system-status');
+    if (!indicator) return;
+
+    try {
+        const data = await apiFetch('/health');
+        const healthy = data.healthy === true;
+        indicator.className = `system-status ${healthy ? 'operational' : 'degraded'}`;
+        indicator.textContent = healthy ? 'All systems operational' : 'Systems degraded';
+        indicator.title = healthy ? 'All service health checks passed' : 'One or more service health checks failed';
+        indicator.disabled = false;
+    } catch (error) {
+        indicator.className = 'system-status unavailable';
+        indicator.textContent = 'Status unavailable';
+        indicator.title = 'Could not reach the service health endpoint';
+        indicator.disabled = true;
+    }
+}
+
+async function toggleSystemStatusDetails() {
+    const popover = document.getElementById('system-status-popover');
+    const indicator = document.getElementById('system-status');
+    if (!popover || !indicator || indicator.disabled) return;
+
+    if (!popover.hidden) {
+        popover.hidden = true;
+        indicator.setAttribute('aria-expanded', 'false');
+        return;
+    }
+
+    popover.innerHTML = '<div class="system-status-title">Service status</div><div class="system-status-check">Checking...</div>';
+    popover.hidden = false;
+    indicator.setAttribute('aria-expanded', 'true');
+
+    try {
+        const data = await apiFetch('/health/details');
+        const checks = Object.entries(data.checks || {});
+        const failed = checks.filter(([, healthy]) => !healthy);
+        popover.innerHTML = `
+            <div class="system-status-title">${failed.length ? 'Services needing attention' : 'All services are healthy'}</div>
+            ${failed.length
+                ? failed.map(([service]) => `<div class="system-status-check failed"><span>${service}</span><span>DOWN</span></div>`).join('')
+                : '<div class="system-status-check"><span>No issues detected</span><span>OK</span></div>'}
+        `;
+    } catch (error) {
+        popover.innerHTML = '<div class="system-status-check failed"><span>Health details</span><span>UNAVAILABLE</span></div>';
+    }
+}
+
 // ── Active Calls + Queue ─────────────────────────────────────────────────
 function renderActiveCalls(activeDetails) {
     const container = document.getElementById('active-calls-list');
+    document.getElementById('active-count').textContent = activeDetails?.length || 0;
     if (!activeDetails || activeDetails.length === 0) {
         container.innerHTML = `<div class="empty-state">No active calls</div>`;
         return;
@@ -713,9 +763,21 @@ document.addEventListener('DOMContentLoaded', () => {
     if (username) document.getElementById('nav-username').textContent = username;
 
     loadMetrics();
+    loadSystemStatus();
     loadCallHistory();
     connectSSE();
     addFeedItem('Dashboard connected', 'info');
+
+    document.getElementById('system-status')?.addEventListener('click', toggleSystemStatusDetails);
+    document.addEventListener('click', (event) => {
+        const wrapper = document.querySelector('.system-status-wrap');
+        const popover = document.getElementById('system-status-popover');
+        const indicator = document.getElementById('system-status');
+        if (wrapper && popover && indicator && !wrapper.contains(event.target)) {
+            popover.hidden = true;
+            indicator.setAttribute('aria-expanded', 'false');
+        }
+    });
 
     // Event listeners for DB search & filtering
     document.getElementById('call-search-input')?.addEventListener('input', () => {
@@ -734,6 +796,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Refresh metrics & sync call history every 15s
     setInterval(() => {
         loadMetrics();
+        loadSystemStatus();
         loadCallHistory();
     }, 15000);
 });

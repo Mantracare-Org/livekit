@@ -14,6 +14,14 @@ import logging
 logger = logging.getLogger("mantra.knowledge")
 router = APIRouter()
 
+def _get_db_dsn() -> str:
+    user = os.getenv("POSTGRES_USER", "redscarf")
+    password = quote_plus(os.getenv("POSTGRES_PASSWORD", "nowandforever"))
+    host = os.getenv("POSTGRES_HOST", "localhost")
+    port = os.getenv("POSTGRES_PORT", "5440")
+    db = os.getenv("POSTGRES_DB", "livekit_db")
+    return f"postgresql://{user}:{password}@{host}:{port}/{db}"
+
 @router.post("/v1/kb/chat")
 async def api_kb_chat(request: Request):
     """Text-based chat endpoint for testing the KB."""
@@ -38,10 +46,7 @@ async def api_kb_chat(request: Request):
             {"error": "kb_ids and message are required"}, status_code=400
         )
 
-    dsn = (
-        f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
-        f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
-    )
+    dsn = _get_db_dsn()
 
     try:
         kb = PostgresKnowledgeBase(dsn)
@@ -161,10 +166,7 @@ async def ingest_kb_data(request: Request):
     if not upload_file and not text:
         return JSONResponse({"status_code": 400, "status": "error", "error": "Either file or text must be provided"}, status_code=400)
 
-    dsn = (
-        f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
-        f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
-    )
+    dsn = _get_db_dsn()
 
     s3_url = None
     if upload_file:
@@ -433,10 +435,7 @@ async def backfill_kb_embeddings(request: Request):
     limit = int(limit) if limit is not None else None
     dry_run = bool(body.get("dry_run", False))
 
-    dsn = (
-        f"postgresql://{os.getenv('POSTGRES_USER')}:{quote_plus(os.getenv('POSTGRES_PASSWORD') or '')}"
-        f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
-    )
+    dsn = _get_db_dsn()
 
     kb = PostgresKnowledgeBase(dsn)
     try:
@@ -468,10 +467,7 @@ async def delete_kb_document(
         return JSONResponse({"status_code": 400, "status": "error", "error": "org_id and document_id are required"}, status_code=400)
 
     from mantra.knowledge_base import PostgresKnowledgeBase
-    dsn = (
-        f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
-        f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
-    )
+    dsn = _get_db_dsn()
 
     try:
         kb = PostgresKnowledgeBase(dsn)
@@ -508,10 +504,7 @@ async def kb_upload(request: Request, kb_id: str, file: UploadFile = File(...)):
     try:
         from mantra.knowledge_base import PostgresKnowledgeBase, ingest_file
 
-        dsn = (
-            f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
-            f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
-        )
+        dsn = _get_db_dsn()
         kb = PostgresKnowledgeBase(dsn)
         result = await ingest_file(kb, kb_id, file_bytes, file.filename)
         await kb.close()
@@ -541,10 +534,7 @@ async def kb_text(request: Request):
 
         from mantra.knowledge_base import PostgresKnowledgeBase, ingest_text
 
-        dsn = (
-            f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
-            f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
-        )
+        dsn = _get_db_dsn()
         kb = PostgresKnowledgeBase(dsn)
         result = await ingest_text(kb, kb_id, content, title=title, source_type="text")
         await kb.close()
@@ -573,10 +563,7 @@ async def kb_url(request: Request):
 
         from mantra.knowledge_base import PostgresKnowledgeBase, ingest_url
 
-        dsn = (
-            f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
-            f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
-        )
+        dsn = _get_db_dsn()
         kb = PostgresKnowledgeBase(dsn)
         result = await ingest_url(kb, kb_id, url)
         await kb.close()
@@ -594,10 +581,7 @@ async def kb_list(request: Request):
     try:
         from mantra.knowledge_base import PostgresKnowledgeBase
 
-        dsn = (
-            f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
-            f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
-        )
+        dsn = _get_db_dsn()
         kb = PostgresKnowledgeBase(dsn)
         pool = await kb._get_pool()
         async with pool.acquire() as conn:
@@ -621,10 +605,7 @@ async def kb_delete_page(request: Request, page_id: str):
     try:
         from mantra.knowledge_base import PostgresKnowledgeBase
 
-        dsn = (
-            f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
-            f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
-        )
+        dsn = _get_db_dsn()
         kb = PostgresKnowledgeBase(dsn)
         success = await kb.delete_page(page_id)
         await kb.close()
@@ -647,10 +628,7 @@ async def kb_delete_by_kb(request: Request, kb_id: str):
     try:
         from mantra.knowledge_base import PostgresKnowledgeBase
 
-        dsn = (
-            f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
-            f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
-        )
+        dsn = _get_db_dsn()
         kb = PostgresKnowledgeBase(dsn)
         count = await kb.delete_by_kb(kb_id)
         await kb.close()

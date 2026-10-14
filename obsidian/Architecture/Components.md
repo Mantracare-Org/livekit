@@ -6,7 +6,7 @@ The core real-time voice AI agent. ~3,007 lines.
 
 **Responsibilities:**
 - Connect to LiveKit rooms via `AgentServer`
-- Orchestrate STT (Deepgram Nova-3) → LLM (OpenAI/Gemini/DeepSeek) → TTS (LiveKit native sonic-3, no Cartesia dependency)
+- Orchestrate STT (Deepgram Nova-3) → LLM (OpenAI/Gemini/DeepSeek) → TTS (LiveKit sonic-3 via cloud inference, which the self-hosted path replaces with the direct `livekit-plugins-cartesia` plugin)
 - Hinglish telesales system prompt (short 1-2 sentence turns, flat prosody) with `<!-- LANGUAGE_DIRECTIVE_START/END -->` per-turn alignment via `MantraMultilingualAgent.llm_node`
 - Dynamic STT locale routing (`resolve_stt_language`: `en-IN` for India, `en-US` otherwise, `hi` model for Hindi, `multi` default) + per-call keyterm memory (seeded from context, ≤80 terms, learns names/places per turn, endpointing 100ms)
 - Fast VAD barge-in: `interruption.mode="vad"`, `min_duration=0.15s`, `discard_audio_if_uninterruptible=True`; dynamic endpointing (0.10s–0.80s), preemptive TTS on

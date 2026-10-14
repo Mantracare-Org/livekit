@@ -5,14 +5,13 @@ import time
 import hmac
 import hashlib
 import asyncio
-import datetime
+from datetime import datetime, timezone
 import zoneinfo
 import logging
 import httpx
 import numpy as np
 import asyncpg
 from typing import Dict, List, Optional, Union
-from datetime import datetime, timezone
 from livekit import rtc
 from livekit.agents import llm, APIConnectOptions
 import boto3
@@ -185,11 +184,11 @@ async def save_call_event(
 
     event_source: 'ui_server' | 'agent'
     """
-    db_user = os.getenv("POSTGRES_USER")
-    db_password = os.getenv("POSTGRES_PASSWORD")
-    db_name = os.getenv("POSTGRES_DB")
-    db_host = os.getenv("POSTGRES_HOST")
-    db_port = os.getenv("POSTGRES_PORT")
+    db_user = os.getenv("POSTGRES_USER", "redscarf")
+    db_password = os.getenv("POSTGRES_PASSWORD", "nowandforever")
+    db_name = os.getenv("POSTGRES_DB", "livekit_db")
+    db_host = os.getenv("POSTGRES_HOST", "localhost")
+    db_port = os.getenv("POSTGRES_PORT", "5440")
 
     if not all([db_user, db_password, db_name, db_host, db_port]):
         return

@@ -12,7 +12,7 @@
 - **OpenAI GPT-4o-mini** — Default LLM
 - **Gemini 2.5 Flash** — Alternative LLM
 - **DeepSeek v4 Flash** — Alternative LLM
-- **LiveKit sonic-3** — Native TTS (no external API dependency)
+- **LiveKit sonic-3** — TTS; cloud path via LiveKit inference (no key), self-hosted path via direct `livekit-plugins-cartesia` (`CARTESIA_API_KEY`)
 - **Silero VAD** — Voice Activity Detection
 - **Multilingual Turn Detector** — Turn detection
 

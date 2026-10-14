@@ -4,6 +4,7 @@
 .env.example
 .env.*
 !.env.example
+!.env.prod.example
 .venv/
 .deepeval/
 .claude/
