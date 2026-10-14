@@ -19,6 +19,7 @@ from livekit.agents import (
     TurnHandlingOptions,
     cli,
     inference,
+    llm,
 )
 from livekit.plugins import silero
 
@@ -393,30 +394,6 @@ async def entrypoint(ctx: JobContext):
 
     logger.info(f"[LANG] Initialized language state: '{language}' (Voice: {voice_id} | Speed: {voice_speed})")
 
-    # Fire DeepSeek pre-warm NOW — initial_instructions is fully built.
-    # Passing the real system prompt warms DeepSeek's KV prefix cache so the
-    # first actual turn (e.g. user says "Yes") reuses the cached prefix
-    # instead of recomputing the entire context → eliminates 2-3s TTFT on turn 2.
-    if model_name == "deepseek" and client is not None:
-        deepseek_model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-        async def _prewarm_deepseek_with_ctx():
-            try:
-                logger.info(f"[DEEPSEEK] Pre-warming KV cache with system prompt ({deepseek_model})...")
-                pw_start = asyncio.get_event_loop().time()
-                await client.chat.completions.create(
-                    model=deepseek_model,
-                    messages=[
-                        {"role": "system", "content": initial_instructions},
-                        {"role": "user", "content": "hi"},
-                    ],
-                    max_tokens=1,
-                )
-                pw_dur = (asyncio.get_event_loop().time() - pw_start) * 1000
-                logger.info(f"[DEEPSEEK] KV cache pre-warmed with system prompt in {pw_dur:.1f}ms")
-            except Exception as pw_err:
-                logger.warning(f"[DEEPSEEK] Pre-warm (with ctx) non-fatal error: {pw_err}")
-        create_bg_task(_prewarm_deepseek_with_ctx())
-
     tts_engine = build_tts_engine(voice_id, language, voice_speed)
     cc.tts_engine = tts_engine
 
@@ -502,6 +479,33 @@ async def entrypoint(ctx: JobContext):
         inactivity_task = asyncio.create_task(inactivity_monitor(cc))
         safety_net_task = asyncio.create_task(farewell_safety_net(cc))
         intent_task = asyncio.create_task(positive_intent_monitor(cc))
+
+        # ── Option B: Silent LLM Pre-flight Warm-up ─────────────────────────
+        # Concurrently executes a silent 1-token pre-flight against the LLM engine
+        # using the exact agent instructions and tools. This primes the HTTP/2 connection
+        # and server-side KV prefix cache while the phone is ringing, emitting 0 audio to
+        # the room and keeping session.history clean.
+        async def _silent_warmup_ping():
+            try:
+                await asyncio.sleep(0.15)  # brief yield for upfront KB to settle into agent.instructions
+                pw_start = asyncio.get_event_loop().time()
+                logger.info("[DIAG] Starting silent LLM pre-flight to warm connection and prefix cache...")
+
+                chat_ctx = llm.ChatContext()
+                current_inst = agent.instructions if (agent and hasattr(agent, "instructions")) else initial_instructions
+                chat_ctx.add_message(role="system", content=current_inst)
+                chat_ctx.add_message(role="user", content="ping")
+
+                stream = llm_engine.chat(chat_ctx=chat_ctx, tools=agent_tools)
+                async for _ in stream:
+                    break
+                await stream.aclose()
+                pw_dur = (asyncio.get_event_loop().time() - pw_start) * 1000
+                logger.info(f"[DIAG] Silent LLM pre-flight complete in {pw_dur:.1f}ms (0 audio emitted, KV cache primed).")
+            except Exception as pw_err:
+                logger.warning(f"[DIAG] Silent LLM pre-flight non-fatal error: {pw_err}")
+
+        create_bg_task(_silent_warmup_ping())
 
         logger.info(f"[DIAG] Checking for already-published tracks...")
         # Check if agent track was already published before we attached the listener

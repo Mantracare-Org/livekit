@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-14
+
+### Silent LLM Pre-Flight Warm-Up & TTFT Optimization (Option B)
+
+- **perf & latency:** Implemented background silent LLM pre-flight warm-up in `mantra/agent.py` (`_silent_warmup_ping`) right after session start while the phone is ringing. Concurrently executes an out-of-band 1-token pre-flight stream via `llm_engine.chat()` using the full settled `agent.instructions` and `agent_tools`. Primes the persistent HTTP/2 connection and DeepSeek / OpenAI server-side KV prefix cache before the remote participant answers, cutting first-turn TTFT latency without emitting any audio to the room or modifying `session.history`.
+- **fix:** Removed early incomplete `_prewarm_deepseek_with_ctx()` that previously executed before `agent_tools` were constructed and before upfront KB/process text was injected, which previously caused DeepSeek server-side KV prefix cache misses.
+- **fix:** Added retry guard in `fnc_ctx.warmup()` in `mantra/core/assistant_functions.py` waiting up to 1.0s for `self.agent` to be attached so upfront KB context (`<!-- UPFRONT_KB_START -->`) is guaranteed to be injected into instructions before the initial turn.
+- **Files:** `mantra/agent.py`, `mantra/core/assistant_functions.py`, `obsidian/Development/Changelog.md`, `obsidian/Development/Current Sprint.md`.
+
 ## 2026-10-11
 
 ### End Call Speech Suppression (StopResponse) & Definitive Disconnect

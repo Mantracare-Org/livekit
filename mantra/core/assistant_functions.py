@@ -76,6 +76,11 @@ class AssistantFunctions:
             retriever = await self._get_retriever()
             pages = await retriever.prefetch(self.kb_ids)
             process_context = await kb.get_process_stage_data_for_kb_ids(self.kb_ids)
+            for _ in range(20):
+                if self.agent is not None:
+                    break
+                await asyncio.sleep(0.05)
+
             if self.agent:
                 upfront_text = format_upfront_kb_context(pages)
                 upfront_text += format_upfront_process_context(process_context)
