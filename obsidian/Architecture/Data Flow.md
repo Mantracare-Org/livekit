@@ -26,15 +26,16 @@ Step 3: VOICE AGENT (agent.py)
   ├── end_call tool → graceful disconnect
   └── Post-call processing
 
-Step 4: POST-CALL (agent.py, finally block)
+Step 4: POST-CALL (finalize.py)
   ├── Cancel background tasks (limiter, inactivity, safety net, transcript)
   ├── Capture history snapshot (transcript)
   ├── Stop recording → mix audio → upload MP3 to S3
-  ├── LLM analysis → summary, stage transition, sentiment, appointment data, process_id
-  ├── Build webhook payload → send to MantraAssist backend (HMAC-signed)
-  ├── Save call log to PostgreSQL
-  ├── TOS telemetry with call summary, duration, S3 status
-  └── Log completion summary
+  ├── Fast structured summary → generate 4-part domain-agnostic summary via SessionRecorder.generate_summary
+  ├── Connected calls set call_status: null (delegated to JEV AI Pro in Mantra Assist API)
+  ├── Build clean webhook payload → strip null/empty decision fields to reduce payload weight
+  ├── Save call log to local PostgreSQL
+  ├── Deliver to MantraAssist backend (/v1/webhooks/n8n/summary) → queued to Redis/BullMQ CallSummaryQueue for JEV decision processing
+  └── TOS telemetry with duration, S3 status, transcript flag
 ```
 
 ## Inbound Call Flow

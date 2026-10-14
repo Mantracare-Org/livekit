@@ -38,15 +38,16 @@ async def init_clients():
     api_secret = os.getenv("LIVEKIT_API_SECRET")
     lk_url = os.getenv("LIVEKIT_URL")
 
-    if lk_url.startswith("wss://"):
-        api_url = lk_url.replace("wss://", "https://")
-    elif lk_url.startswith("ws://"):
-        api_url = lk_url.replace("ws://", "http://")
+    api_url = lk_url
+    if lk_url:
+        if lk_url.startswith("wss://"):
+            api_url = lk_url.replace("wss://", "https://")
+        elif lk_url.startswith("ws://"):
+            api_url = lk_url.replace("ws://", "http://")
+        logger.info(f"Connecting to self-hosted LiveKit API at {api_url}")
+        lk_client = api.LiveKitAPI(url=api_url, api_key=api_key, api_secret=api_secret)
     else:
-        api_url = lk_url
-
-    logger.info(f"Connecting to self-hosted LiveKit API at {api_url}")
-    lk_client = api.LiveKitAPI(url=api_url, api_key=api_key, api_secret=api_secret)
+        logger.warning("LIVEKIT_URL not set — LiveKit client not initialized")
     # Set aliases for smooth backward compatibility
     plivo_client = lk_client
     voicelink_client = lk_client

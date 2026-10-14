@@ -9,17 +9,19 @@ BASE_FAREWELL_SECONDS = int(os.getenv("CALL_BASE_FAREWELL_SECONDS", "150"))
 BASE_HARD_LIMIT_SECONDS = int(os.getenv("CALL_BASE_HARD_LIMIT_SECONDS", "180"))
 EXTENDED_FAREWELL_SECONDS = int(os.getenv("CALL_EXTENDED_FAREWELL_SECONDS", "270"))
 EXTENDED_HARD_LIMIT_SECONDS = int(os.getenv("CALL_EXTENDED_HARD_LIMIT_SECONDS", "300"))
+INBOUND_FAREWELL_SECONDS = int(os.getenv("CALL_INBOUND_FAREWELL_SECONDS", "270"))
+INBOUND_HARD_LIMIT_SECONDS = int(os.getenv("CALL_INBOUND_HARD_LIMIT_SECONDS", "300"))
 
 
-def current_limits(extended: bool) -> tuple[int, int]:
+def current_limits(extended: bool, is_inbound: bool = False) -> tuple[int, int]:
+    if is_inbound:
+        return INBOUND_FAREWELL_SECONDS, INBOUND_HARD_LIMIT_SECONDS
     if extended:
         return EXTENDED_FAREWELL_SECONDS, EXTENDED_HARD_LIMIT_SECONDS
     return BASE_FAREWELL_SECONDS, BASE_HARD_LIMIT_SECONDS
 
 
-def is_extendable(*, is_inbound: bool, already_extended: bool, elapsed: float) -> bool:
-    if is_inbound:
-        return False
+def is_extendable(*, is_inbound: bool = False, already_extended: bool = False, elapsed: float = 0.0) -> bool:
     if already_extended:
         return False
     if elapsed >= EXTENDED_HARD_LIMIT_SECONDS - 5:

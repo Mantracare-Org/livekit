@@ -1,5 +1,129 @@
 # Changelog
 
+## 2026-10-11
+
+### End Call Speech Suppression (StopResponse) & Definitive Disconnect
+
+- **fix:** Suppressed agent hallucinated follow-up speech (*"The call has ended. Is there anything else I can help you with?"*) after invoking `end_call`. In LiveKit Agents, tool return values set `_reply_required = True` in `fnc_executed_ev`, prompting the LLM for a follow-up turn. Replaced return value with `raise StopResponse()` from `livekit.agents`, which sets `fnc_call_out = None` and cleanly stops the LiveKit generation loop.
+- **fix:** Eliminated disconnect abort loops in `graceful_disconnect_after_speech()`. Removed `_new_user_speech_detected()` checks across all disconnect phases. Previously, any caller noise, farewell ("bye"), or breath during the 1.2s post-speech silence buffer cancelled the teardown task (`end_call_triggered = False`), keeping the room open and causing the agent to hallucinate line reconnections (*"नमस्ते जी — कॉल फिर से जुड़ गई है"*). Disconnection is now definitive once triggered.
+- **fix:** Injected recipient `client_name` into agent instructions for outbound calls in `mantra/prompts.py`. Previously, `context_header`/`context_body` was constructed but never appended, leaving the LLM with no knowledge of the contact's name. When callers asked "Who do you want to speak with?", the agent claimed it had no name on its end despite `client_name` being present in metadata.
+- **fix:** Respected payload prompt opening rules in `mantra/agent.py`. If the payload prompt instructs the agent to wait for the caller to speak first, the agent listens silently on connect without forcing premature speech. Initial greeting generation is only called if the prompt directs the agent to speak first.
+- **prompt & tool:** Expanded Rule 11 in `mantra/prompts.py` and the `end_call` tool description in `mantra/core/assistant_functions.py` to enforce that when the agent realizes there is nothing left in the call to speak or discuss — including when the caller requests a callback or says they are busy (e.g. 'call me after 10 minutes', 'call back tomorrow'), demo/appointment booking is confirmed, all questions are answered, closing goodbye is delivered, or offer is declined — it speaks its acknowledgment/parting words and invokes `end_call` in that exact same turn. Guarded so `end_call` is never invoked while active discussion, inquiry, or booking is underway.
+- **perf & latency:** Defaulted `AMD_ENABLED` from `"1"` to `"0"` in `mantra/agent.py`. LiveKit's AMD (`detect_voicemail()`) previously paused user audio input authorization (`_pause_authorization()`) for 2.5 seconds on outbound calls to detect answering machines, discarding any initial "Hello" spoken by the caller during pickup and forcing them to repeat "Hello" multiple times. Defaulting to `"0"` keeps the listening gate wide open from millisecond zero.
+- **perf & vad:** Calibrated Silero VAD parameters in `mantra/agent.py` (`min_speech_duration=0.05s`, `prefix_padding_duration=0.50s`, `activation_threshold=0.45`) while keeping VAD fully active. Preserves the first 500ms audio buffer so the initial consonant of "Hello" reaches STT intact without clipping short telephony utterances.
+- **Files:** `mantra/agent.py`, `mantra/prompts.py`, `mantra/core/assistant_functions.py`, `mantra/core/room_control.py`, `obsidian/Features/Voice Agent.md`, `obsidian/Development/Current Sprint.md`, `obsidian/Development/Changelog.md`.
+
+## 2026-10-10
+
+### End Call Graceful Disconnect & Mid-Conversation Disconnect Prevention
+
+- **fix:** Resolved mid-conversation disconnect where calls were dropped while the caller was speaking. Root cause: background `farewell_safety_net()` scanned messages for hardcoded phrases (e.g. "thanks for calling", "take care") and triggered a disconnect mid-call when the user was speaking because the user's utterance was not yet committed to history.
+- **fix:** Removed all hardcoded farewell phrase matching (`INBOUND_FAREWELL_PHRASES`, `OUTBOUND_FAREWELL_PHRASES`) and neutralized `farewell_safety_net()`. Also removed hardcoded `booking_terms`/`cancel_terms` phrase scanning from `AssistantFunctions.end_call()` that previously blocked valid call ends when callers said "ok" or "sure".
+- **feat:** Enabled seamless `end_call()` invocation: agent speaks its warm farewell and calls `end_call` in the same turn. `graceful_disconnect_after_speech()` monitors `session.agent_state` and `session.output.audio._pending_playback_count` (with 300ms debounce + 1.2s post-speech silence buffer), allowing the agent's complete closing statement to play out to caller's ear before room teardown.
+- **guard:** Interruption protection via `_new_user_speech_detected()`: if the caller interrupts with a new utterance (`user_speaking_timestamp > start_time`) during the agent's farewell or post-speech buffer, disconnection is immediately aborted, resetting `end_call_triggered = False` so the agent can answer the caller.
+- **prompt:** Updated system instructions in `mantra/prompts.py` (`ENDING THE CALL`) and tool docstring in `mantra/core/assistant_functions.py` directing the agent to speak its closing goodbye and invoke `end_call` in that turn.
+- **Files:** `mantra/core/room_control.py`, `mantra/core/assistant_functions.py`, `mantra/core/call_monitors.py`, `mantra/prompts.py`, `obsidian/Features/Voice Agent.md`, `obsidian/Development/Current Sprint.md`, `obsidian/Development/Changelog.md`.
+
+## 2026-10-09
+
+### Marathi Language Enablement & Prompt Guard
+
+- **feat:** Re-enabled Marathi (`"mr"`) language support across `mantra/language_manager.py` (`SUPPORTED_LANGUAGES`, `LANGUAGE_NAMES`, `NATIVE_SCRIPTS`, `normalize_language_code`, `resolve_stt_language`, `NativeLanguageDetector`, `_score_transcript`) and `mantra/core/engines.py` (`build_language_manager`).
+- **feat:** Added Marathi prosody prompt directive (`LANGUAGE RULE (MARATHI PROSODY — CRITICAL)`) supporting warm Devanagari Marathi speech output.
+- **guard:** Implemented `marathi_allowed` state in `LanguageManager` and updated prompt directives/rules in `mantra/prompts.py` (`CRITICAL OVERRIDING RULES` Rule 5) and `mantra/language_manager.py` to strictly guard against automatic/dynamic switching to Marathi unless Marathi is explicitly mentioned or requested in the prompt/payload (`marathi_allowed=True`).
+- **Files:** `mantra/language_manager.py`, `mantra/core/engines.py`, `mantra/prompts.py`, `obsidian/Development/Changelog.md`, `obsidian/Development/Current Sprint.md`.
+
+## 2026-10-06
+
+### Zero-Runtime Outbound KB Pre-Fetching & Action Payload Support
+
+- **feat:** Updated outbound call webhook metadata tagging in `mantra/routers/telephony.py` (`payload_meta["direction"] = "outbound"`) and agent job metadata context parsing in `mantra/agent.py` to support `"action": "outbound-call"`.
+- **arch:** Verified end-to-end zero-runtime RAG flow for outbound calls: all `kb_collections` and KB documents associated with an `org_id` are resolved and pre-fetched into memory during session `warmup()`, then injected directly into `agent.instructions` (`<!-- UPFRONT_KB_START -->`). Ensures zero-latency KB document retrieval during live outbound turns without runtime database query delays.
+- **Files:** `mantra/agent.py`, `mantra/routers/telephony.py`, `obsidian/Development/Changelog.md`, `obsidian/Development/Current Sprint.md`.
+
+## 2026-10-03
+
+### JEV AI Decision Processing Delegation & Domain-Agnostic Summary Refactor
+
+- **feat:** Delegated 100% of post-call CRM decision-making (`call_status`, `new_stage_id`, `user_intent`, `appointment_metadata`) from LiveKit to JEV AI Pro via Mantra Assist API (`apps/api`) BullMQ `CallSummaryQueue`.
+- **feat:** Refactored `SessionRecorder.generate_summary` prompt in `mantra/utils.py` to be **100% domain-agnostic** across healthcare, sales, support, real estate, education, and SaaS verticals. Outputs a 4-part structured narrative summary detailing: Intent, Key Discussion Details, Action & Booking Metadata, and Outcome & Resolution.
+- **perf:** Stripped all null, non-existent, and empty fields (`new_stage_id`, `call_status`, `user_intent`, `call_intent`, `next_call_on`, `appointment_metadata`, empty custom field objects) from LiveKit's outgoing webhook payloads (`CALL_DATA_INBOUND_UPDATE`, `CALL_DATA_UPDATE`, `CALL_RETRY`), drastically reducing payload weight.
+- **Files:** `mantra/core/finalize.py`, `mantra/utils.py`, `obsidian/Features/Post-Call Processing.md`, `obsidian/Architecture/Data Flow.md`, `obsidian/Development/Changelog.md`.
+
+### Natural Voice Prosody: Em-Dashes, Semicolons & Doctor Tool Guard
+
+- **feat:** Enhanced TTS voice prosody formatting in `mantra/core/live_agent.py` and `mantra/prompts.py` (Rules 9 & 10). Replaced heavy `. ... ` trailing pause spam with a varied human punctuation mix — em-dashes (`—`) for intro bridges and thought transitions, semicolons (`;`) for clause connections without pitch drops, and commas (`,`) for light breath pauses.
+- **fix:** Restricted `check_doctor_availability` tool description and system prompt Step 3 in `mantra/core/assistant_functions.py` and `mantra/prompts.py` to **doctor and medical consultations exclusively**. Prevents the AI from calling doctor availability APIs during corporate sales calls, EAP demos, or walkthrough meetings.
+- **fix:** Fixed `NameError: name 'deepseek_model' is not defined` in `_prewarm_deepseek_with_ctx()` in `mantra/agent.py` so DeepSeek KV prefix cache pre-warming executes cleanly on call start, eliminating 2–3s TTFT latency re-computation on live turns.
+- **perf:** Changed LiveKit `endpointing` mode from `"dynamic"` (which dynamically ballooned `min_delay` from 0.15s to 0.934s on micro-pauses) to `"fixed"` (`min_delay: 0.15`, `max_delay: 0.25`) in `mantra/agent.py`. Turn response commitment now occurs within ~150-250ms of user silence.
+- **Files:** `mantra/agent.py`, `mantra/prompts.py`, `mantra/core/assistant_functions.py`, `mantra/core/live_agent.py`, `obsidian/Development/Changelog.md`, `obsidian/Development/Current Sprint.md`.
+
+## 2026-10-01
+
+### Strict Appointment Time Slot Validation & Denial Prompt Rules
+
+- **fix:** Added strict time slot validation & denial rules to `APPOINTMENT BOOKING WORKFLOW (CRITICAL)` Step 4 and `CRITICAL OVERRIDING RULES` Rule 8 in `mantra/prompts.py`. Prevents live AI agent from hallucinating confirmations for unlisted/unavailable slots (e.g., confirming 1 PM when schedule only has 9–12 PM & 2–3 PM). The agent now explicitly denies unavailable slots gently, presents available open slots, and only confirms when an available slot is selected.
+- **Files:** `mantra/prompts.py`, `obsidian/Development/Changelog.md`, `obsidian/Development/Current Sprint.md`.
+
+## 2026-09-30
+
+### Model Speed & Clean MCP Modular Architecture Integration
+
+- **merge:** Integrated `feature/doc-location` (clean MCP modular architecture) and `master` into `change/model`.
+- **feat:** Configured `DEEPSEEK_MODEL` env var (default `deepseek-chat`) in `mantra/core/engines.py` to eliminate LLM response stalls.
+- **perf:** Configured Deepgram STT `endpointing_ms` to `250ms` in `mantra/core/engines.py` and calibrated Silero VAD parameters for telephony.
+- **Files:** `mantra/core/engines.py`, `mantra/core/call_monitors.py`, `mantra/agent.py`, `obsidian/Development/Changelog.md`.
+
+## 2026-09-29
+
+### Indian Telephony Voice Prosody & STT Reliability Tuning
+
+- **fix:** Resolved speech recognition drops by isolating English mode from Hindi filler word insertion, preventing STT language switching stalls during English calls.
+- **perf:** Raised Deepgram STT `endpointing_ms` from `100ms` to `250ms`, preventing mid-sentence speech truncations during natural human micro-pauses.
+- **perf:** Tuned Silero VAD parameters (`min_speech_duration=0.12s`, `min_silence_duration=0.30s`) to eliminate false VAD triggers from SIP line static.
+- **feat:** Enhanced system prompts and dynamic language directives for Indian English, Hindi, and Hinglish phone conversations using commas (`,`), ellipses (`...`), and hyphens (`-`) for expressive TTS cadence.
+- **Files:** `mantra/agent.py`, `mantra/language_manager.py`.
+
+### DeepSeek LLM Model Selection & Latency Fix
+
+- **fix:** Resolved intermittent thinking / response latency delays (2 in 5 turns stalled or empty response) by replacing invalid model name `deepseek-v4-flash` with official `deepseek-chat` (DeepSeek-V3).
+- **perf:** Benchmark showed `deepseek-v4-flash` returned empty completion responses (`''`) and failed 60% of requests on `https://api.deepseek.com`, causing LiveKit agent stream stalls; `deepseek-chat` achieved 100% success rate with ~500ms TTFT.
+- **feat:** Added `DEEPSEEK_MODEL` environment variable (default `deepseek-chat`) for live call LLM engine and KV cache pre-warming.
+- **Files:** `mantra/agent.py`.
+
+## 2026-09-26
+
+### Inbound Call 5-Minute Duration Limit
+
+- **feat:** Inbound calls now run for 5 minutes (270s farewell warning / 300s hard limit) instead of 3 minutes (180s).
+- **feat:** Configured `CALL_INBOUND_FAREWELL_SECONDS` (default `270`) and `CALL_INBOUND_HARD_LIMIT_SECONDS` (default `300`) environment variables.
+- **Files:** `mantra/call_duration.py`, `mantra/agent.py`.
+
+## 2026-09-26
+
+### Merge Conflict Resolution
+
+- **fix:** Resolved merge conflict in `mantra/agent.py` by maintaining the modular `await asyncio.shield(finalize(cc, history_snapshot))` delegation to `mantra.core.finalize`.
+- **Files:** `mantra/agent.py`, `obsidian/Development/Changelog.md`.
+
+## 2026-09-25
+
+### Integration of Backend Services & Locations API Endpoints & Bug Fixes
+
+- **fix:** Fixed `AttributeError: type object 'datetime.datetime' has no attribute 'datetime'` in `mantra/utils.py` by replacing shadowed `datetime.datetime` references with `datetime.now()`.
+- **fix:** Removed stale `fnc_ctx._load_department_options` background call in `mantra/agent.py` entrypoint.
+- **feat:** Integrated `GET /v1/webhooks/mcp/services?org_id={org_id}` into `livekit-mcp` backend client to fetch organization-specific service offerings.
+- **feat:** Integrated `GET /v1/webhooks/mcp/locations?org_id={org_id}&caller_lat={lat}&caller_lng={lng}` into `find_nearest_location` Python function tool. Automatically geocodes caller address/whereabouts via `geopy`, sends `caller_lat` and `caller_lng` to backend API, and utilizes pre-calculated `distance_km` (or falls back to geodesic distance calculation) to return closest hospital branches.
+- **fix:** Synchronized `JWT_SECRET` in `lkt/.env.local` and `lkt/.env` to `fecceea3e629c131c7340e820da8f52d`, aligning with `mantra-auth` and `livekit-mcp` to resolve JWT verification errors (`invalid signature`) during token introspection.
+- **fix:** Updated OAuth token URL in `mantra/mcp_client.py` to route to `/api/oauth/token` instead of `/oauth/token`, resolving HTTP 404 Not Found errors from Next.js `mantra-auth`.
+- **feat:** Updated `recognize_client` in `livekit-mcp/src/livekit_mcp/clients/backend_client.py` to query `GET /v1/webhooks/mcp/lead?org_id={org_id}&phone_number={phone_number}` (with fallback to `POST /v1/webhooks/client-recognition`), correctly parsing `client_name` and `client_metadata` (`ai_summaries` + `custom_fields`). Updated `MANTRAASSIST_BACKEND_URL` in `livekit-mcp/.env`.
+- **feat:** Added `get_org_products_services` and `get_org_locations` as official MCP tools in `livekit-mcp/src/livekit_mcp/tools/products_services.py` and registered them in `server.py`.
+- **feat:** Refactored `clarify_product_service` and `find_nearest_location` in `mantra/core/assistant_functions.py` to execute `get_org_products_services` and `get_org_locations` over **MCP SSE JSON-RPC protocol via `MantraMCPClient`**, surfacing tool calls directly in `livekit-mcp` logs.
+- **feat:** Added call duration extension to 5 minutes (300 seconds) for both inbound and outbound calls upon positive intent and lead generation triggers (`clarify_product_service`, `find_nearest_location`, `check_doctor_availability`).
+- **fix:** Removed restrictive `is_inbound` checks in `mantra/call_duration.py` (`is_extendable`) and `mantra/core/call_monitors.py` (`positive_intent_monitor` and `call_limiter`), allowing inbound appointment leads to extend call time to 5 minutes seamlessly.
+- **fix:** Added guardrails against premature `end_call` invocation in `mantra/core/assistant_functions.py` and `mantra/prompts.py`. If the LLM attempts to call `end_call` while the user is requesting or agreeing to an appointment/lead booking, `end_call` is blocked with a helpful system feedback string, auto-extending the call duration to 5 minutes so appointment booking can complete.
+- **Files:** `mantra/call_duration.py`, `mantra/core/call_monitors.py`, `mantra/core/assistant_functions.py`, `mantra/prompts.py`, `obsidian/Development/Changelog.md`.
+
 ## 2026-09-17
 
 ### Modular Microservices Compose Folder Architecture (`compose_files/`)

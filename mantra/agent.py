@@ -34,16 +34,18 @@ os.environ.pop("http_proxy", None)
 _is_inference = os.getenv("LIVEKIT_AGENTS_INFERENCE") == "1"
 _proc_type = "Inference Subprocess" if _is_inference else "Main Worker"
 
-_handler = logging.StreamHandler(sys.stdout)
-_handler.setFormatter(
-    logging.Formatter(
-        f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s"
-    )
-)
+from mantra.logging_config import configure_root_logger, get_logger
 
+configure_root_logger(level=logging.DEBUG)
+logger = get_logger("mantra.agent")
 
-logging.basicConfig(level=logging.DEBUG, handlers=[_handler])
-logger = logging.getLogger("mantra.agent")
+# Add process type to log format
+for handler in logger.handlers:
+    handler.setFormatter(logging.Formatter(
+        f"%(asctime)s INFO (Type: {_proc_type}, PID: {os.getpid()}) %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    ))
+
 logging.getLogger("livekit.agents").setLevel(logging.DEBUG)
 logger.info("Initializing process...")
 
@@ -224,7 +226,7 @@ async def entrypoint(ctx: JobContext):
                         logger.warning(f"[DIAG] Inbound resolution failed for {routing_phone} — using dispatch rule defaults, call WILL connect")
                 else:
                     logger.warning("[DIAG] Inbound call has no routing phone in dispatch metadata")
-            elif meta_payload.get("direction") == "outbound":
+            elif meta_payload.get("direction") == "outbound" or meta_payload.get("action") == "outbound-call":
                 org_id = meta_payload.get("org_id")
                 logger.info(f"[DIAG] Outbound call detected — org_id={org_id}, resolving KB...")
                 if org_id:
@@ -283,8 +285,6 @@ async def entrypoint(ctx: JobContext):
         kb_tags=kb_tags_list,
         call_state=call_state,
     )
-    if call_state.get("org_id"):
-        create_bg_task(fnc_ctx._load_department_options(call_state["org_id"]))
     create_bg_task(fnc_ctx.warmup())
 
     # Session ID for S3 key naming
@@ -399,12 +399,13 @@ async def entrypoint(ctx: JobContext):
     # first actual turn (e.g. user says "Yes") reuses the cached prefix
     # instead of recomputing the entire context → eliminates 2-3s TTFT on turn 2.
     if model_name == "deepseek" and client is not None:
+        deepseek_model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
         async def _prewarm_deepseek_with_ctx():
             try:
-                logger.info("[DEEPSEEK] Pre-warming KV cache with system prompt...")
+                logger.info(f"[DEEPSEEK] Pre-warming KV cache with system prompt ({deepseek_model})...")
                 pw_start = asyncio.get_event_loop().time()
                 await client.chat.completions.create(
-                    model="deepseek-v4-flash",
+                    model=deepseek_model,
                     messages=[
                         {"role": "system", "content": initial_instructions},
                         {"role": "user", "content": "hi"},
@@ -432,9 +433,9 @@ async def entrypoint(ctx: JobContext):
         turn_handling=TurnHandlingOptions(
             turn_detection=inference.TurnDetector(),
             endpointing={
-                "mode": "dynamic",
-                "min_delay": 0.10,
-                "max_delay": 0.80,
+                "mode": "fixed",
+                "min_delay": 0.15,
+                "max_delay": 0.25,
             },
             interruption={
                 "mode": "vad",
@@ -451,9 +452,10 @@ async def entrypoint(ctx: JobContext):
             },
         ),
         vad=silero.VAD.load(
-            min_speech_duration=0.08,
-            min_silence_duration=0.25,
-            prefix_padding_duration=0.10,
+            min_speech_duration=0.05,
+            min_silence_duration=0.30,
+            prefix_padding_duration=0.50,
+            activation_threshold=0.45,
         ),
         stt=stt_engine,
         llm=llm_engine,
@@ -467,7 +469,8 @@ async def entrypoint(ctx: JobContext):
     agent_tools = [
         fnc_ctx.end_call,
         fnc_ctx.search_knowledge_base,
-        fnc_ctx.clarify_medical_department,
+        fnc_ctx.clarify_product_service,
+        fnc_ctx.find_nearest_location,
         fnc_ctx.check_doctor_availability,
     ]
 
@@ -671,19 +674,49 @@ async def entrypoint(ctx: JobContext):
         # Give tiny 0.05s delay for WebRTC track binding before requesting initial greeting
         await asyncio.sleep(0.05)
 
-        logger.info(f"[DIAG] Generating explicit initial greeting for {client_name} (inbound={is_inbound})...")
-        try:
-            if is_inbound:
-                session.generate_reply(
-                    instructions="Initiate the conversation according to your system prompt. Introduce yourself and ask how you can help."
-                )
-            else:
-                session.generate_reply(
-                    instructions=f"Greet the user named {client_name} and follow the opening script in your instructions."
-                )
-            logger.info("[DIAG] Greeting generation requested immediately upon connect.")
-        except RuntimeError as e:
-            logger.warning(f"[DIAG] Could not generate greeting (session may be closed): {e}")
+        # Check if the payload prompt explicitly instructs the agent to wait for caller first
+        raw_prompt = ""
+        if isinstance(_effective_call_metadata, dict):
+            raw_prompt = _effective_call_metadata.get("prompt") or ""
+        elif ctx.job.metadata:
+            try:
+                raw_prompt = json.loads(ctx.job.metadata).get("prompt") or ""
+            except Exception:
+                pass
+
+        prompt_lower = (raw_prompt or "").lower()
+        should_wait_for_user = (
+            not is_inbound
+            and any(
+                phrase in prompt_lower
+                for phrase in [
+                    "wait for the caller",
+                    "wait for caller",
+                    "do not speak immediately",
+                    "wait for the user",
+                    "wait for user",
+                    "do not introduce yourself before the caller speaks",
+                    "do not introduce yourself before the user speaks",
+                ]
+            )
+        )
+
+        if should_wait_for_user:
+            logger.info("[DIAG] Payload prompt instructs agent to wait for caller first. Listening silently.")
+        else:
+            logger.info(f"[DIAG] Generating explicit initial greeting for {client_name} (inbound={is_inbound})...")
+            try:
+                if is_inbound:
+                    session.generate_reply(
+                        instructions="Initiate the conversation according to your system prompt. Introduce yourself and ask how you can help."
+                    )
+                else:
+                    session.generate_reply(
+                        instructions=f"Greet the user named {client_name} and follow the opening script in your instructions."
+                    )
+                logger.info("[DIAG] Greeting generation requested immediately upon connect.")
+            except RuntimeError as e:
+                logger.warning(f"[DIAG] Could not generate greeting (session may be closed): {e}")
 
         logger.info(f"[DIAG] Entering main loop — blocking until room disconnects. connection_state={ctx.room.connection_state}")
         # Block until the room connection drops or the session closes

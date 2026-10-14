@@ -9,11 +9,11 @@ import os
 from typing import Annotated, Any, Optional
 
 from livekit import api
-from livekit.agents import Agent, JobContext, llm
+from livekit.agents import Agent, JobContext, StopResponse, llm
 
 from mantra.core.common import create_bg_task, get_global_kb
 from mantra.core.inbound import format_upfront_kb_context, format_upfront_process_context
-from mantra.core.room_control import _force_disconnect_room
+from mantra.core.room_control import _force_disconnect_room, graceful_disconnect_after_speech
 from mantra.knowledge_base import PostgresKnowledgeBase
 from mantra.retriever import KnowledgeRetriever
 from mantra.utils import report_telemetry
@@ -35,6 +35,7 @@ class AssistantFunctions:
         self.room_name = room_name
         self.handoff_triggered = False
         self._end_call_triggered = False
+        self._disconnect_task = None
         self.call_state = call_state
         self.agent = None
         self.session = None
@@ -94,6 +95,12 @@ class AssistantFunctions:
             kb = await self._get_kb()
             self._retriever = KnowledgeRetriever(kb)
         return self._retriever
+
+    @property
+    def used_kb_ids(self) -> list[str]:
+        if self._retriever is None:
+            return []
+        return list(self._retriever.accessed_kb_ids)
 
     @property
     def used_kb_process_ids(self) -> list[str]:
@@ -311,124 +318,266 @@ class AssistantFunctions:
         result = await retriever.retrieve(query, kb_ids=self.kb_ids, tags=tags_to_search if tags_to_search else None)
         return result
 
+    async def _try_auto_extend(self, reason: str):
+        if self.call_state and not self.call_state.get("duration_extended"):
+            try:
+                from mantra.call_duration import extend_call
+                entrypoint = self.call_state.get("entrypoint_start_time")
+                now = asyncio.get_event_loop().time()
+                elapsed = (now - entrypoint) if entrypoint else 1.0
+                await extend_call(self.call_state, reason, max(1.0, elapsed))
+            except Exception as e:
+                logger.warning(f"Auto-extend failed: {e}")
+
     @llm.function_tool(
-        description="End the call. Call this tool ONLY when the conversation has reached its final conclusion (e.g. after saying final goodbye or when the user explicitly hangs up/declines). NEVER call this during the initial greeting or while the conversation is active."
+        description=(
+            "End the call when the conversation has reached its natural conclusion and there is nothing left to speak. "
+            "Invoke this tool in the SAME TURN while speaking your final closing sentence. "
+            "Use this when: (1) caller requests a callback or to talk later ('call me after 10 minutes', 'busy right now', 'call tomorrow') "
+            "and you speak your acknowledgment/confirmation; (2) appointment or demo booking is confirmed and you speak your parting words; "
+            "(3) all questions are answered or caller says goodbye/thanks; (4) caller clearly declines. "
+            "The call will automatically stay connected until your closing speech has finished playing to the caller, then disconnect cleanly. "
+            "NEVER call this prematurely while active inquiry, discussion, or booking is still underway."
+        )
     )
     async def end_call(self):
         if self.call_state and not self.call_state.get("user_has_spoken", False) and not self.call_state.get("initial_greeting_done", False):
             logger.warning("[DIAG] end_call invoked prematurely during initial greeting / before user spoke. Ignoring tool call.")
             return "Call cannot be ended before the conversation starts. Please greet the user and proceed with the conversation."
 
-        logger.info("Agent decided to end the call via function tool. Disconnecting shortly.")
+        logger.info("Agent decided to end the call via function tool. Disconnecting after final speech completes.")
         self._telemetry("Call ended by agent")
         self._end_call_triggered = True
-        async def graceful_disconnect():
-            await asyncio.sleep(3.0)
-            if self.ctx:
-                await _force_disconnect_room(self.ctx)
-
-        self._disconnect_task = create_bg_task(graceful_disconnect())
-        return ""
-
-    async def _load_department_options(self, org_id: int | str) -> list[str]:
-        """Load and remember the departments available for this organization."""
-        from mantra.mcp_client import get_mcp_client
-
-        try:
-            raw_departments = await get_mcp_client().call_tool(
-                "get_org_departments",
-                {"org_id": org_id},
-            )
-            departments = json.loads(raw_departments) if isinstance(raw_departments, str) else raw_departments
-            if isinstance(departments, dict):
-                departments = departments.get("departments") or departments.get("data") or []
-            if not isinstance(departments, list):
-                departments = []
-            normalized = []
-            for item in departments:
-                name = str(item).strip()
-                if name and name.casefold() not in {value.casefold() for value in normalized}:
-                    normalized.append(name)
-        except Exception as exc:
-            logger.warning(f"Failed to fetch departments for org_id={org_id}: {exc}")
-            normalized = []
-
         if self.call_state is not None:
-            self.call_state["department_options"] = normalized
-        return normalized
+            self.call_state["end_call_triggered"] = True
+            if "timeline" in self.call_state:
+                import datetime
+                self.call_state["timeline"].append(
+                    {
+                        "event": "End Call Tool Invoked",
+                        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+                    }
+                )
+
+        if not hasattr(self, "_disconnect_task") or self._disconnect_task is None or self._disconnect_task.done():
+            self._disconnect_task = create_bg_task(
+                graceful_disconnect_after_speech(
+                    self.ctx,
+                    session=self.session,
+                    call_state=self.call_state,
+                )
+            )
+        raise StopResponse()
 
     @llm.function_tool(
         description=(
-            "Use when the caller gives a broad medical symptom without a clear department or specialty, such as 'I have an eye problem'. "
-            "Fetch the organization's department list silently, but do not guess a department from one vague symptom. "
-            "Ask up to two concise clinical-routing questions before selecting a department. Ask about the symptom's onset, progression, severity, and any associated symptoms that distinguish the available specialties. "
-            "Use the caller's answers and the full conversation to select the best exact value from the returned list. "
-            "Do not ask the caller to choose a department or mention department names aloud. "
-            "Do not use fixed symptom-to-department mappings or assume that a symptom always belongs to a particular specialty. "
-            "Only call check_doctor_availability after the caller answers the necessary routing question(s)."
+            "Use when the caller mentions a symptom, health inquiry, or appointment request without specifying a clear product or service. "
+            "Do not guess a product or service from one vague symptom. Ask up to two concise clinical questions (onset, progression, severity) "
+            "to map their symptom to the appropriate product or service. Do not ask the caller to pick a product/service by internal technical name aloud. "
+            "Only proceed to date/location selection after the product or service is confirmed."
         )
     )
-    async def clarify_medical_department(
+    async def clarify_product_service(
         self,
         symptom: Annotated[str, "The caller's broad symptom or reason for the appointment."],
     ) -> str:
+        await self._try_auto_extend("Lead generation: product/service inquiry")
+        symptom_clean = symptom.strip()
+        if self.call_state is not None:
+            self.call_state["symptom_clarification"] = symptom_clean
+
         org_id = self.call_state.get("org_id") if self.call_state else None
         if not org_id and self.job_metadata:
             try:
                 payload = json.loads(self.job_metadata) if isinstance(self.job_metadata, str) else self.job_metadata
-                org_id = payload.get("org_id") or (
-                    payload.get("metadata", {}).get("org_id")
-                    if isinstance(payload.get("metadata"), dict)
-                    else None
+                org_id = payload.get("org_id") or (payload.get("metadata", {}).get("org_id") if isinstance(payload.get("metadata"), dict) else None)
+            except Exception:
+                pass
+
+        services_summary = ""
+        if org_id:
+            try:
+                from mantra.mcp_client import get_mcp_client
+                mcp_res = await get_mcp_client().call_tool(
+                    "get_org_products_services",
+                    {"org_id": str(org_id).strip()},
                 )
-            except Exception as exc:
-                logger.warning(f"Could not parse job_metadata in clarify_medical_department: {exc}")
-
-        if not org_id:
-            return "Ask the caller which specific eye or medical specialty they need, then continue without guessing a department."
-
-        departments = await self._load_department_options(org_id)
-
-        if self.call_state is not None:
-            self.call_state["department_clarification_symptom"] = symptom.strip()
-
-        if not departments:
-            return (
-                "Department discovery is unavailable for this organization. Do not ask the caller to choose a department "
-                "and do not fall back to the knowledge base. Proceed directly by calling check_doctor_availability with "
-                "the best department inferred from the conversation, or leave department empty if none is known."
-            )
+                logger.info(f"[MCP-CALL] clarify_product_service executed MCP tool get_org_products_services -> {mcp_res[:150]}")
+                if mcp_res and mcp_res != "No details returned.":
+                    try:
+                        res_json = json.loads(mcp_res)
+                        services_list = res_json.get("services", [])
+                        if services_list:
+                            services_str = ", ".join([s.get("name") or s.get("title") or str(s) for s in services_list if isinstance(s, dict)]) or ", ".join([str(s) for s in services_list])
+                            services_summary = f"\nAvailable Organization Services/Products: {services_str}."
+                    except Exception:
+                        services_summary = f"\nAvailable Organization Services/Products: {mcp_res}."
+            except Exception as api_err:
+                logger.warning(f"MCP get_org_products_services query failed in clarify_product_service: {api_err}")
 
         return (
-            f"INTERNAL ROUTING CONTEXT ONLY. Caller symptom: {symptom.strip()}. "
-            f"Allowed departments: {json.dumps(departments)}. "
-            "Do not select a department yet if the symptom could reasonably match more than one option. Ask up to two concise questions about onset, progression, severity, and associated symptoms, choosing the questions that best distinguish the returned options. "
-            "After the caller answers, select the single best exact department using the full conversation context and the clinical evidence provided by the caller. "
-            "Do not use a fixed symptom-to-department mapping, infer a department solely from one keyword, say the department list, ask the caller to choose a department, or explain the internal routing."
+            f"INTERNAL CLINICAL MAPPING CONTEXT. Caller symptom: {symptom_clean}.{services_summary} "
+            "Do not guess a product or service immediately if the symptom could match multiple offerings. "
+            "Ask up to two concise clinical questions (onset, progression, severity) to map their symptom directly to one of the available services listed above. "
+            "Once confirmed, store that service name for scheduling."
         )
 
     @llm.function_tool(
         description=(
-            "Check doctor and healthcare provider availability, working hours, and open appointment slots on a specific date. "
-            "This is the authoritative real-time MCP tool for appointment availability. Never use the knowledge base for this request. "
-            "If the organization department list is available, the department must match one of its values. "
-            "Never invent a generic department such as Ophthalmology when a department list is available. If the department is unknown, "
-            "call clarify_medical_department first, then continue even if department discovery is unavailable. Never ask the caller to choose a department by name. "
-            "ALWAYS use this tool whenever the caller asks about doctor availability, open consultation times, "
-            "scheduling an appointment, or doctor working hours on a given day. "
-            "If the caller mentions or asks about a specific medical department or specialty (e.g. 'Cardiology', 'Dermatology', 'Orthopedics', 'Pediatrics', 'Dental'), extract and pass it in department."
+            "Find hospital/clinic branch locations or calculate the nearest branch based on caller location. "
+            "ALWAYS call this tool whenever the caller asks where hospitals/branches are located, asks for available locations, or provides their address/city/landmark."
+        )
+    )
+    async def find_nearest_location(
+        self,
+        user_address_or_area: Annotated[str, "The caller's address, landmark, city, neighborhood, or pincode. Optional if asking generally for available branches."] = "",
+    ) -> str:
+        """Native Python function tool using geopy + backend API (GET /webhooks/mcp/locations) to compute nearest location."""
+        await self._try_auto_extend("Lead generation: location inquiry")
+        user_location_str = str(user_address_or_area or "").strip()
+        logger.info(f"Agent executing Python tool find_nearest_location for '{user_location_str}'")
+
+        org_id = self.call_state.get("org_id") if self.call_state else None
+        if not org_id and self.job_metadata:
+            try:
+                payload = json.loads(self.job_metadata) if isinstance(self.job_metadata, str) else self.job_metadata
+                org_id = payload.get("org_id") or (payload.get("metadata", {}).get("org_id") if isinstance(payload.get("metadata"), dict) else None)
+            except Exception:
+                pass
+
+        # 1. Geocode user address/area using geopy to get lat/lng if location string provided
+        user_coords = None
+        if user_location_str:
+            try:
+                from geopy.geocoders import Nominatim
+                geolocator = Nominatim(user_agent="mantra_voice_agent")
+                loc = geolocator.geocode(user_location_str, timeout=4)
+                if loc:
+                    user_coords = (loc.latitude, loc.longitude)
+                    logger.info(f"Geocoded '{user_location_str}' -> ({loc.latitude}, {loc.longitude})")
+            except Exception as exc:
+                logger.warning(f"Geocoding failed for '{user_location_str}': {exc}")
+
+        user_lat = user_coords[0] if user_coords else None
+        user_lng = user_coords[1] if user_coords else None
+
+        branches = []
+
+        # 2. Query MCP server for locations via SSE JSON-RPC tool call 'get_org_locations'
+        if org_id:
+            try:
+                from mantra.mcp_client import get_mcp_client
+                mcp_args: dict[str, Any] = {"org_id": str(org_id).strip()}
+                if user_lat is not None and user_lng is not None:
+                    mcp_args["caller_lat"] = user_lat
+                    mcp_args["caller_lng"] = user_lng
+
+                mcp_res = await get_mcp_client().call_tool("get_org_locations", mcp_args)
+                logger.info(f"[MCP-CALL] find_nearest_location executed MCP tool get_org_locations -> {mcp_res[:150]}")
+                if mcp_res and mcp_res != "No details returned.":
+                    try:
+                        res_data = json.loads(mcp_res)
+                        data_obj = res_data.get("locations") if isinstance(res_data, dict) and "locations" in res_data else res_data
+                        if isinstance(data_obj, list):
+                            branches = data_obj
+                    except Exception:
+                        pass
+            except Exception as api_err:
+                logger.warning(f"MCP get_org_locations query failed: {api_err}")
+
+        # 3. Fallback to DB query if backend API returned empty
+        if not branches and org_id:
+            try:
+                from mantra.dependencies.database import get_db_pool
+                pool = await get_db_pool()
+                if pool:
+                    async with pool.acquire() as conn:
+                        rows = await conn.fetch(
+                            """
+                            SELECT id AS location_id, name, address, latitude, longitude
+                            FROM org_locations
+                            WHERE org_id::text = $1::text AND is_active = TRUE
+                            """,
+                            str(org_id),
+                        )
+                        if rows:
+                            branches = [dict(r) for r in rows]
+            except Exception as db_err:
+                logger.debug(f"DB lookup for org_locations skipped: {db_err}")
+
+        # 4. Process and sort branches by distance
+        calculated_results = []
+        for branch in branches:
+            b_name = branch.get("name") or branch.get("location_name") or "Hospital Branch"
+            b_addr = branch.get("address") or ""
+            dist_km = branch.get("distance_km")
+
+            if dist_km is not None:
+                try:
+                    dist_val = round(float(dist_km), 2)
+                except (ValueError, TypeError):
+                    dist_val = None
+            elif user_coords and (branch.get("lat") or branch.get("latitude")) and (branch.get("lng") or branch.get("longitude")):
+                try:
+                    b_lat = float(branch.get("lat") or branch.get("latitude"))
+                    b_lng = float(branch.get("lng") or branch.get("longitude"))
+                    from geopy.distance import geodesic
+                    dist_val = round(geodesic(user_coords, (b_lat, b_lng)).kilometers, 2)
+                except Exception:
+                    dist_val = None
+            else:
+                dist_val = None
+
+            calculated_results.append({
+                "name": b_name,
+                "address": b_addr,
+                "distance_km": dist_val,
+                "is_primary": branch.get("is_primary", False),
+            })
+
+        # Sort physical locations with valid distance first
+        calculated_results.sort(key=lambda x: (x["distance_km"] is None, x["distance_km"] if x["distance_km"] is not None else 99999))
+
+        if calculated_results:
+            nearest = calculated_results[0]
+            dist_str = f" ({nearest['distance_km']} km away)" if nearest["distance_km"] is not None else ""
+            if self.call_state is not None:
+                self.call_state["selected_location"] = nearest["name"]
+
+            response_lines = [
+                f"Nearest Location: {nearest['name']}{dist_str}",
+                f"Address: {nearest['address']}",
+            ]
+            if len(calculated_results) > 1:
+                response_lines.append("\nOther Available Locations:")
+                for b in calculated_results[1:]:
+                    d_str = f" ({b['distance_km']} km)" if b["distance_km"] is not None else ""
+                    response_lines.append(f"• {b['name']}{d_str} - {b['address']}")
+            return "\n".join(response_lines)
+
+        if self.call_state is not None:
+            self.call_state["selected_location"] = user_location_str
+        return f"Location '{user_location_str}' recorded for appointment scheduling."
+
+    @llm.function_tool(
+        description=(
+            "Check DOCTOR and MEDICAL provider availability, working hours, open consultation slots, and hospital location shifts. "
+            "This tool is EXCLUSIVELY for doctor or physician appointment bookings and medical consultations. "
+            "NEVER call this tool for general corporate sales calls, EAP demos, walkthroughs, or business meetings. "
+            "Pass product_service, location, date, and optional doctor_name."
         )
     )
     async def check_doctor_availability(
         self,
-        date: Annotated[str, "The date to check in YYYY-MM-DD format (e.g. '2026-08-25'). If the caller specifies a relative day like 'tomorrow' or 'next Tuesday', calculate the exact YYYY-MM-DD date."],
-        doctor_name: Annotated[Optional[str], "Optional doctor name to filter by (e.g. 'Sharma' or 'Dr. Ananya'). If no doctor name is mentioned, leave None."] = None,
-        department: Annotated[Optional[str], "Optional medical department or specialty mentioned in the transcript/call (e.g. 'Cardiology', 'Dermatology', 'Orthopedics', 'Pediatrics', 'General Medicine'). If no department is mentioned, leave None."] = None,
+        date: Annotated[str, "The date to check in YYYY-MM-DD format (e.g. '2026-08-25'). If relative ('tomorrow', 'next Tuesday'), calculate exact YYYY-MM-DD."],
+        doctor_name: Annotated[Optional[str], "Optional doctor name if specified by caller (e.g. 'Sharma' or 'Dr. Ananya')."] = None,
+        product_service: Annotated[Optional[str], "Optional product or healthcare service (e.g. 'General Physician Consultation', 'Cardiology Checkup')."] = None,
+        location: Annotated[Optional[str], "Optional hospital/clinic branch location (e.g. 'City Central Hospital', 'Metro Care Specialty Clinic')."] = None,
     ) -> str:
+        await self._try_auto_extend("Lead generation: appointment availability check")
         org_id = None
         caller_phone = None
 
-        # 1. Extract from active call state (resolved from registered phone number in org_configs)
         if self.call_state:
             org_id = self.call_state.get("org_id")
             caller_phone = (
@@ -438,7 +587,6 @@ class AssistantFunctions:
                 or self.call_state.get("client_phone")
             )
 
-        # 2. Extract dynamically from call metadata payload
         if self.job_metadata:
             try:
                 payload = json.loads(self.job_metadata) if isinstance(self.job_metadata, str) else self.job_metadata
@@ -454,31 +602,16 @@ class AssistantFunctions:
             except Exception as e:
                 logger.warning(f"Could not parse job_metadata in check_doctor_availability: {e}")
 
-        department_options = self.call_state.get("department_options", []) if self.call_state else []
-        if not department_options and org_id:
-            department_options = await self._load_department_options(org_id)
-
-        requested_department = str(department).strip() if department else ""
-        matched_department = next(
-            (
-                option
-                for option in department_options
-                if option.casefold() == requested_department.casefold()
-            ),
-            None,
-        )
-        if not matched_department and department_options:
-            if self.call_state is not None:
-                self.call_state["department_clarification_symptom"] = requested_department
-            return (
-                "Department selection is invalid. Call clarify_medical_department, choose one exact value from its "
-                "returned allowed departments, and retry availability. Do not ask the caller to choose a department."
-            )
+        requested_product = str(product_service).strip() if product_service else ""
+        selected_loc = location or (self.call_state.get("selected_location") if self.call_state else None)
 
         if self.call_state is not None:
-            self.call_state["selected_department"] = matched_department or requested_department or None
+            if requested_product:
+                self.call_state["selected_product_service"] = requested_product
+            if selected_loc:
+                self.call_state["selected_location"] = selected_loc
 
-        logger.info(f"Agent requesting doctor availability via MCP: org_id={org_id}, date={date}, doctor={doctor_name}, department={department}, phone={caller_phone}")
+        logger.info(f"Agent requesting doctor availability via MCP: org_id={org_id}, date={date}, doctor={doctor_name}, product={product_service}, location={selected_loc}, phone={caller_phone}")
 
         from mantra.mcp_client import get_mcp_client
 
@@ -491,8 +624,8 @@ class AssistantFunctions:
                 "query_date": str(date).strip(),
                 "name": str(doctor_name).strip() if doctor_name else None,
                 "doc_name": str(doctor_name).strip() if doctor_name else "",
-                "department": str(department).strip() if department else "",
-                "query": str(doctor_name).strip() if doctor_name else (str(department).strip() if department else None),
+                "product_service": str(product_service).strip() if product_service else "",
+                "location": str(selected_loc).strip() if selected_loc else "",
                 "caller_phone": caller_phone,
             },
         )

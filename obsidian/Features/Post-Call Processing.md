@@ -1,46 +1,32 @@
 # Post-Call Processing
 
-**Files:** `mantra/agent.py`, `mantra/utils.py`
+**Files:** `mantra/agent.py`, `mantra/core/finalize.py`, `mantra/utils.py`
 
-## Pipeline (in `agent.py` `finalize()`)
+## Pipeline (in `finalize.py` `finalize()`)
 
 1. **Cancel background tasks** — Limiter, inactivity monitor, safety net, transcript logger
 2. **Capture history snapshot** — Copy chat messages before session cleanup
-3. **Determine call status** — Priority: user_joined + ring time > user_spoke; yields No Answer, Busy, Incomplete, Failed, or Completed. **Inbound calls are always treated as `user_joined = True`** so post-call analysis runs even when no user message is captured; the `user_spoke` "No Answer" branch applies to outbound calls only.
+3. **Determine connected call status** — Connected calls delegate status decision (`call_status = None`) to JEV AI Pro in Mantra Assist API. Failed/unanswered calls retain `"No Answer"`, `"Busy"`, or `"Failed"`.
 4. **Stop recording & upload to S3** — Mix tracks → trim silence → MP3 → S3
 5. **Build transcript** — JSON array of `{bot/user: message}`
-6. **LLM analysis** — `analyze_call()` generates summary, process_id, stage transition, sentiment, appointment data (with IST timezone conversion). Uses KB-tracked `process_stage_data` for process-aware analysis. Runs for `Completed` status (all inbound connected calls, outbound only when the user spoke); skipped for Busy/No Answer/Failed. Engine resolves as `target_llm = post_call_llm or llm_engine`, so the dedicated post-call model (DeepSeek Pro) is preferred, falling back to the live-call engine or `gpt-4o-mini` when no key is set. `ai_summary` is guaranteed non-empty via a transcript-snippet fallback (else `"Call completed."`).
-7. **Build webhook payload** — Direction-aware: `CALL_DATA_INBOUND_UPDATE` (inbound) or `CALL_DATA_UPDATE` (outbound), with **`CALL_RETRY`** override when `call_status` is `No Answer`, `Busy`, `Incomplete`, or `Failed` (same payload, different event). Inbound numeric fields (`org_id`, `process_id`, `new_stage_id`) are coerced string→int via `_as_int()`; missing values stay `null`.
-8. **Save to PostgreSQL** — `save_call_log_to_db()` upsert
-9. **Send to backend** — HMAC-signed POST to MantraAssist `/v1/webhooks/n8n` with 3 retries
+6. **Generate structured summary** — Calls `SessionRecorder.generate_summary(post_call_llm, list(history_snapshot))` to produce a 4-part domain-agnostic summary (Reason for Call/Intent, Key Discussion Details & Requirements, Action & Booking Metadata, Outcome & Resolution). Heavy post-call LLM decision-making (`analyze_call()`) is bypassed, moving 100% of stage transition, status classification, and appointment metadata extraction to JEV AI Pro.
+7. **Build clean webhook payload** — Direction-aware: `CALL_DATA_INBOUND_UPDATE` (inbound), `CALL_DATA_UPDATE` (outbound connected), or **`CALL_RETRY`** (outbound failed/unanswered). All null, non-existent, and empty fields (`new_stage_id`, `user_intent`, `call_intent`, `next_call_on`, `appointment_metadata`, empty custom field objects) are stripped from connected call payloads to keep payload weight minimal.
+8. **Save to local DB** — `save_call_log_to_db()` upsert
+9. **Queue to UI Server via Redis** — Delivered to MantraAssist backend (`/v1/webhooks/n8n/summary`), which enqueues `{ call_id }` into BullMQ `CallSummaryQueue` for JEV evaluation and database updates (`call_Logs`, `clientProcesses`, `appointments`).
 10. **TOS telemetry** — Post-call summary with call_status, duration, S3 status, transcript flag
 
 ## SessionRecorder (`utils.py`)
 
-In-memory audio recording system:
+In-memory audio recording system and structured summary generator:
 - `start_recording(track, label)` — Async consumer per audio track
 - `stop_recording()` — Cancel all consumers
 - `get_combined_mp3_bytes()` — Mix tracks via numpy, trim silence via pydub, export 128k MP3
+- `generate_summary(llm_engine, history)` — Fast LLM-driven summary generator that outputs a domain-agnostic 4-part narrative summary covering Intent, Key Discussion Details, Action & Booking Metadata, and Outcome & Resolution.
 
-## Analyze Call (`utils.py:analyze_call()`)
+## Webhook Delivery & Payloads
 
-LLM-driven call analysis with process-aware staging:
-- Generates summary paragraph
-- Determines process_id from KB-tracked process_stage_data
-- Determines CRM stage transition
-- Extracts: appointment_date_time (converted to IST), next_call_on, doctor, hospital_location, sentiment_score
-- Runs on the dedicated post-call engine (`build_post_call_llm()`, default `deepseek-v4-pro`), falling back to `gpt-4o-mini` when `DEEPSEEK_API_KEY` is missing
-- Guarantees a non-empty `ai_summary` (transcript-snippet fallback) so the webhook payload never ships an empty summary
-- Auto-sets next_call_on = +24h for follow-up/callback stages when missing
-
-## Webhook Delivery
-
-- HMAC-SHA256 signed (`x-signature` header)
-- 3 retries with exponential backoff (2^N seconds)
-- Timestamp-based replay protection (`x-timestamp`)
-- Inbound payloads carry: `org_id` (int), `call_recording`, `process_id` (int|null, from KB when searched), `new_stage_id` (int|null), `client_phone_number`, `next_call_on`, `called_on`
-- Outbound payloads carry: `client_id`, `call_id`, `call_status`, `ai_summary`, `recording_url`, `call_duration_seconds`, `new_stage_id`, `client_custom_fields`, `next_call_on` (null when none)
-
-## KB Document Tracking
-
-`KnowledgeRetriever` tracks `accessed_pages_meta` from every KB search during the call. `AssistantFunctions.used_kb_process_ids` extracts unique `process_id` values from accessed pages. For inbound calls, the first unique process_id is injected into the webhook's `process_id` field.
+- HMAC-SHA256 signed (`x-signature` header) with 3 retries and replay protection (`x-timestamp`)
+- **`CALL_DATA_INBOUND_UPDATE`**: `org_id` (int), `call_recording`, `client_name`, `client_phone_number`, `call_duration`, `call_transcript`, `ai_summary`, `called_on`, `meta_data`
+- **`CALL_DATA_UPDATE`**: `client_id`, `call_id`, `call_transcript`, `recording_url`, `call_duration_seconds`, `called_on`, `ai_call_id`, `process_id`, `stage_id`, `ai_summary`
+- **`CALL_RETRY`**: `call_id`, `called_on`, `call_status`, `ai_call_id`
+- **Lightweight Payload guarantee**: All null/empty decision fields are omitted from connected call payloads so decision processing is strictly handled downstream by JEV AI Pro.

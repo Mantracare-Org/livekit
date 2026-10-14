@@ -10,6 +10,7 @@ import os
 import asyncio
 import asyncpg
 import logging
+from dotenv import load_dotenv
 from mantra.services.telephony import _get_sip_domain
 
 load_dotenv(".env.self")

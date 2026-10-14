@@ -12,6 +12,7 @@ class KnowledgeRetriever:
         self.kb = kb
         self.session_cache = {}
         self.accessed_pages_meta: list[dict] = []
+        self.accessed_kb_ids: list[str] = []
         self.preloaded_pages: list[KnowledgePage] = []
 
     async def prefetch(self, kb_ids: List[str]) -> List[KnowledgePage]:
@@ -84,6 +85,8 @@ class KnowledgeRetriever:
         for page in pages:
             if page.page_meta:
                 self.accessed_pages_meta.append(page.page_meta)
+            if page.kb_id and str(page.kb_id) not in self.accessed_kb_ids:
+                self.accessed_kb_ids.append(str(page.kb_id))
 
     def _format_results(self, pages: list[KnowledgePage]) -> str:
         formatted_result = "--- RELEVANT KNOWLEDGE BASE INFORMATION ---\n\n"

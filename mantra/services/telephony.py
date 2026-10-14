@@ -849,6 +849,22 @@ async def _ensure_outbound_trunk(trunk_ref: str | None) -> dict | None:
                 """,
                 trunk_ref,
             )
+            if not row:
+                row = await conn.fetchrow(
+                    """
+                    SELECT name, provider, address, numbers, auth_username,
+                           auth_password, destination_country, livekit_trunk_id,
+                           phone_number
+                    FROM sip_trunks
+                    WHERE is_active = true AND direction = 'outbound'
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                    """
+                )
+                if row:
+                    logger.info(
+                        f"Trunk {trunk_ref} not found in DB — falling back to primary outbound trunk {row['name']}"
+                    )
         finally:
             await conn.close()
     except Exception as e:
@@ -856,7 +872,7 @@ async def _ensure_outbound_trunk(trunk_ref: str | None) -> dict | None:
         return None
 
     if not row:
-        logger.info(f"No sip_trunks row matches {trunk_ref}")
+        logger.info(f"No sip_trunks row matches {trunk_ref} and no fallback outbound trunk found")
         return None
 
     name = row["name"]

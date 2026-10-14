@@ -55,7 +55,8 @@ class MantraMCPClient:
             logger.debug("[MCP] No auth_token or OAuth client credentials configured.")
             return None
 
-        token_url = f"{self.auth_server_url}/oauth/token"
+        auth_base = self.auth_server_url if self.auth_server_url.endswith("/api") else f"{self.auth_server_url}/api"
+        token_url = f"{auth_base}/oauth/token"
         payload = {
             "grant_type": "client_credentials",
             "client_id": self.client_id,
