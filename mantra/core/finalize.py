@@ -283,6 +283,7 @@ async def finalize(cc: CallContext, history_snapshot: list):
                 "call_duration": duration,
                 "call_transcript": transcript_data or "",
                 "ai_summary": summary_text or "",
+                "prompt": call_payload.get("prompt"),
                 "called_on": cc.call_state.get("call_initiated_at") or cc.call_state.get("agent_joined_at") or "",
                 "kb_id": primary_kb_id,
                 "meta_data": {
@@ -319,6 +320,7 @@ async def finalize(cc: CallContext, history_snapshot: list):
                     "process_id": effective_process_id,
                     "stage_id": payload_stage_id,
                     "ai_summary": summary_text,
+                    "prompt": call_payload.get("prompt"),
                 },
             }
 
