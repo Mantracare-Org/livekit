@@ -216,6 +216,33 @@ Supported fields: `name`, `metadata`, `attributes`, `trunk_ids`, `rule` (room_pr
 
 ---
 
+### Inbound Prompt Configuration
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| `POST` / `PUT` | `/inbound/prompt` | Update prompt in inbound configurations (DB + dispatch rule) |
+| `GET` | `/inbound/prompt` | Get current inbound prompt and configuration |
+
+#### Update Inbound Prompt
+
+```json
+POST /inbound/prompt
+{
+  "number": "+1XXXXXXXXXX",
+  "org_id": "<ORG_ID>",
+  "prompt": "You are a helpful customer service assistant. Greet the caller warmly and assist with their inquiries.",
+  "voice": "<VOICE_NAME>",
+  "model": "<MODEL_NAME>"
+}
+```
+
+**Required fields:** `prompt`, `org_id`, and `number` (or `phone_number`).
+**Optional fields:** `voice`, `model`, `sip_trunk_id`, `dispatch_rule_id`.
+
+**Aliases:** `/v1/sip/inbound/prompt`, `/v1/inbound/prompt`.
+
+---
+
 ### Test Endpoint
 
 | Method | Endpoint | Purpose |

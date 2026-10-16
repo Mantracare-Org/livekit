@@ -1,8 +1,10 @@
 """ Knowledge base API routes for the UI server. """
 
+from typing import Optional
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
 from mantra.knowledge_base import PostgresKnowledgeBase, ingest_file, ingest_text, ingest_url
+from mantra.schemas.knowledge import KBChatRequest, KBTextRequest, KBUrlRequest
 from urllib.parse import quote_plus
 import json
 import os
@@ -12,10 +14,13 @@ import traceback
 import logging
 
 logger = logging.getLogger("mantra.knowledge")
-router = APIRouter()
+router = APIRouter(tags=["Knowledge Base"])
 
-@router.post("/v1/kb/chat")
-async def api_kb_chat(request: Request):
+@router.post("/v1/kb/chat", summary="Chat with Knowledge Base")
+async def api_kb_chat(
+    request: Request,
+    body_data: Optional[KBChatRequest] = None,
+):
     """Text-based chat endpoint for testing the KB."""
     try:
         from mantra.knowledge_base import PostgresKnowledgeBase
@@ -25,7 +30,13 @@ async def api_kb_chat(request: Request):
             {"error": f"Failed to import dependencies: {e}"}, status_code=500
         )
 
-    body = await request.json()
+    try:
+        if body_data is not None:
+            body = body_data.model_dump(exclude_unset=True)
+        else:
+            body = await request.json()
+    except Exception:
+        body = {}
     kb_ids = body.get("kb_ids", [])
     if "kb_id" in body and not kb_ids:  # backwards compatibility
         kb_ids = [body.get("kb_id")]
@@ -107,7 +118,7 @@ async def api_kb_chat(request: Request):
 
 
 
-@router.post("/v1/kb/ingest")
+@router.post("/v1/kb/ingest", summary="Ingest Document or Data into KB")
 async def ingest_kb_data(request: Request):
     """
     Ingest endpoint for MantraAssist KB data.
@@ -403,7 +414,7 @@ async def ingest_kb_data(request: Request):
 
 
 
-@router.post("/v1/kb/backfill-embeddings")
+@router.post("/v1/kb/backfill-embeddings", summary="Backfill Vector Embeddings")
 async def backfill_kb_embeddings(request: Request):
     """
     Backfill missing `embedding` values on kb_pages rows (pgvector semantic search).
@@ -458,7 +469,7 @@ async def backfill_kb_embeddings(request: Request):
 
 
 
-@router.delete("/v1/kb/document")
+@router.delete("/v1/kb/document", summary="Delete Document from KB")
 async def delete_kb_document(
     org_id: str = Form(None),
     document_id: str = Form(None)
@@ -491,7 +502,7 @@ async def delete_kb_document(
         logger.error(f"KB document delete error: {e}\n{traceback.format_exc()}")
         return JSONResponse({"status_code": 500, "status": "error", "error": f"Failed to delete document: {str(e)}"}, status_code=500)
 
-@router.post("/v1/knowledge/upload")
+@router.post("/v1/knowledge/upload", summary="Upload Document File (.pdf, .txt, .md)")
 async def kb_upload(request: Request, kb_id: str, file: UploadFile = File(...)):
     """Upload a file (.pdf, .txt, .md) and index it into the specified KB."""
     # require_auth(request)
@@ -523,15 +534,21 @@ async def kb_upload(request: Request, kb_id: str, file: UploadFile = File(...)):
 
 
 
-@router.post("/v1/knowledge/text")
-async def kb_text(request: Request):
+@router.post("/v1/knowledge/text", summary="Ingest Raw Text Block")
+async def kb_text(
+    request: Request,
+    body_data: Optional[KBTextRequest] = None,
+):
     """Ingest a raw text block into the specified KB."""
     # require_auth(request)
 
     try:
-        body = await request.json()
+        if body_data is not None:
+            body = body_data.model_dump(exclude_unset=True)
+        else:
+            body = await request.json()
         kb_id = body.get("kb_id")
-        content = body.get("content")
+        content = body.get("content") or body.get("text")
         title = body.get("title")
 
         if not kb_id or not content:
@@ -556,13 +573,19 @@ async def kb_text(request: Request):
 
 
 
-@router.post("/v1/knowledge/url")
-async def kb_url(request: Request):
+@router.post("/v1/knowledge/url", summary="Ingest Webpage from URL")
+async def kb_url(
+    request: Request,
+    body_data: Optional[KBUrlRequest] = None,
+):
     """Fetch a URL, extract text, and index it into the specified KB."""
     # require_auth(request)
 
     try:
-        body = await request.json()
+        if body_data is not None:
+            body = body_data.model_dump(exclude_unset=True)
+        else:
+            body = await request.json()
         kb_id = body.get("kb_id")
         url = body.get("url")
 
@@ -588,7 +611,7 @@ async def kb_url(request: Request):
 
 
 
-@router.get("/v1/knowledge/list")
+@router.get("/v1/knowledge/list", summary="List Knowledge Base Collections")
 async def kb_list(request: Request):
     """List distinct KB IDs available in the database."""
     try:
@@ -613,7 +636,7 @@ async def kb_list(request: Request):
 
 
 
-@router.delete("/v1/knowledge/{page_id}")
+@router.delete("/v1/knowledge/{page_id}", summary="Delete Single Page by ID")
 async def kb_delete_page(request: Request, page_id: str):
     """Delete a single page from the KB."""
     # require_auth(request)
@@ -639,7 +662,7 @@ async def kb_delete_page(request: Request, page_id: str):
 
 
 
-@router.delete("/v1/knowledge/by-kb/{kb_id}")
+@router.delete("/v1/knowledge/by-kb/{kb_id}", summary="Delete All Pages in Collection")
 async def kb_delete_by_kb(request: Request, kb_id: str):
     """Delete all pages for a KB."""
     # require_auth(request)

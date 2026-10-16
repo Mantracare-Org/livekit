@@ -3,20 +3,20 @@
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Request
 from mantra.dependencies.auth import ADMIN_PASSWORD_HASH, ADMIN_USERNAME_HASH, JWT_ALGORITHM, JWT_EXPIRY_HOURS, JWT_SECRET
+from mantra.schemas.auth import LoginRequest
 import hashlib
 import jwt
 
 import logging
 
 logger = logging.getLogger("mantra.auth")
-router = APIRouter()
+router = APIRouter(tags=["Authentication"])
 
-@router.post("/v1/auth/login")
-async def login(request: Request):
+@router.post("/v1/auth/login", summary="Admin Login")
+async def login(credentials: LoginRequest):
     """Authenticate with username/password, return JWT."""
-    body = await request.json()
-    username = body.get("username", "")
-    password = body.get("password", "")
+    username = credentials.username
+    password = credentials.password
 
     username_hash = hashlib.sha256(username.encode()).hexdigest()
     password_hash = hashlib.sha256(password.encode()).hexdigest()

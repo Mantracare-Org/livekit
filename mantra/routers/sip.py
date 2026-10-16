@@ -1,13 +1,34 @@
-""" SIP trunk and dispatch-rule routes for the UI server. """
-
-from fastapi import APIRouter, Request, Response
+from typing import Any, Dict, List, Optional, Union
+from fastapi import APIRouter, Body, Query, Request, Response
 from fastapi.responses import JSONResponse
 from livekit import api
 from livekit.protocol import sip as proto_sip
 from mantra.dependencies.database import get_db_connection
 from mantra.services import clients as _svc_clients
 from mantra.services.clients import AGENT_NAME
-from mantra.services.telephony import _build_plivo_xml, _create_sip_outbound_trunk, _get_sip_domain, _normalize_phone_number, _resolve_plivo_sip_trunk_id, _setup_inbound_sip_process
+from mantra.services.telephony import (
+    _build_plivo_xml,
+    _create_sip_outbound_trunk,
+    _get_inbound_prompt_process,
+    _get_sip_domain,
+    _normalize_phone_number,
+    _resolve_plivo_sip_trunk_id,
+    _setup_inbound_sip_process,
+    _update_inbound_prompt_process,
+)
+from mantra.schemas.sip import (
+    InboundPromptUpdateRequest,
+    InboundSipSetupRequest,
+    TestInboundCallRequest,
+    CreateInboundTrunkRequest,
+    CreateDispatchRuleRequest,
+    UpdateInboundTrunkRequest,
+    UpdateDispatchRuleRequest,
+    CreateZadarmaTrunkRequest,
+    CreateTwilioTrunkRequest,
+    CreateVoiceLinkTrunkRequest,
+    PlivoOutboundCallRequest,
+)
 import json
 import os
 import time
@@ -18,13 +39,22 @@ import logging
 logger = logging.getLogger("mantra.sip")
 router = APIRouter()
 
-@router.post("/v1/test/inbound-call")
-async def test_inbound_call(request: Request):
+@router.post("/v1/test/inbound-call", tags=["Testing & Diagnostics"], summary="Simulate Inbound Call")
+async def test_inbound_call(
+    request: Request,
+    body: Optional[TestInboundCallRequest] = None,
+):
     """
     Simulates an inbound call by triggering an outbound SIP call but dispatching
     the agent with the 'inbound' direction metadata so it acts like an inbound call.
     """
-    payload = await request.json()
+    try:
+        if body is not None:
+            payload = body.model_dump(exclude_unset=True)
+        else:
+            payload = await request.json()
+    except Exception:
+        payload = None
 
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
@@ -97,12 +127,22 @@ async def test_inbound_call(request: Request):
 
 
 
-@router.post("/v1/sip/trunks/inbound")
-async def create_inbound_trunk(request: Request):
+@router.post("/v1/sip/trunks/inbound", tags=["SIP - Inbound"], summary="Create Inbound Trunk")
+async def create_inbound_trunk(
+    request: Request,
+    body: Optional[CreateInboundTrunkRequest] = None,
+):
     """
     Create a new SIP Inbound Trunk to receive incoming calls from SIP providers (e.g., Plivo).
     """
-    payload = await request.json()
+    try:
+        if body is not None:
+            payload = body.model_dump(exclude_unset=True)
+        else:
+            payload = await request.json()
+    except Exception:
+        payload = None
+
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
     
@@ -142,7 +182,7 @@ async def create_inbound_trunk(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@router.post("/v1/sip/trunks/inbound/voicelink")
+@router.post("/v1/sip/trunks/inbound/voicelink", tags=["SIP - Inbound"], summary="Create VoiceLink Inbound Trunk")
 async def create_voicelink_inbound_trunk(request: Request):
     payload = await request.json()
     if not payload:
@@ -221,7 +261,7 @@ async def create_voicelink_inbound_trunk(request: Request):
 
 
 
-@router.get("/v1/sip/trunks/inbound")
+@router.get("/v1/sip/trunks/inbound", tags=["SIP - Inbound"], summary="List Inbound Trunks")
 async def list_sip_inbound_trunks():
     """
     List all SIP Inbound Trunks configured in LiveKit.
@@ -247,7 +287,7 @@ async def list_sip_inbound_trunks():
 
 
 
-@router.delete("/v1/sip/trunks/inbound/{trunk_id}")
+@router.delete("/v1/sip/trunks/inbound/{trunk_id}", tags=["SIP - Inbound"], summary="Delete Inbound Trunk")
 async def delete_sip_inbound_trunk(trunk_id: str):
     """
     Delete a SIP Inbound Trunk and all associated dispatch rules by ID.
@@ -335,12 +375,22 @@ async def delete_sip_inbound_trunk(trunk_id: str):
 
 
 
-@router.post("/v1/sip/dispatch-rules")
-async def create_dispatch_rule(request: Request):
+@router.post("/v1/sip/dispatch-rules", tags=["SIP - Inbound"], summary="Create Dispatch Rule")
+async def create_dispatch_rule(
+    request: Request,
+    body: Optional[CreateDispatchRuleRequest] = None,
+):
     """
     Create a SIP Dispatch Rule to route incoming calls from a specific trunk to agent-controlled rooms.
     """
-    payload = await request.json()
+    try:
+        if body is not None:
+            payload = body.model_dump(exclude_unset=True)
+        else:
+            payload = await request.json()
+    except Exception:
+        payload = None
+
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
         
@@ -394,7 +444,7 @@ async def create_dispatch_rule(request: Request):
 
 
 
-@router.get("/v1/sip/dispatch-rules")
+@router.get("/v1/sip/dispatch-rules", tags=["SIP - Inbound"], summary="List Dispatch Rules")
 async def list_dispatch_rules():
     """
     List all SIP Dispatch Rules configured in LiveKit.
@@ -432,7 +482,7 @@ async def list_dispatch_rules():
 
 
 
-@router.delete("/v1/sip/dispatch-rules/{rule_id}")
+@router.delete("/v1/sip/dispatch-rules/{rule_id}", tags=["SIP - Inbound"], summary="Delete Dispatch Rule")
 async def delete_dispatch_rule(rule_id: str):
     """
     Delete a SIP Dispatch Rule by its ID.
@@ -457,8 +507,8 @@ async def delete_dispatch_rule(rule_id: str):
 
 
 
-@router.get("/v1/sip/plivo-xml")
-@router.post("/v1/sip/plivo-xml")
+@router.get("/v1/sip/plivo-xml", tags=["SIP - Webhooks"], summary="Plivo XML Answer Webhook (GET)")
+@router.post("/v1/sip/plivo-xml", tags=["SIP - Webhooks"], summary="Plivo XML Answer Webhook (POST)")
 async def plivo_xml(request: Request):
     """
     DEPRECATED: Replaced by Plivo Zentrunk SIP trunking.
@@ -517,8 +567,8 @@ async def plivo_xml(request: Request):
 
 
 
-@router.get("/v1/sip/twilio-webhook")
-@router.post("/v1/sip/twilio-webhook")
+@router.get("/v1/sip/twilio-webhook", tags=["SIP - Webhooks"], summary="Twilio Voice Webhook (GET)")
+@router.post("/v1/sip/twilio-webhook", tags=["SIP - Webhooks"], summary="Twilio Voice Webhook (POST)")
 async def twilio_webhook(request: Request):
     """
     Returns TwiML for Twilio to route to the LiveKit SIP Trunk.
@@ -593,8 +643,11 @@ async def twilio_webhook(request: Request):
 
 
 
-@router.post("/v1/sip/inbound/setup")
-async def setup_inbound_sip(request: Request):
+@router.post("/v1/sip/inbound/setup", tags=["SIP - Inbound"], summary="Provision Inbound Number (End-to-End)")
+async def setup_inbound_sip(
+    request: Request,
+    body_data: Optional[InboundSipSetupRequest] = None,
+):
     """
     End-to-end inbound SIP setup:
     1. Creates LiveKit Inbound Trunk
@@ -602,9 +655,9 @@ async def setup_inbound_sip(request: Request):
     3. Triggers provider API (Zadarma/Twilio/Plivo) to update the forwarding URI
     
     Payload:
-    - number (required): Phone number in E.164 format (e.g., +918031321203)
+    - number (required): Phone number in E.164 format
     - org_id (required): Organization ID
-    - provider (required): SIP provider - "zadarma", "twilio", "plivo", or "voice_link"
+    - provider (required): Telephony provider name
     - name (optional): Trunk name (default: "{provider} {number}")
     - prompt (optional): Agent prompt
     - voice (optional): Agent voice
@@ -615,7 +668,10 @@ async def setup_inbound_sip(request: Request):
     - process_id (optional): Process ID
     """
     try:
-        payload = await request.json()
+        if body_data is not None:
+            payload = body_data.model_dump(exclude_unset=True)
+        else:
+            payload = await request.json()
     except Exception:
         payload = None
 
@@ -650,7 +706,112 @@ async def setup_inbound_sip(request: Request):
 
 
 
-@router.post("/v1/sip/plivo-dial-status")
+@router.post("/inbound/prompt", tags=["SIP - Inbound"], summary="Update Inbound Prompt")
+@router.put("/inbound/prompt", include_in_schema=False)
+@router.patch("/inbound/prompt", include_in_schema=False)
+@router.post("/v1/sip/inbound/prompt", include_in_schema=False)
+@router.put("/v1/sip/inbound/prompt", include_in_schema=False)
+@router.patch("/v1/sip/inbound/prompt", include_in_schema=False)
+@router.post("/v1/inbound/prompt", include_in_schema=False)
+@router.put("/v1/inbound/prompt", include_in_schema=False)
+@router.patch("/v1/inbound/prompt", include_in_schema=False)
+async def update_inbound_prompt_route(
+    request: Request,
+    body: Optional[InboundPromptUpdateRequest] = None,
+):
+    """
+    Update prompt in inbound configuration:
+    1. Updates 'prompt' (and optionally 'voice'/'model') in PostgreSQL 'org_configs' table.
+    2. Updates LiveKit SIP Dispatch Rule metadata if associated with the config.
+    
+    Payload:
+    - prompt (required): New agent prompt text
+    - phone_number / number / phone (optional*): Target phone number in E.164 format
+    - org_id (optional*): Target organization ID
+    - sip_trunk_id (optional*): Target SIP trunk ID
+    - dispatch_rule_id (optional*): Target dispatch rule ID
+    - voice (optional): New voice
+    - model (optional): New model
+    * At least one identifier is required.
+    """
+    try:
+        if body is not None:
+            payload = body.model_dump(exclude_unset=True)
+        else:
+            payload = await request.json()
+    except Exception:
+        payload = None
+
+    if payload is not None:
+        logger.info(
+            f"=== [INBOUND PROMPT UPDATE REQUEST] ===\n"
+            f"Payload: {json.dumps(payload, indent=2)}"
+        )
+    else:
+        logger.info("=== [INBOUND PROMPT UPDATE REQUEST] === Invalid/Empty JSON")
+
+    response = await _update_inbound_prompt_process(payload)
+
+    status_code = response.status_code
+    try:
+        resp_body = json.loads(response.body.decode("utf-8"))
+        body_str = json.dumps(resp_body, indent=2)
+    except Exception:
+        body_str = str(response.body)
+
+    logger.info(
+        f"=== [INBOUND PROMPT UPDATE RESPONSE] ===\n"
+        f"Status: {status_code}\n"
+        f"Payload: {body_str}"
+    )
+    return response
+
+
+@router.get("/inbound/prompt", tags=["SIP - Inbound"], summary="Get Inbound Prompt & Config")
+@router.get("/v1/sip/inbound/prompt", include_in_schema=False)
+@router.get("/v1/inbound/prompt", include_in_schema=False)
+async def get_inbound_prompt_route(
+    request: Request,
+    org_id: str = Query(..., description="Target organization ID"),
+    number: Optional[str] = Query(
+        None,
+        description="Target phone number in E.164 format",
+    ),
+    phone_number: Optional[str] = Query(
+        None,
+        description="Alias for number",
+    ),
+    phone: Optional[str] = Query(None, description="Alias for number"),
+    sip_trunk_id: Optional[str] = Query(None, description="Target SIP trunk ID"),
+    dispatch_rule_id: Optional[str] = Query(None, description="Target dispatch rule ID"),
+):
+    """
+    Get current prompt and inbound configuration.
+    
+    Query params:
+    - phone_number / number / phone: Target phone number
+    - org_id: Target organization ID
+    - sip_trunk_id: Target SIP trunk ID
+    - dispatch_rule_id: Target dispatch rule ID
+    """
+    query_params = dict(request.query_params)
+    if number and "number" not in query_params:
+        query_params["number"] = number
+    if phone_number and "phone_number" not in query_params:
+        query_params["phone_number"] = phone_number
+    if phone and "phone" not in query_params:
+        query_params["phone"] = phone
+    if org_id and "org_id" not in query_params:
+        query_params["org_id"] = org_id
+    if sip_trunk_id and "sip_trunk_id" not in query_params:
+        query_params["sip_trunk_id"] = sip_trunk_id
+    if dispatch_rule_id and "dispatch_rule_id" not in query_params:
+        query_params["dispatch_rule_id"] = dispatch_rule_id
+    return await _get_inbound_prompt_process(query_params)
+
+
+
+@router.post("/v1/sip/plivo-dial-status", tags=["SIP - Webhooks"], summary="Plivo Dial Status Callback")
 async def plivo_dial_status(request: Request):
     """
     DEPRECATED: Replaced by Plivo Zentrunk SIP trunking.
@@ -669,14 +830,28 @@ async def plivo_dial_status(request: Request):
 
 
 
-@router.post("/v1/sip/trunks/outbound")
-@router.post("/v1/sip/trunks/outbound/zadarma")
-async def create_zadarma_sip_trunk(request: Request):
+@router.post("/v1/sip/trunks/outbound", include_in_schema=False)
+@router.post(
+    "/v1/sip/trunks/outbound/zadarma",
+    tags=["SIP - Outbound"],
+    summary="Create Zadarma Outbound Trunk",
+)
+async def create_zadarma_sip_trunk(
+    request: Request,
+    body: Optional[CreateZadarmaTrunkRequest] = None,
+):
     """
     Create a new Zadarma SIP trunk.
     The root '/outbound' endpoint is maintained for backward compatibility.
     """
-    payload = await request.json()
+    try:
+        if body is not None:
+            payload = body.model_dump(exclude_unset=True)
+        else:
+            payload = await request.json()
+    except Exception:
+        payload = None
+
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
 
@@ -711,13 +886,27 @@ async def create_zadarma_sip_trunk(request: Request):
 
 
 
-@router.post("/v1/sip/trunks/outbound/twilio")
-async def create_twilio_sip_trunk(request: Request):
+@router.post(
+    "/v1/sip/trunks/outbound/twilio",
+    tags=["SIP - Outbound"],
+    summary="Create Twilio Outbound Trunk",
+)
+async def create_twilio_sip_trunk(
+    request: Request,
+    body: Optional[CreateTwilioTrunkRequest] = None,
+):
     """
     Create a new Twilio SIP trunk using professional nomenclature.
     Aligns with LiveKit CLI parameters: auth_user, auth_pass.
     """
-    payload = await request.json()
+    try:
+        if body is not None:
+            payload = body.model_dump(exclude_unset=True)
+        else:
+            payload = await request.json()
+    except Exception:
+        payload = None
+
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
 
@@ -762,12 +951,26 @@ async def create_twilio_sip_trunk(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@router.post("/v1/sip/trunks/outbound/voice_link")
-async def create_voicelink_sip_trunk(request: Request):
+@router.post(
+    "/v1/sip/trunks/outbound/voice_link",
+    tags=["SIP - Outbound"],
+    summary="Create VoiceLink Outbound Trunk",
+)
+async def create_voicelink_sip_trunk(
+    request: Request,
+    body: Optional[CreateVoiceLinkTrunkRequest] = None,
+):
     """
     Create a new Voicelink SIP trunk.
     """
-    payload = await request.json()
+    try:
+        if body is not None:
+            payload = body.model_dump(exclude_unset=True)
+        else:
+            payload = await request.json()
+    except Exception:
+        payload = None
+
     if not payload:
         return JSONResponse({"error": "No payload provided"},
         status_code=400)
@@ -825,14 +1028,28 @@ async def create_voicelink_sip_trunk(request: Request):
 
 
 
-@router.post("/v1/sip/trunks/outbound/plivo")
-async def create_and_call_plivo(request: Request):
+@router.post(
+    "/v1/sip/trunks/outbound/plivo",
+    tags=["SIP - Outbound"],
+    summary="Create Plivo Trunk & Initiate Outbound Call",
+)
+async def create_and_call_plivo(
+    request: Request,
+    body: Optional[PlivoOutboundCallRequest] = None,
+):
     """
     Unified Plivo endpoint to provision a SIP trunk (optional) and place an outbound call.
     Supports on-the-fly provisioning if 'trunk' details are provided,
     otherwise uses 'trunk_id' from the payload or environment.
     """
-    payload = await request.json()
+    try:
+        if body is not None:
+            payload = body.model_dump(exclude_unset=True)
+        else:
+            payload = await request.json()
+    except Exception:
+        payload = None
+
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
 
@@ -1000,7 +1217,11 @@ async def create_and_call_plivo(request: Request):
 
 
 
-@router.get("/v1/sip/trunks/outbound")
+@router.get(
+    "/v1/sip/trunks/outbound",
+    tags=["SIP - Outbound"],
+    summary="List Outbound Trunks",
+)
 async def list_sip_outbound_trunks():
     """
     List all SIP outbound trunks.
@@ -1033,7 +1254,11 @@ async def list_sip_outbound_trunks():
 
 
 
-@router.delete("/v1/sip/trunks/outbound/{trunk_id}")
+@router.delete(
+    "/v1/sip/trunks/outbound/{trunk_id}",
+    tags=["SIP - Outbound"],
+    summary="Delete Outbound Trunk",
+)
 async def delete_sip_outbound_trunk(trunk_id: str):
     """
     Delete a SIP outbound trunk by its trunk ID.
@@ -1060,15 +1285,30 @@ async def delete_sip_outbound_trunk(trunk_id: str):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@router.patch("/v1/sip/trunks/inbound/{trunk_id}")
-async def update_inbound_sip_trunk(trunk_id: str, request: Request):
+@router.patch(
+    "/v1/sip/trunks/inbound/{trunk_id}",
+    tags=["SIP - Inbound"],
+    summary="Partial Update Inbound Trunk",
+)
+async def update_inbound_sip_trunk(
+    trunk_id: str,
+    request: Request,
+    body: Optional[UpdateInboundTrunkRequest] = None,
+):
     """Update fields on an existing inbound SIP trunk without recreating it.
 
     Supports partial updates for allowed addresses, allowed numbers,
     auth credentials, and metadata.  Only the fields provided in the
     request body are changed.
     """
-    payload = await request.json()
+    try:
+        if body is not None:
+            payload = body.model_dump(exclude_unset=True)
+        else:
+            payload = await request.json()
+    except Exception:
+        payload = None
+
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
 
@@ -1125,10 +1365,25 @@ async def update_inbound_sip_trunk(trunk_id: str, request: Request):
 # ──────────────────────────────────────────────
 
 
-@router.patch("/v1/sip/dispatch-rules/{rule_id}")
-async def update_sip_dispatch_rule(rule_id: str, request: Request):
+@router.patch(
+    "/v1/sip/dispatch-rules/{rule_id}",
+    tags=["SIP - Inbound"],
+    summary="Partial Update Dispatch Rule",
+)
+async def update_sip_dispatch_rule(
+    rule_id: str,
+    request: Request,
+    body: Optional[UpdateDispatchRuleRequest] = None,
+):
     """Update fields on an existing SIP dispatch rule without recreating it."""
-    payload = await request.json()
+    try:
+        if body is not None:
+            payload = body.model_dump(exclude_unset=True)
+        else:
+            payload = await request.json()
+    except Exception:
+        payload = None
+
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
 
@@ -1179,7 +1434,11 @@ async def update_sip_dispatch_rule(rule_id: str, request: Request):
 
 
 
-@router.get("/config")
+@router.get(
+    "/config",
+    tags=["System & Health"],
+    summary="Get LiveKit Server Config",
+)
 async def get_config():
     """Return the LiveKit URL for the frontend."""
     return JSONResponse({"url": os.getenv("LIVEKIT_URL")})

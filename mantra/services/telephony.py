@@ -741,6 +741,277 @@ async def _setup_inbound_sip_process(payload: dict | None) -> JSONResponse:
 
 
 
+async def _update_inbound_prompt_process(payload: dict | None) -> JSONResponse:
+    """
+    Updates the prompt (and optionally voice/model) in inbound configurations:
+    1. Updates PostgreSQL org_configs table matching the given identifier.
+    2. Updates LiveKit Cloud SIP dispatch rule metadata if dispatch_rule_id is linked.
+    """
+    if payload is None:
+        return JSONResponse(
+            {"status_code": 400, "status": "error", "error": "Invalid or missing JSON payload"},
+            status_code=400,
+        )
+
+    prompt = payload.get("prompt")
+    if not prompt or not isinstance(prompt, str) or not prompt.strip():
+        return JSONResponse(
+            {"status_code": 400, "status": "error", "error": "'prompt' is required and must be a non-empty string"},
+            status_code=400,
+        )
+
+    prompt = prompt.strip()
+    voice = payload.get("voice")
+    model = payload.get("model")
+
+    number = payload.get("number") or payload.get("phone_number") or payload.get("phone")
+    org_id = payload.get("org_id")
+    sip_trunk_id = payload.get("sip_trunk_id")
+    dispatch_rule_id = payload.get("dispatch_rule_id")
+
+    if not org_id or not str(org_id).strip():
+        return JSONResponse(
+            {"status_code": 400, "status": "error", "error": "'org_id' is required"},
+            status_code=400,
+        )
+
+    if not number or not str(number).strip():
+        return JSONResponse(
+            {"status_code": 400, "status": "error", "error": "'phone_number' (or 'number') is required"},
+            status_code=400,
+        )
+
+    clean_number = _normalize_phone_number(number) if number else None
+    raw_number = str(number).strip() if number else None
+
+    logger.info(
+        f"[INBOUND PROMPT UPDATE] number={number}, org_id={org_id}, "
+        f"sip_trunk_id={sip_trunk_id}, dispatch_rule_id={dispatch_rule_id}"
+    )
+
+    try:
+        conn = await get_db_connection()
+        try:
+            where_clauses = ["is_active = true"]
+            params = []
+            idx = 1
+
+            if clean_number:
+                where_clauses.append(f"phone_number IN (${idx}, ${idx+1})")
+                params.extend([raw_number, clean_number])
+                idx += 2
+
+            if org_id is not None and str(org_id).strip():
+                where_clauses.append(f"org_id = ${idx}")
+                params.append(str(org_id).strip())
+                idx += 1
+
+            if sip_trunk_id:
+                where_clauses.append(f"sip_trunk_id = ${idx}")
+                params.append(str(sip_trunk_id).strip())
+                idx += 1
+
+            if dispatch_rule_id:
+                where_clauses.append(f"dispatch_rule_id = ${idx}")
+                params.append(str(dispatch_rule_id).strip())
+                idx += 1
+
+            where_sql = " AND ".join(where_clauses)
+            existing_rows = await conn.fetch(
+                f"SELECT id, org_id, phone_number, name, prompt, voice, model, sip_trunk_id, dispatch_rule_id FROM org_configs WHERE {where_sql}",
+                *params,
+            )
+
+            if not existing_rows:
+                return JSONResponse(
+                    {
+                        "status_code": 404,
+                        "status": "error",
+                        "error": "No matching active inbound configuration found",
+                        "identifiers": {
+                            "number": number,
+                            "org_id": org_id,
+                            "sip_trunk_id": sip_trunk_id,
+                            "dispatch_rule_id": dispatch_rule_id,
+                        },
+                    },
+                    status_code=404,
+                )
+
+            set_clauses = [f"prompt = ${idx}", "updated_at = NOW()"]
+            update_params = list(params)
+            update_params.append(prompt)
+            idx += 1
+
+            if voice:
+                set_clauses.append(f"voice = ${idx}")
+                update_params.append(str(voice).strip())
+                idx += 1
+
+            if model:
+                set_clauses.append(f"model = ${idx}")
+                update_params.append(str(model).strip())
+                idx += 1
+
+            set_sql = ", ".join(set_clauses)
+            update_query = f"""
+                UPDATE org_configs
+                SET {set_sql}
+                WHERE {where_sql}
+                RETURNING id, org_id, phone_number, name, prompt, voice, model, sip_trunk_id, dispatch_rule_id, is_active, updated_at
+            """
+            updated_rows = await conn.fetch(update_query, *update_params)
+        finally:
+            await conn.close()
+
+        rule_update_results = []
+        for row in updated_rows:
+            d_rule_id = row.get("dispatch_rule_id")
+            if d_rule_id and _svc_clients.lk_client:
+                try:
+                    updated_meta = {
+                        "direction": "inbound",
+                        "prompt": row.get("prompt"),
+                        "voice": row.get("voice"),
+                        "model": row.get("model"),
+                        "phone_number": row.get("phone_number"),
+                    }
+                    await _svc_clients.lk_client.sip.update_dispatch_rule_fields(
+                        d_rule_id,
+                        metadata=json.dumps(updated_meta),
+                    )
+                    rule_update_results.append({"dispatch_rule_id": d_rule_id, "status": "updated"})
+                    logger.info(f"Updated LiveKit dispatch rule {d_rule_id} metadata with new prompt")
+                except Exception as lk_err:
+                    logger.warning(f"Failed to update LiveKit dispatch rule {d_rule_id}: {lk_err}")
+                    rule_update_results.append({"dispatch_rule_id": d_rule_id, "status": "failed", "error": str(lk_err)})
+
+        configs = []
+        for r in updated_rows:
+            configs.append({
+                "id": str(r["id"]),
+                "org_id": r["org_id"],
+                "phone_number": r["phone_number"],
+                "name": r.get("name"),
+                "prompt": r["prompt"],
+                "voice": r.get("voice"),
+                "model": r.get("model"),
+                "sip_trunk_id": r.get("sip_trunk_id"),
+                "dispatch_rule_id": r.get("dispatch_rule_id"),
+                "updated_at": r["updated_at"].isoformat() if r.get("updated_at") else None,
+            })
+
+        return JSONResponse({
+            "status_code": 200,
+            "status": "success",
+            "message": f"Successfully updated prompt for {len(configs)} inbound configuration(s)",
+            "updated_count": len(configs),
+            "configs": configs,
+            "dispatch_rule_updates": rule_update_results,
+        })
+    except Exception as e:
+        logger.error(f"Error updating inbound prompt: {e}\n{traceback.format_exc()}")
+        return JSONResponse({"status_code": 500, "status": "error", "error": str(e)}, status_code=500)
+
+
+async def _get_inbound_prompt_process(query_params: dict) -> JSONResponse:
+    """
+    Retrieves current prompt and inbound configuration by phone number, org_id, sip_trunk_id, or dispatch_rule_id.
+    """
+    number = query_params.get("number") or query_params.get("phone_number") or query_params.get("phone")
+    org_id = query_params.get("org_id")
+    sip_trunk_id = query_params.get("sip_trunk_id")
+    dispatch_rule_id = query_params.get("dispatch_rule_id")
+
+    if not org_id or not str(org_id).strip():
+        return JSONResponse(
+            {"status_code": 400, "status": "error", "error": "'org_id' is required"},
+            status_code=400,
+        )
+
+    if not number or not str(number).strip():
+        return JSONResponse(
+            {"status_code": 400, "status": "error", "error": "'phone_number' (or 'number') is required"},
+            status_code=400,
+        )
+
+    clean_number = _normalize_phone_number(number) if number else None
+    raw_number = str(number).strip() if number else None
+
+    try:
+        conn = await get_db_connection()
+        try:
+            where_clauses = ["is_active = true"]
+            params = []
+            idx = 1
+
+            if clean_number:
+                where_clauses.append(f"phone_number IN (${idx}, ${idx+1})")
+                params.extend([raw_number, clean_number])
+                idx += 2
+
+            if org_id is not None and str(org_id).strip():
+                where_clauses.append(f"org_id = ${idx}")
+                params.append(str(org_id).strip())
+                idx += 1
+
+            if sip_trunk_id:
+                where_clauses.append(f"sip_trunk_id = ${idx}")
+                params.append(str(sip_trunk_id).strip())
+                idx += 1
+
+            if dispatch_rule_id:
+                where_clauses.append(f"dispatch_rule_id = ${idx}")
+                params.append(str(dispatch_rule_id).strip())
+                idx += 1
+
+            where_sql = " AND ".join(where_clauses)
+            rows = await conn.fetch(
+                f"SELECT id, org_id, phone_number, name, prompt, voice, model, sip_trunk_id, dispatch_rule_id, is_active, updated_at FROM org_configs WHERE {where_sql}",
+                *params,
+            )
+        finally:
+            await conn.close()
+
+        if not rows:
+            return JSONResponse(
+                {
+                    "status_code": 404,
+                    "status": "error",
+                    "error": "No matching active inbound configuration found",
+                },
+                status_code=404,
+            )
+
+        configs = [
+            {
+                "id": str(r["id"]),
+                "org_id": r["org_id"],
+                "phone_number": r["phone_number"],
+                "name": r.get("name"),
+                "prompt": r.get("prompt"),
+                "voice": r.get("voice"),
+                "model": r.get("model"),
+                "sip_trunk_id": r.get("sip_trunk_id"),
+                "dispatch_rule_id": r.get("dispatch_rule_id"),
+                "updated_at": r["updated_at"].isoformat() if r.get("updated_at") else None,
+            }
+            for r in rows
+        ]
+
+        return JSONResponse({
+            "status_code": 200,
+            "status": "success",
+            "count": len(configs),
+            "configs": configs,
+        })
+    except Exception as e:
+        logger.error(f"Error fetching inbound prompt: {e}\n{traceback.format_exc()}")
+        return JSONResponse({"status_code": 500, "status": "error", "error": str(e)}, status_code=500)
+
+
+
+
 async def _create_sip_outbound_trunk(
     name: str,
     address: str,

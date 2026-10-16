@@ -12,9 +12,9 @@ import time
 import logging
 
 logger = logging.getLogger("mantra.dashboard")
-router = APIRouter()
+router = APIRouter(tags=["Dashboard & Metrics"])
 
-@router.get("/v1/dashboard/stream")
+@router.get("/v1/dashboard/stream", summary="Real-time Call Queue & Status Stream (SSE)")
 async def dashboard_stream(request: Request):
     """SSE endpoint with real-time queue status + active call details."""
     # require_auth(request)
@@ -65,7 +65,7 @@ async def dashboard_stream(request: Request):
 
 
 
-@router.get("/v1/dashboard/metrics")
+@router.get("/v1/dashboard/metrics", summary="Get Daily Call Metrics")
 async def dashboard_metrics(request: Request):
     """Today's call metrics from PostgreSQL."""
     # require_auth(request)
@@ -124,7 +124,7 @@ async def dashboard_metrics(request: Request):
 
 
 
-@router.get("/v1/dashboard/calls")
+@router.get("/v1/dashboard/calls", summary="List Historical Call Logs")
 async def dashboard_calls(request: Request, limit: int = 20, offset: int = 0, search: str = None, status: str = None):
     """Paginated call history from PostgreSQL with search & status filtering."""
     try:
@@ -226,7 +226,7 @@ async def dashboard_calls(request: Request, limit: int = 20, offset: int = 0, se
 
 
 
-@router.get("/v1/dashboard/active-calls")
+@router.get("/v1/dashboard/active-calls", summary="List Currently Active Calls")
 async def dashboard_active_calls(request: Request):
     """Current active calls from Redis."""
     if not _svc_clients.redis_client:

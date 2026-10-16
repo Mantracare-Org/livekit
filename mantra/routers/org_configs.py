@@ -1,23 +1,26 @@
-""" Org config API routes for the UI server. """
-
-from fastapi import APIRouter, Request
+from typing import Optional
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from mantra.dependencies.database import get_db_connection
+from mantra.schemas.org_configs import OrgConfigUpdateRequest
 import json
 
 import logging
 
 logger = logging.getLogger("mantra.org_configs")
-router = APIRouter()
+router = APIRouter(tags=["Organization Configs"])
 
-@router.get("/v1/org-configs")
-async def list_org_configs(request: Request):
+@router.get("/v1/org-configs", summary="List Organization Configs")
+async def list_org_configs(
+    request: Request,
+    org_id: Optional[str] = Query(None, description="Optional filter by Organization ID"),
+):
     """List all org configs, optionally filtered by org_id."""
-    org_id = request.query_params.get("org_id")
+    query_org_id = org_id or request.query_params.get("org_id")
     try:
         conn = await get_db_connection()
-        if org_id:
-            rows = await conn.fetch("SELECT * FROM org_configs WHERE org_id = $1 ORDER BY created_at DESC", org_id)
+        if query_org_id:
+            rows = await conn.fetch("SELECT * FROM org_configs WHERE org_id = $1 ORDER BY created_at DESC", query_org_id)
         else:
             rows = await conn.fetch("SELECT * FROM org_configs ORDER BY created_at DESC")
         await conn.close()
@@ -39,7 +42,7 @@ async def list_org_configs(request: Request):
 
 
 
-@router.get("/v1/org-configs/{phone_number}")
+@router.get("/v1/org-configs/{phone_number}", summary="Get Organization Config by Phone")
 async def get_org_config(phone_number: str):
     """Get a specific org config by phone number."""
     try:
@@ -70,10 +73,21 @@ async def get_org_config(phone_number: str):
 
 
 
-@router.put("/v1/org-configs/{phone_number}")
-async def update_org_config(phone_number: str, request: Request):
+@router.put("/v1/org-configs/{phone_number}", summary="Update Organization Config by Phone")
+async def update_org_config(
+    phone_number: str,
+    request: Request,
+    body: Optional[OrgConfigUpdateRequest] = None,
+):
     """Update fields on an existing org config."""
-    payload = await request.json()
+    try:
+        if body is not None:
+            payload = body.model_dump(exclude_unset=True)
+        else:
+            payload = await request.json()
+    except Exception:
+        payload = None
+
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
         
@@ -135,7 +149,7 @@ async def update_org_config(phone_number: str, request: Request):
 
 
 
-@router.delete("/v1/org-configs/{phone_number}")
+@router.delete("/v1/org-configs/{phone_number}", summary="Deactivate Organization Config by Phone")
 async def delete_org_config(phone_number: str):
     """Soft delete an org config by setting is_active = false."""
     try:

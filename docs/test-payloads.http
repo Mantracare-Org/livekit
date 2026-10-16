@@ -322,3 +322,31 @@ GET http://localhost:8081/config
 
 ### 6c. Serve frontend UI
 GET http://localhost:8081/
+
+
+### ────────────────────────────────────────────
+### 7. INBOUND PROMPT CONFIGURATION
+### ────────────────────────────────────────────
+
+### 7a. Update inbound prompt by phone number
+POST http://localhost:8081/inbound/prompt
+Content-Type: application/json
+
+{
+  "number": "+1XXXXXXXXXX",
+  "prompt": "You are a customer service assistant. Greet the caller warmly and assist with their inquiries.",
+  "voice": "<VOICE_NAME>",
+  "model": "<MODEL_NAME>"
+}
+
+### 7b. Update inbound prompt by org_id
+POST http://localhost:8081/inbound/prompt
+Content-Type: application/json
+
+{
+  "org_id": "<ORG_ID>",
+  "prompt": "You are a customer service assistant. Greet the caller warmly and ask how you can help them today."
+}
+
+### 7c. Get current inbound prompt and configuration
+GET http://localhost:8081/inbound/prompt?number=+1XXXXXXXXXX

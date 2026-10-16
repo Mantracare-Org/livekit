@@ -16,15 +16,27 @@ import os
 import time
 import traceback
 
+from typing import Optional
+from mantra.schemas.telephony import DispatchTestRequest
+
 logger = get_logger("mantra.telephony")
 router = APIRouter()
 
-@router.post("/dispatch-test")
-async def dispatch_test(request: Request):
+@router.post("/dispatch-test", tags=["Testing & Diagnostics"], summary="Trigger Agent Dispatch Test")
+async def dispatch_test(
+    request: Request,
+    body: Optional[DispatchTestRequest] = None,
+):
     """
     Manually trigger an agent dispatch with a custom payload.
     """
-    payload = await request.json()
+    try:
+        if body is not None:
+            payload = body.model_dump(exclude_unset=True)
+        else:
+            payload = await request.json()
+    except Exception:
+        payload = None
 
     if not payload:
         return JSONResponse({"error": "No payload provided"}, status_code=400)
@@ -78,7 +90,7 @@ async def dispatch_test(request: Request):
 
 
 
-@router.post("/v1/webhooks/telephony")
+@router.post("/v1/webhooks/telephony", tags=["SIP - Webhooks"], summary="Handle Telephony Dispatch Webhook")
 async def handle_outbound_call_webhook(request: Request):
     """
     Webhook handler to process telephony events and trigger outbound agent dispatch.

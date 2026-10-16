@@ -7,9 +7,9 @@ import json
 import logging
 
 logger = logging.getLogger("mantra.redis_api")
-router = APIRouter()
+router = APIRouter(tags=["Redis & Queues"])
 
-@router.get("/v1/redis/info")
+@router.get("/v1/redis/info", summary="Get Redis Telemetry & Stats")
 async def redis_info(request: Request):
     """Get Redis server telemetry & summary statistics."""
     if not _svc_clients.redis_client:
@@ -41,7 +41,7 @@ async def redis_info(request: Request):
 
 
 
-@router.get("/v1/redis/queue")
+@router.get("/v1/redis/queue", summary="List Pending Call Queue Items")
 async def redis_queue_items(request: Request):
     """Fetch all pending jobs in the queue:pending sorted set."""
     if not _svc_clients.redis_client:
@@ -80,7 +80,7 @@ async def redis_queue_items(request: Request):
 
 
 
-@router.get("/v1/redis/active-details")
+@router.get("/v1/redis/active-details", summary="Get Detailed Active Calls")
 async def redis_active_details(request: Request):
     """Fetch active calls hash and their detailed status in Redis."""
     if not _svc_clients.redis_client:
@@ -108,7 +108,7 @@ async def redis_active_details(request: Request):
 
 
 
-@router.get("/v1/redis/keys")
+@router.get("/v1/redis/keys", summary="List Redis Keys")
 async def redis_keys_list(request: Request, pattern: str = "*", limit: int = 100):
     """Scan and list keys matching pattern with type and TTL."""
     if not _svc_clients.redis_client:
@@ -145,7 +145,7 @@ async def redis_keys_list(request: Request, pattern: str = "*", limit: int = 100
 
 
 
-@router.get("/v1/redis/key-detail")
+@router.get("/v1/redis/key-detail", summary="Get Redis Key Details")
 async def redis_key_detail(request: Request, key: str):
     """Get full data of a specific Redis key regardless of type."""
     if not _svc_clients.redis_client or not key:
@@ -182,7 +182,7 @@ async def redis_key_detail(request: Request, key: str):
 
 
 
-@router.delete("/v1/redis/key")
+@router.delete("/v1/redis/key", summary="Delete Redis Key")
 async def redis_delete_key(request: Request, key: str):
     """Delete a specific key from Redis."""
     if not _svc_clients.redis_client or not key:

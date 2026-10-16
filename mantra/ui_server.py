@@ -101,7 +101,56 @@ async def lifespan(app: FastAPI):
     await close_clients()
 
 
-app = FastAPI(lifespan=lifespan)
+TAGS_METADATA = [
+    {
+        "name": "SIP - Inbound",
+        "description": "Inbound SIP provisioning, phone number management, dispatch rules, and prompt configuration.",
+    },
+    {
+        "name": "SIP - Outbound",
+        "description": "Outbound SIP trunk creation and configuration for telephony providers (Zadarma, Twilio, Plivo, VoiceLink).",
+    },
+    {
+        "name": "SIP - Webhooks",
+        "description": "Telephony provider incoming webhooks and call control callbacks (Plivo XML, Twilio webhooks, etc.).",
+    },
+    {
+        "name": "Organization Configs",
+        "description": "Database-driven per-organization phone number routing, agent voice, prompt, and KB mapping.",
+    },
+    {
+        "name": "Knowledge Base",
+        "description": "Document ingestion, embeddings, search retrieval, and collection management for agent RAG.",
+    },
+    {
+        "name": "Dashboard & Metrics",
+        "description": "Real-time metrics, Server-Sent Events (SSE) call stream, and system monitoring.",
+    },
+    {
+        "name": "Redis & Queues",
+        "description": "Outbound call queue status, active calls inspector, and Redis cache management.",
+    },
+    {
+        "name": "Authentication",
+        "description": "JWT authentication for administrative operations.",
+    },
+    {
+        "name": "Testing & Diagnostics",
+        "description": "Manual dispatch testing, inbound call simulator, and client diagnostics.",
+    },
+    {
+        "name": "System & Health",
+        "description": "Service health checks and uptime status.",
+    },
+]
+
+app = FastAPI(
+    title="Mantra Voice Agent & Telephony API",
+    description="Unified API server for LiveKit Voice Agent, SIP Telephony Trunks, Knowledge Base, and Call Management.",
+    version="1.0.0",
+    openapi_tags=TAGS_METADATA,
+    lifespan=lifespan,
+)
 Instrumentator().instrument(app).expose(app, include_in_schema=False, should_gzip=True)
 
 SCANNER_PATHS = (
