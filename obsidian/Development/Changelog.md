@@ -2,6 +2,13 @@
 
 ## 2026-10-19
 
+### Noise Cancellation Latency Optimization & Turnaround Calibration
+
+- **perf & latency:** Diagnosed turnaround latency and eliminated buffer delays introduced by default audio input options. Disabled WebRTC APM AGC (`auto_gain_control=False`) and pre-connect buffering (`pre_connect_audio=False`) in `AudioInputOptions`.
+- **perf & audio:** Added multi-provider noise cancellation support in `mantra/agent.py` (`NOISE_CANCELLATION_PROVIDER="ai_coustics" | "krisp"`). Krisp NC runs natively in C++ with 0ms Python overhead. Benchmarked `ai-coustics` models: `QUAIL_VF_S` executes at 0.89ms/frame (8x faster than `QUAIL_L` at 7.20ms/frame).
+- **perf & endpointing:** Calibrated Silero VAD `min_silence_duration` from 0.30s down to 0.20s (configurable via `VAD_MIN_SILENCE_DURATION`) and Deepgram STT `endpointing_ms` from 250ms down to 150ms (configurable via `DEEPGRAM_ENDPOINTING_MS`), shaving ~200ms off conversational turn response commitment.
+- **Files:** `mantra/agent.py`, `mantra/core/engines.py`, `obsidian/Features/Voice Agent.md`, `obsidian/Architecture/Overview.md`, `obsidian/Development/Current Sprint.md`, `obsidian/Development/Changelog.md`.
+
 ### ai-coustics Quail (QUAIL_L) Inbound Noise Cancellation
 
 - **feat & audio:** Integrated LiveKit Cloud's machine-optimized `ai-coustics` audio enhancement plugin (`livekit-plugins-ai-coustics`) to filter environmental background noise (traffic, fans, ambient noise) from inbound caller audio before STT transcription and VAD turn detection.

@@ -453,7 +453,7 @@ async def entrypoint(ctx: JobContext):
         ),
         vad=silero.VAD.load(
             min_speech_duration=0.05,
-            min_silence_duration=0.30,
+            min_silence_duration=float(os.getenv("VAD_MIN_SILENCE_DURATION", "0.25")),
             prefix_padding_duration=0.50,
             activation_threshold=0.45,
         ),
@@ -500,18 +500,26 @@ async def entrypoint(ctx: JobContext):
         room_options = None
         if os.getenv("NOISE_CANCELLATION_ENABLED", "1") == "1":
             try:
-                model_name = os.getenv("AI_COUSTICS_MODEL", "QUAIL_L").upper()
-                enhancer_model = getattr(ai_coustics.EnhancerModel, model_name, ai_coustics.EnhancerModel.QUAIL_L)
+                nc_provider = os.getenv("NOISE_CANCELLATION_PROVIDER", "ai_coustics").lower()
+                if nc_provider == "krisp":
+                    from livekit.plugins import noise_cancellation as krisp_nc
+                    nc_filter = krisp_nc.NC()
+                    logger.info("[AUDIO] Krisp NC (C++ native, 0ms Python latency) noise cancellation enabled")
+                else:
+                    model_name = os.getenv("AI_COUSTICS_MODEL", "QUAIL_VF_S").upper()
+                    enhancer_model = getattr(ai_coustics.EnhancerModel, model_name, ai_coustics.EnhancerModel.QUAIL_VF_S)
+                    nc_filter = lambda params: None if getattr(params.participant, "kind", None) == rtc.ParticipantKind.PARTICIPANT_KIND_AGENT else ai_coustics.audio_enhancement(model=enhancer_model)
+                    logger.info(f"[AUDIO] ai-coustics noise cancellation enabled (model={enhancer_model.name})")
+
                 room_options = room_io.RoomOptions(
                     audio_input=room_io.AudioInputOptions(
-                        noise_cancellation=lambda params: None
-                        if getattr(params.participant, "kind", None) == rtc.ParticipantKind.PARTICIPANT_KIND_AGENT
-                        else ai_coustics.audio_enhancement(model=enhancer_model),
+                        noise_cancellation=nc_filter,
+                        auto_gain_control=False,  # Bypass WebRTC AGC lookahead/buffering
+                        pre_connect_audio=False,  # Bypass pre-connect buffer wait
                     ),
                 )
-                logger.info(f"[AUDIO] ai-coustics noise cancellation enabled (model={enhancer_model.name})")
             except Exception as nc_err:
-                logger.warning(f"[AUDIO] Failed to configure ai-coustics noise cancellation: {nc_err}")
+                logger.warning(f"[AUDIO] Failed to configure noise cancellation: {nc_err}")
 
         start_kwargs = {"agent": agent, "room": ctx.room}
         if room_options is not None:

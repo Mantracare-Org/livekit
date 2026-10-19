@@ -57,6 +57,6 @@ Modular, asynchronous, multi-process architecture based on Python `asyncio`.
 9. **Fast VAD barge-in** — `interruption.mode="vad"` (0.15s, `min_words=5`, `discard_audio_if_uninterruptible`) + dynamic endpointing (0.10s–0.80s) so callers interrupt TTS promptly without false barge-ins from short interjections
 10. **Department-gated availability** — `clarify_medical_department` resolves broad symptoms to one exact org department; `check_doctor_availability` rejects invented departments and never uses KB for scheduling
 11. **Inbound client recognition** — Pre-greeting `recognize_client` (3s bounded) resolves caller number from LiveKit SIP participant metadata, injects `client_name` + `ai_summaries` + `custom_fields`; null/timeout → anonymous, never blocks the call
-12. **ai-coustics QUAIL_L noise cancellation** — Inbound audio is enhanced via `ai_coustics.audio_enhancement(model=EnhancerModel.QUAIL_L)` in `session.start(room_options=...)`, suppressing background noise (traffic, fans, background clutter) before VAD and STT
+12. **Inbound noise cancellation** — Inbound audio is filtered via `room_options=RoomOptions(audio_input=AudioInputOptions(...))` with `auto_gain_control=False` and `pre_connect_audio=False` for minimal latency. Supports ai-coustics (`QUAIL_L` / `QUAIL_VF_S`) or native C++ Krisp NC (`NOISE_CANCELLATION_PROVIDER="krisp"`), toggleable via `NOISE_CANCELLATION_ENABLED`.
 
 See [[Architecture/Design Decisions.md]] for the full decision log.

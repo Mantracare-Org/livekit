@@ -14,9 +14,9 @@ The core real-time voice AI agent. Connects to LiveKit rooms, handles the full S
    - `gemini` → Gemini 2.5 Flash
    - `deepseek` → DeepSeek v4 Flash/Pro (via OpenAI-compatible API; 60s streaming read timeouts + `APIConnectOptions` hardening for TTFT)
 3. **TTS:** LiveKit native sonic-3 (no Cartesia dependency)
-4. **VAD:** Silero (`min_speech_duration=0.08s`, `min_silence_duration=0.25s`, `prefix_padding_duration=0.10s`)
+4. **VAD:** Silero (`min_speech_duration=0.05s`, `min_silence_duration=0.20s` default via `VAD_MIN_SILENCE_DURATION`, `prefix_padding_duration=0.50s`, `activation_threshold=0.45`)
 5. **Turn Detection:** LiveKit `inference.TurnDetector` (server defaults) with dynamic endpointing (`min_delay: 0.10s`, `max_delay: 0.80s`), VAD barge-in (`min_words: 5`, `min_duration: 0.15s`, `discard_audio_if_uninterruptible: True`, `resume_false_interruption: True`), and preemptive TTS generation
-6. **Noise Cancellation:** ai-coustics Quail (`EnhancerModel.QUAIL_L`) background noise suppression via `room_io.RoomOptions` / `AudioInputOptions`, filtering environmental background noise (traffic, fans, background clutter) on inbound audio before STT/VAD (configurable via `NOISE_CANCELLATION_ENABLED` and `AI_COUSTICS_MODEL`)
+6. **Noise Cancellation:** Configurable via `room_io.RoomOptions` / `AudioInputOptions` (`auto_gain_control=False`, `pre_connect_audio=False`). Supports ai-coustics (`NOISE_CANCELLATION_PROVIDER="ai_coustics"`, default model `QUAIL_VF_S` for ultra-low latency & 7.1% WER or `QUAIL_L`) or native C++ Krisp NC (`NOISE_CANCELLATION_PROVIDER="krisp"`, 0ms Python latency), toggleable via `NOISE_CANCELLATION_ENABLED`.
 
 ## Language Matching
 
