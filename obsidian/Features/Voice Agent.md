@@ -17,6 +17,7 @@ The core real-time voice AI agent. Connects to LiveKit rooms, handles the full S
 4. **VAD:** Silero (`min_speech_duration=0.05s`, `min_silence_duration=0.20s` default via `VAD_MIN_SILENCE_DURATION`, `prefix_padding_duration=0.50s`, `activation_threshold=0.45`)
 5. **Turn Detection:** LiveKit `inference.TurnDetector` (server defaults) with dynamic endpointing (`min_delay: 0.10s`, `max_delay: 0.80s`), VAD barge-in (`min_words: 5`, `min_duration: 0.15s`, `discard_audio_if_uninterruptible: True`, `resume_false_interruption: True`), and preemptive TTS generation
 6. **Noise Cancellation:** Configurable via `room_io.RoomOptions` / `AudioInputOptions` (`auto_gain_control=False`, `pre_connect_audio=False`). Supports ai-coustics (`NOISE_CANCELLATION_PROVIDER="ai_coustics"`, default model `QUAIL_VF_S` for ultra-low latency & 7.1% WER or `QUAIL_L`) or native C++ Krisp NC (`NOISE_CANCELLATION_PROVIDER="krisp"`, 0ms Python latency), toggleable via `NOISE_CANCELLATION_ENABLED`.
+7. **Zero Cold-Start Latency:** Parallel prewarming across all engines (`tts_engine.prewarm()` for WebSocket pool, `stt_engine.prewarm()`, `llm_engine.prewarm()`), zero-latency event-driven participant connection listener, and background precomputation of the initial greeting during room connection / ringing. Greeting plays immediately via `session.say(..., add_to_chat_ctx=True)` (~150ms playout) while priming the LLM KV cache with full system prompt and tool definitions for subsequent conversational turns.
 
 ## Language Matching
 

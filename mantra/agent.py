@@ -18,6 +18,7 @@ from livekit.agents import (
     JobContext,
     TurnHandlingOptions,
     cli,
+    llm,
     inference,
     room_io,
 )
@@ -393,31 +394,6 @@ async def entrypoint(ctx: JobContext):
     initial_instructions = apply_language_directive(initial_instructions, directive_block)
 
     logger.info(f"[LANG] Initialized language state: '{language}' (Voice: {voice_id} | Speed: {voice_speed})")
-
-    # Fire DeepSeek pre-warm NOW — initial_instructions is fully built.
-    # Passing the real system prompt warms DeepSeek's KV prefix cache so the
-    # first actual turn (e.g. user says "Yes") reuses the cached prefix
-    # instead of recomputing the entire context → eliminates 2-3s TTFT on turn 2.
-    if model_name == "deepseek" and client is not None:
-        deepseek_model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-        async def _prewarm_deepseek_with_ctx():
-            try:
-                logger.info(f"[DEEPSEEK] Pre-warming KV cache with system prompt ({deepseek_model})...")
-                pw_start = asyncio.get_event_loop().time()
-                await client.chat.completions.create(
-                    model=deepseek_model,
-                    messages=[
-                        {"role": "system", "content": initial_instructions},
-                        {"role": "user", "content": "hi"},
-                    ],
-                    max_tokens=1,
-                )
-                pw_dur = (asyncio.get_event_loop().time() - pw_start) * 1000
-                logger.info(f"[DEEPSEEK] KV cache pre-warmed with system prompt in {pw_dur:.1f}ms")
-            except Exception as pw_err:
-                logger.warning(f"[DEEPSEEK] Pre-warm (with ctx) non-fatal error: {pw_err}")
-        create_bg_task(_prewarm_deepseek_with_ctx())
-
     tts_engine = build_tts_engine(voice_id, language, voice_speed)
     cc.tts_engine = tts_engine
 
@@ -489,6 +465,104 @@ async def entrypoint(ctx: JobContext):
 
     cc.session = session
     cc.agent = agent
+
+    # ── Engine Pre-warming (Zero Cold-Start Latency) ──────────────────────
+    # Pre-connect TTS WebSocket pool, STT connection, and LLM DNS/TLS in parallel
+    if hasattr(tts_engine, "prewarm"):
+        try:
+            tts_engine.prewarm()
+            logger.info("[AUDIO] Pre-warmed TTS WebSocket connection pool")
+        except Exception as e:
+            logger.warning(f"[AUDIO] TTS prewarm non-fatal: {e}")
+
+    if hasattr(stt_engine, "prewarm"):
+        try:
+            stt_engine.prewarm()
+            logger.info("[AUDIO] Pre-warmed STT service")
+        except Exception as e:
+            logger.warning(f"[AUDIO] STT prewarm non-fatal: {e}")
+
+    if hasattr(llm_engine, "prewarm"):
+        try:
+            llm_engine.prewarm()
+            logger.info("[LLM] Pre-warmed LLM DNS/TLS connection")
+        except Exception as e:
+            logger.warning(f"[LLM] LLM prewarm non-fatal: {e}")
+
+    # ── Initial Greeting Pre-computation & DeepSeek KV Warmup ────────────
+    # Parse whether prompt instructs agent to wait for caller first
+    raw_prompt = ""
+    if isinstance(_effective_call_metadata, dict):
+        raw_prompt = _effective_call_metadata.get("prompt") or ""
+    elif ctx.job.metadata:
+        try:
+            raw_prompt = json.loads(ctx.job.metadata).get("prompt") or ""
+        except Exception:
+            pass
+
+    prompt_lower = (raw_prompt or "").lower()
+    should_wait_for_user = (
+        not is_inbound
+        and any(
+            phrase in prompt_lower
+            for phrase in [
+                "wait for the caller",
+                "wait for caller",
+                "do not speak immediately",
+                "wait for the user",
+                "wait for user",
+                "do not introduce yourself before the caller speaks",
+                "do not introduce yourself before the user speaks",
+            ]
+        )
+    )
+
+    greeting_task: asyncio.Task | None = None
+    if not should_wait_for_user:
+        async def _precompute_initial_greeting() -> str | None:
+            try:
+                g_start = asyncio.get_event_loop().time()
+                chat_ctx = llm.ChatContext()
+                chat_ctx.add_message(role="system", content=initial_instructions)
+                prompt_text = (
+                    "Initiate the conversation according to your system prompt. Introduce yourself and ask how you can help."
+                    if is_inbound
+                    else f"Greet the user named {client_name} and follow the opening script in your instructions."
+                )
+                chat_ctx.add_message(role="user", content=prompt_text)
+                stream = llm_engine.chat(chat_ctx=chat_ctx, tools=agent.tools)
+                tokens = []
+                async for chunk in stream:
+                    delta = chunk.delta
+                    if delta and delta.content:
+                        tokens.append(delta.content)
+                greeting_text = "".join(tokens).strip()
+                greeting_text = greeting_text.replace(". ... ", " — ")
+                dur = (asyncio.get_event_loop().time() - g_start) * 1000
+                logger.info(f"[GREETING] Precomputed initial greeting in {dur:.1f}ms: '{greeting_text}'")
+                return greeting_text
+            except Exception as e:
+                logger.warning(f"[GREETING] Background precompute non-fatal error: {e}")
+                return None
+
+        greeting_task = asyncio.create_task(_precompute_initial_greeting())
+    elif model_name == "deepseek":
+        # Waiting for caller: prime DeepSeek KV cache with full system prompt + tools
+        async def _prewarm_deepseek_with_tools():
+            try:
+                pw_start = asyncio.get_event_loop().time()
+                chat_ctx = llm.ChatContext()
+                chat_ctx.add_message(role="system", content=initial_instructions)
+                chat_ctx.add_message(role="user", content="hi")
+                stream = llm_engine.chat(chat_ctx=chat_ctx, tools=agent.tools)
+                async for _ in stream:
+                    break
+                dur = (asyncio.get_event_loop().time() - pw_start) * 1000
+                logger.info(f"[DEEPSEEK] KV cache pre-warmed with tools in {dur:.1f}ms")
+            except Exception as pw_err:
+                logger.warning(f"[DEEPSEEK] Pre-warm (with tools) non-fatal error: {pw_err}")
+
+        create_bg_task(_prewarm_deepseek_with_tools())
 
     # ── Transcript logging & dynamic language switching task ─────────────
     transcript_task = asyncio.create_task(transcript_logger(cc))
@@ -563,22 +637,26 @@ async def entrypoint(ctx: JobContext):
                     logger.info(f"[DIAG] Inbound caller phone captured: {call_state['caller_phone_number']}")
                     break
 
-        if ctx.room.name.startswith("test_"):
+        if ctx.room.name.startswith("test_") or list(ctx.room.remote_participants.values()):
             logger.info(
-                "[DIAG] Test room detected. Skipping wait for remote participant to initialize synthesis."
+                "[DIAG] Remote participant already present or test room detected. Initializing synthesis immediately."
             )
             call_state["user_joined"] = True
         else:
             logger.info("[DIAG] Waiting for remote participant to join...")
             wait_start = asyncio.get_event_loop().time()
-            poll_count = 0
-            while not list(ctx.room.remote_participants.values()):
-                await asyncio.sleep(0.5)
-                poll_count += 1
-                if poll_count % 10 == 0:
-                    elapsed = asyncio.get_event_loop().time() - wait_start
-                    logger.info(f"[DIAG] Still waiting for remote participant... elapsed={elapsed:.1f}s room_state={ctx.room.connection_state}")
-                if asyncio.get_event_loop().time() - wait_start > 60.0:
+            participant_joined_event = asyncio.Event()
+
+            def _on_p_connected(p: rtc.RemoteParticipant):
+                logger.info(f"[DIAG] Remote participant joined event: {p.identity}")
+                participant_joined_event.set()
+
+            ctx.room.on("participant_connected", _on_p_connected)
+
+            if not list(ctx.room.remote_participants.values()):
+                try:
+                    await asyncio.wait_for(participant_joined_event.wait(), timeout=60.0)
+                except asyncio.TimeoutError:
                     logger.warning(
                         "[DIAG] Remote participant did not join within 60 seconds (likely no answer). Disconnecting."
                     )
@@ -699,52 +777,37 @@ async def entrypoint(ctx: JobContext):
 
             create_bg_task(_run_amd_background())
 
-        # Give tiny 0.05s delay for WebRTC track binding before requesting initial greeting
+        # Give tiny 0.05s delay for WebRTC track binding before delivering initial greeting
         await asyncio.sleep(0.05)
-
-        # Check if the payload prompt explicitly instructs the agent to wait for caller first
-        raw_prompt = ""
-        if isinstance(_effective_call_metadata, dict):
-            raw_prompt = _effective_call_metadata.get("prompt") or ""
-        elif ctx.job.metadata:
-            try:
-                raw_prompt = json.loads(ctx.job.metadata).get("prompt") or ""
-            except Exception:
-                pass
-
-        prompt_lower = (raw_prompt or "").lower()
-        should_wait_for_user = (
-            not is_inbound
-            and any(
-                phrase in prompt_lower
-                for phrase in [
-                    "wait for the caller",
-                    "wait for caller",
-                    "do not speak immediately",
-                    "wait for the user",
-                    "wait for user",
-                    "do not introduce yourself before the caller speaks",
-                    "do not introduce yourself before the user speaks",
-                ]
-            )
-        )
 
         if should_wait_for_user:
             logger.info("[DIAG] Payload prompt instructs agent to wait for caller first. Listening silently.")
         else:
-            logger.info(f"[DIAG] Generating explicit initial greeting for {client_name} (inbound={is_inbound})...")
-            try:
-                if is_inbound:
-                    session.generate_reply(
-                        instructions="Initiate the conversation according to your system prompt. Introduce yourself and ask how you can help."
-                    )
-                else:
-                    session.generate_reply(
-                        instructions=f"Greet the user named {client_name} and follow the opening script in your instructions."
-                    )
-                logger.info("[DIAG] Greeting generation requested immediately upon connect.")
-            except RuntimeError as e:
-                logger.warning(f"[DIAG] Could not generate greeting (session may be closed): {e}")
+            logger.info(f"[DIAG] Delivering initial greeting for {client_name} (inbound={is_inbound})...")
+            greeting_delivered = False
+            if greeting_task is not None:
+                try:
+                    precomputed_text = await asyncio.wait_for(asyncio.shield(greeting_task), timeout=1.5)
+                    if precomputed_text:
+                        logger.info(f"[DIAG] Playing precomputed initial greeting (zero LLM wait): '{precomputed_text}'")
+                        session.say(precomputed_text, add_to_chat_ctx=True)
+                        greeting_delivered = True
+                except Exception as e:
+                    logger.warning(f"[DIAG] Precomputed greeting fallback: {e}")
+
+            if not greeting_delivered:
+                try:
+                    if is_inbound:
+                        session.generate_reply(
+                            instructions="Initiate the conversation according to your system prompt. Introduce yourself and ask how you can help."
+                        )
+                    else:
+                        session.generate_reply(
+                            instructions=f"Greet the user named {client_name} and follow the opening script in your instructions."
+                        )
+                    logger.info("[DIAG] Greeting generation requested via generate_reply fallback.")
+                except RuntimeError as e:
+                    logger.warning(f"[DIAG] Could not generate greeting (session may be closed): {e}")
 
         logger.info(f"[DIAG] Entering main loop — blocking until room disconnects. connection_state={ctx.room.connection_state}")
         # Block until the room connection drops or the session closes

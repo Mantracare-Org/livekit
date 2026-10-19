@@ -2,6 +2,14 @@
 
 ## 2026-10-19
 
+### Zero Cold-Start Latency & Precomputed Initial Greeting
+
+- **perf & latency:** Eliminated cold-start latency causing a 2–3s delay on the agent's initial response.
+- **perf & prewarm:** Added parallel background pre-warming across all engines: `tts_engine.prewarm()` pre-establishes the WebSocket connection pool for Cartesia / LiveKit inference TTS; `stt_engine.prewarm()` connects Deepgram STT; `llm_engine.prewarm()` resolves DNS and completes the TLS handshake to DeepSeek/OpenAI.
+- **perf & participant detection:** Replaced the 500ms participant polling sleep loop (`while not remote_participants: sleep(0.5)`) with an instant `ctx.room.on("participant_connected")` `asyncio.Event` listener, eliminating up to 500ms of dead wait on caller answer.
+- **perf & greeting:** Implemented background precomputation of the initial greeting via `llm_engine.chat()` while the room connects and phone rings. When the caller answers, the greeting plays out immediately via `session.say(precomputed_text, add_to_chat_ctx=True)` (~150ms playout), skipping LLM generation wait entirely while priming the LLM KV cache with full system prompt instructions and tool definitions for subsequent turns.
+- **Files:** `mantra/agent.py`, `obsidian/Features/Voice Agent.md`, `obsidian/Development/Current Sprint.md`, `obsidian/Development/Changelog.md`.
+
 ### Noise Cancellation Latency Optimization & Turnaround Calibration
 
 - **perf & latency:** Diagnosed turnaround latency and eliminated buffer delays introduced by default audio input options. Disabled WebRTC APM AGC (`auto_gain_control=False`) and pre-connect buffering (`pre_connect_audio=False`) in `AudioInputOptions`.
