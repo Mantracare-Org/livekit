@@ -15,7 +15,8 @@ The core real-time voice AI agent. Connects to LiveKit rooms, handles the full S
    - `deepseek` → DeepSeek v4 Flash/Pro (via OpenAI-compatible API; 60s streaming read timeouts + `APIConnectOptions` hardening for TTFT)
 3. **TTS:** LiveKit native sonic-3 (no Cartesia dependency)
 4. **VAD:** Silero (`min_speech_duration=0.08s`, `min_silence_duration=0.25s`, `prefix_padding_duration=0.10s`)
-5. **Turn Detection:** LiveKit `inference.TurnDetector` (server defaults) with dynamic endpointing (`min_delay: 0.10s`, `max_delay: 0.80s`), VAD barge-in (`min_words: 1`, `min_duration: 0.15s`, `discard_audio_if_uninterruptible: True`, `resume_false_interruption: True`), and preemptive TTS generation
+5. **Turn Detection:** LiveKit `inference.TurnDetector` (server defaults) with dynamic endpointing (`min_delay: 0.10s`, `max_delay: 0.80s`), VAD barge-in (`min_words: 5`, `min_duration: 0.15s`, `discard_audio_if_uninterruptible: True`, `resume_false_interruption: True`), and preemptive TTS generation
+6. **Noise Cancellation:** ai-coustics Quail (`EnhancerModel.QUAIL_L`) background noise suppression via `room_io.RoomOptions` / `AudioInputOptions`, filtering environmental background noise (traffic, fans, background clutter) on inbound audio before STT/VAD (configurable via `NOISE_CANCELLATION_ENABLED` and `AI_COUSTICS_MODEL`)
 
 ## Language Matching
 

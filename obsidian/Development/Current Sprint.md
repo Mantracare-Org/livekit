@@ -1,8 +1,12 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)  
-> **Last Updated:** 2026-10-12  
-> **Status:** Active maintenance, Prompt Forwarding & Bidirectional JEV Stage Evaluation, End Call Graceful Disconnect & Turnaround Latency Optimization
+> **Last Updated:** 2026-10-19  
+> **Status:** Active maintenance, ai-coustics Inbound Noise Cancellation, VAD Strictness Reduction & Interruption Minimum Words Threshold
+
+- [x] **ai-coustics Quail (QUAIL_L) Inbound Noise Cancellation (2026-10-19):** Integrated LiveKit Cloud's ai-coustics audio enhancement plugin (`livekit-plugins-ai-coustics`) using `EnhancerModel.QUAIL_L` background noise suppression. Configured `room_io.RoomOptions(audio_input=room_io.AudioInputOptions(noise_cancellation=...))` in `mantra/agent.py` to filter environmental acoustic noise (traffic, fans, background chatter) on inbound caller audio streams before STT and VAD processing. Utilized participant selector logic to apply enhancement to human callers while excluding agent audio. Supported runtime configuration via `NOISE_CANCELLATION_ENABLED` (defaults to `"1"`) and `AI_COUSTICS_MODEL` (defaults to `"QUAIL_L"`). Files: `mantra/agent.py`, `obsidian/Features/Voice Agent.md`, `obsidian/Architecture/Overview.md`, `obsidian/Development/Current Sprint.md`, `obsidian/Development/Changelog.md`.
+
+- [x] **VAD Strictness Reduction & Min 5 Words Interruption Threshold (2026-10-19):** Reduced the strictness of Voice Activity Detection (VAD) interruption by updating `TurnHandlingOptions.interruption["min_words"]` in `mantra/agent.py` from 1 to 5 (with `VAD_MIN_WORDS` environment variable override support, defaulting to 5). Callers saying short interjections, fillers ("uh-huh", "yeah", "ok"), or background sounds while the agent is speaking no longer trigger premature barge-in or cut off agent playback; VAD interruption only activates after at least 5 words are spoken. Files: `mantra/agent.py`, `obsidian/Features/Voice Agent.md`, `obsidian/Architecture/Overview.md`, `obsidian/Development/Current Sprint.md`, `obsidian/Development/Changelog.md`.
 
 - [x] **Prompt Forwarding & Bidirectional JEV Stage & Appointment Evaluation (2026-10-12):** Forwarded `prompt` from call payload in `mantra/core/finalize.py` to `/v1/webhooks/n8n/summary`. In MantraAssist API (`apps/api`), enabled `call-summary.worker.ts` context injection (Process DNA + prompt + stage.prompt fallback), bidirectional inbound/outbound appointment extraction and Postgres booking, direct `new_stage_id` sync in `/summary` webhook, and fixed BullMQ retry job deduplication. Files: `mantra/core/finalize.py`, `assist-monorepo/packages/types/src/schemas/n8n.schema.ts`, `assist-monorepo/apps/api/src/modules/webhooks/n8n-webhook/n8n.service.ts`, `assist-monorepo/apps/api/src/jobs/workers/call-summary.worker.ts`, `assist-monorepo/apps/api/src/jobs/queues/call-summary.queue.ts`.
 

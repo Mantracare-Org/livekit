@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-10-19
+
+### ai-coustics Quail (QUAIL_L) Inbound Noise Cancellation
+
+- **feat & audio:** Integrated LiveKit Cloud's machine-optimized `ai-coustics` audio enhancement plugin (`livekit-plugins-ai-coustics`) to filter environmental background noise (traffic, fans, ambient noise) from inbound caller audio before STT transcription and VAD turn detection.
+- **arch:** Configured `room_io.RoomOptions(audio_input=room_io.AudioInputOptions(noise_cancellation=...))` in `mantra/agent.py` applied during `session.start()`. Added participant selector to filter human callers while bypassing agent tracks.
+- **config:** Added environment variable overrides: `NOISE_CANCELLATION_ENABLED` (default `"1"`) and `AI_COUSTICS_MODEL` (default `"QUAIL_L"`).
+- **Files:** `mantra/agent.py`, `obsidian/Features/Voice Agent.md`, `obsidian/Architecture/Overview.md`, `obsidian/Development/Current Sprint.md`, `obsidian/Development/Changelog.md`.
+
+### VAD Strictness Reduction & Min 5 Words Interruption Threshold
+
+- **perf & vad:** Reduced strictness of VAD barge-in interruption by setting `interruption["min_words"]` in `mantra/agent.py` to `5` (with `VAD_MIN_WORDS` env var support, defaulting to 5). Previously set to 1 word, causing the agent to interrupt immediately on ambient noise, brief listener affirmations ("yeah", "okay", "haan"), or single-word coughs/sighs while speaking. The agent now only yields and interrupts speech playback when the caller articulates at least 5 words. Normal turn detection when the agent is silent/listening remains unaffected.
+- **Files:** `mantra/agent.py`, `obsidian/Features/Voice Agent.md`, `obsidian/Architecture/Overview.md`, `obsidian/Development/Current Sprint.md`, `obsidian/Development/Changelog.md`.
+
 ## 2026-10-12
 
 ### Prompt Forwarding & Bidirectional JEV Stage & Appointment Evaluation

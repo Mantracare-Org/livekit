@@ -19,8 +19,9 @@ from livekit.agents import (
     TurnHandlingOptions,
     cli,
     inference,
+    room_io,
 )
-from livekit.plugins import silero
+from livekit.plugins import silero, ai_coustics
 
 # ── Suppress OpenTelemetry 429 errors ──────────────────────────────────
 os.environ.setdefault("OTEL_METRICS_EXPORTER", "none")
@@ -440,7 +441,7 @@ async def entrypoint(ctx: JobContext):
                 "mode": "vad",
                 "enabled": True,
                 "discard_audio_if_uninterruptible": True,
-                "min_words": 1,
+                "min_words": int(os.getenv("VAD_MIN_WORDS", "5")),
                 "min_duration": 0.15,
                 "resume_false_interruption": True,
                 "false_interruption_timeout": 1.0,
@@ -496,7 +497,27 @@ async def entrypoint(ctx: JobContext):
 
     try:
         logger.info(f"[DIAG] Starting agent session...")
-        await session.start(agent=agent, room=ctx.room)
+        room_options = None
+        if os.getenv("NOISE_CANCELLATION_ENABLED", "1") == "1":
+            try:
+                model_name = os.getenv("AI_COUSTICS_MODEL", "QUAIL_L").upper()
+                enhancer_model = getattr(ai_coustics.EnhancerModel, model_name, ai_coustics.EnhancerModel.QUAIL_L)
+                room_options = room_io.RoomOptions(
+                    audio_input=room_io.AudioInputOptions(
+                        noise_cancellation=lambda params: None
+                        if getattr(params.participant, "kind", None) == rtc.ParticipantKind.PARTICIPANT_KIND_AGENT
+                        else ai_coustics.audio_enhancement(model=enhancer_model),
+                    ),
+                )
+                logger.info(f"[AUDIO] ai-coustics noise cancellation enabled (model={enhancer_model.name})")
+            except Exception as nc_err:
+                logger.warning(f"[AUDIO] Failed to configure ai-coustics noise cancellation: {nc_err}")
+
+        start_kwargs = {"agent": agent, "room": ctx.room}
+        if room_options is not None:
+            start_kwargs["room_options"] = room_options
+
+        await session.start(**start_kwargs)
         logger.info(f"[DIAG] Session started successfully")
         limiter_task = asyncio.create_task(call_limiter(cc))
         inactivity_task = asyncio.create_task(inactivity_monitor(cc))
