@@ -979,6 +979,74 @@ class SessionRecorder:
             return ""
 
     @staticmethod
+    async def extract_appointment_metadata(llm_engine: llm.LLM, history: list) -> Optional[dict]:
+        """Extract appointment/booking metadata if an appointment was discussed or booked."""
+        transcript_lines = []
+        for msg in history:
+            role = msg.role.name if hasattr(msg.role, "name") else str(msg.role)
+            content = (
+                " ".join([str(c) for c in msg.content])
+                if isinstance(msg.content, list)
+                else msg.content
+            )
+            if content and not str(content).startswith("[System:"):
+                role_label = "Assistant" if role.lower() == "assistant" else "User"
+                transcript_lines.append(f"{role_label}: {content}")
+        transcript_text = "\n".join(transcript_lines)
+
+        current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        prompt = f"""You are an expert conversation analyst. Analyze this call transcript and determine if an appointment, visit, consultation, or demo was requested, discussed, or scheduled.
+
+Current Date and Time: {current_time_str}
+
+--- TRANSCRIPT ---
+{transcript_text}
+
+If an appointment, visit, consultation, or demo was requested, discussed, or booked, return ONLY a valid JSON object with:
+{{
+  "provider_user_id": integer or null,
+  "provider_name": "string or null (doctor/provider name if mentioned)",
+  "product_service": "string or null (treatment, service, or department)",
+  "location": "string or null (branch, center, or clinic location)",
+  "preferred_datetime": "string or null (date and time in format YYYY-MM-DD HH:MM:SS or ISO format)",
+  "appointment_title": "string or null",
+  "appointment_notes": "string or null"
+}}
+
+If NO appointment, visit, consultation, or demo was requested, discussed, or booked, return null.
+Provide ONLY the JSON object or null. Do not include markdown code block syntax."""
+
+        try:
+            messages = [
+                llm.ChatMessage(role="system", content=["You are a helpful assistant."]),
+                llm.ChatMessage(role="user", content=[prompt]),
+            ]
+            stream = llm_engine.chat(
+                chat_ctx=llm.ChatContext(items=messages),
+                conn_options=APIConnectOptions(timeout=15.0, max_retry=2, retry_interval=1.0),
+            )
+            response = await asyncio.wait_for(stream.collect(), timeout=15.0)
+            text = response.text.strip()
+            if text.startswith("```"):
+                open_idx = text.find("\n")
+                end_idx = text.rfind("```")
+                if open_idx != -1:
+                    text = text[open_idx + 1:]
+                if end_idx != -1:
+                    text = text[:end_idx]
+                text = text.strip()
+            if not text or text.lower() in ("null", "none", "{}"):
+                return None
+            res = json.loads(text)
+            if isinstance(res, dict) and any(res.values()):
+                return res
+            return None
+        except Exception as e:
+            logger.warning(f"extract_appointment_metadata failed: {e}")
+            return None
+
+    @staticmethod
     async def analyze_call(
         llm_engine: llm.LLM,
         history: list,

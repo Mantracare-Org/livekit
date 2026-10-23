@@ -26,7 +26,7 @@ In-memory audio recording system and structured summary generator:
 ## Webhook Delivery & Payloads
 
 - HMAC-SHA256 signed (`x-signature` header) with 3 retries and replay protection (`x-timestamp`)
-- **`CALL_DATA_INBOUND_UPDATE`**: `org_id` (int), `call_recording`, `client_name`, `client_phone_number`, `call_duration`, `call_transcript`, `ai_summary`, `prompt`, `called_on`, `meta_data`
-- **`CALL_DATA_UPDATE`**: `client_id`, `call_id`, `call_transcript`, `recording_url`, `call_duration_seconds`, `called_on`, `ai_call_id`, `process_id`, `stage_id`, `ai_summary`, `prompt`
+- **`CALL_DATA_INBOUND_UPDATE`**: `org_id` (int), `call_recording`, `client_name`, `client_phone_number`, `call_duration`, `call_transcript`, `ai_summary`, `prompt`, `called_on`, `meta_data` (including `appointment_metadata`), `appointment_metadata`
+- **`CALL_DATA_UPDATE`**: `client_id`, `call_id`, `call_transcript`, `recording_url`, `call_duration_seconds`, `called_on`, `ai_call_id`, `process_id`, `stage_id`, `ai_summary`, `prompt`, `metadata` (including `appointment_metadata`), `appointment_metadata`
 - **`CALL_RETRY`**: `call_id`, `called_on`, `call_status`, `ai_call_id`
-- **Lightweight Payload guarantee**: All null/empty decision fields are omitted from connected call payloads so decision processing (stage transitions, appointment extraction) is strictly handled downstream by JEV AI Pro in MantraAssist API.
+- **Payload contract**: In addition to conversational summary and audio recording, structured `appointment_metadata` (provider_user_id, provider_name, product_service, location, preferred_datetime, appointment_title, appointment_notes) captured via tools during the call or extracted concurrently via `SessionRecorder.extract_appointment_metadata()` is delivered within the metadata dictionary and as a dedicated field under `data`. Decision fields like `new_stage_id` and `call_status` remain delegated downstream to JEV AI Pro in MantraAssist API.

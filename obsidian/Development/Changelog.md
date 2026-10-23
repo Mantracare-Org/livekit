@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-23
+
+### Post-Call `appointment_metadata` Payload Field Re-enablement
+
+- **feat & webhooks:** Re-enabled `appointment_metadata` payload field delivery in final post-call webhooks to MantraAssist (MA) across both `CALL_DATA_INBOUND_UPDATE` and `CALL_DATA_UPDATE`.
+- **tool state capture:** Updated `check_doctor_availability` in `mantra/core/assistant_functions.py` to persist `appointment_date` and `doctor_name` into `call_state` alongside `provider_user_id`, `selected_product_service`, and `selected_location`.
+- **concurrent extraction:** Added `SessionRecorder.extract_appointment_metadata()` in `mantra/utils.py`, executed concurrently with `SessionRecorder.generate_summary()` via `asyncio.gather` within post-call finalization so appointment details discussed during the call are extracted with 0 additional latency.
+- **payload delivery:** Injected `appointment_metadata` into `meta_data` (for inbound), `metadata` (for outbound), and as a dedicated field `webhook_payload["data"]["appointment_metadata"]`.
+- **Files:** `mantra/core/assistant_functions.py`, `mantra/utils.py`, `mantra/core/finalize.py`, `obsidian/Features/Post-Call Processing.md`, `obsidian/Development/Current Sprint.md`, `obsidian/Development/Changelog.md`.
+
 ## 2026-10-19
 
 ### Zero Cold-Start Latency & Precomputed Initial Greeting

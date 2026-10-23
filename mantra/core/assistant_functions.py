@@ -610,6 +610,10 @@ class AssistantFunctions:
                 self.call_state["selected_product_service"] = requested_product
             if selected_loc:
                 self.call_state["selected_location"] = selected_loc
+            if date:
+                self.call_state["appointment_date"] = str(date).strip()
+            if doctor_name:
+                self.call_state["doctor_name"] = str(doctor_name).strip()
 
         logger.info(f"Agent requesting doctor availability via MCP: org_id={org_id}, date={date}, doctor={doctor_name}, product={product_service}, location={selected_loc}, phone={caller_phone}")
 

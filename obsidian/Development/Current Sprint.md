@@ -1,8 +1,10 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)  
-> **Last Updated:** 2026-10-19  
-> **Status:** Active maintenance, Zero Cold-Start Latency & Precomputed Greeting, Turnaround Latency Optimization, ai-coustics Inbound Noise Cancellation, VAD Strictness Reduction
+> **Last Updated:** 2026-10-23  
+> **Status:** Active maintenance, Post-Call Appointment Metadata Re-enablement, Zero Cold-Start Latency & Precomputed Greeting, Turnaround Latency Optimization
+
+- [x] **Post-Call `appointment_metadata` Payload Field Re-enablement (2026-10-23):** Re-enabled `appointment_metadata` delivery in post-call webhook payloads (`CALL_DATA_INBOUND_UPDATE` and `CALL_DATA_UPDATE`) to MantraAssist (MA). Structured appointment metadata is captured directly during the call via `check_doctor_availability` (`date`, `doctor_name`, `provider_user_id`, `selected_product_service`, `selected_location`) and concurrently extracted via `SessionRecorder.extract_appointment_metadata()` using `post_call_llm` alongside `SessionRecorder.generate_summary()`. Populated `appointment_metadata` within `meta_data` (for inbound), `metadata` (for outbound), and as a dedicated root-level key under `data["appointment_metadata"]`. Files: `mantra/core/assistant_functions.py`, `mantra/utils.py`, `mantra/core/finalize.py`, `obsidian/Features/Post-Call Processing.md`, `obsidian/Development/Current Sprint.md`, `obsidian/Development/Changelog.md`.
 
 - [x] **Zero Cold-Start Latency & Precomputed Initial Greeting (2026-10-19):** Eliminated the 2–3s delay on the agent's very first response. Pre-warmed TTS WebSocket connection pool (`tts_engine.prewarm()`), STT service (`stt_engine.prewarm()`), and LLM DNS/TLS (`llm_engine.prewarm()`) in parallel upon engine initialization. Replaced the 500ms participant join polling sleep loop with an instant `ctx.room.on("participant_connected")` `asyncio.Event` listener. Added background precomputation of the initial greeting via `llm_engine.chat()` while the room connects and phone rings, playing it immediately via `session.say(..., add_to_chat_ctx=True)` (~150ms playout) while priming the LLM KV cache with full system instructions and tool definitions for subsequent conversational turns. Files: `mantra/agent.py`, `obsidian/Features/Voice Agent.md`, `obsidian/Development/Current Sprint.md`, `obsidian/Development/Changelog.md`.
 

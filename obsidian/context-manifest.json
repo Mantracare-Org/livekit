@@ -1,0 +1,24 @@
+{
+  "updatedAt": "2026-10-23T05:44:15.377Z",
+  "vaultName": "obsidian",
+  "stats": {
+    "memories": 0,
+    "skills": 1,
+    "projects": 0,
+    "sessions": 2
+  },
+  "skills": [
+    {
+      "name": "antigravity-obsidian",
+      "scope": "global",
+      "description": "Obsidian for Antigravity — Always-active Technical Second Brain, Persistent Memory & Hermes Closed Loop. Active across all development tasks, debugging sessions",
+      "relPath": "Antigravity/Skills/antigravity-obsidian.md"
+    }
+  ],
+  "memories": [],
+  "projects": [],
+  "sessions": [
+    "2026-10-23 - lkt",
+    "2026-10-23 - support-bot"
+  ]
+}

@@ -200,14 +200,69 @@ async def finalize(cc: CallContext, history_snapshot: list):
             logger.info("[DIAG] finalize(): Call connected. Generating detailed conversational summary of events and outcome...")
             if post_call_llm and history_snapshot:
                 try:
-                    summary_text = await asyncio.wait_for(
-                        SessionRecorder.generate_summary(post_call_llm, list(history_snapshot)),
-                        timeout=8.0
+                    summary_task = asyncio.create_task(
+                        SessionRecorder.generate_summary(post_call_llm, list(history_snapshot))
                     )
-                    logger.info(f"[DIAG] finalize(): Summary generated successfully: {summary_text[:120]}...")
+                    appt_task = asyncio.create_task(
+                        SessionRecorder.extract_appointment_metadata(post_call_llm, list(history_snapshot))
+                    )
+                    results = await asyncio.wait_for(
+                        asyncio.gather(summary_task, appt_task, return_exceptions=True),
+                        timeout=10.0
+                    )
+                    if isinstance(results[0], str) and results[0].strip():
+                        summary_text = results[0]
+                        logger.info(f"[DIAG] finalize(): Summary generated successfully: {summary_text[:120]}...")
+                    if isinstance(results[1], dict):
+                        appointment_metadata = results[1]
+                        logger.info(f"[DIAG] finalize(): Extracted appointment_metadata from LLM: {appointment_metadata}")
                 except Exception as e:
-                    logger.warning(f"[DIAG] finalize(): generate_summary failed or timed out: {e}")
+                    logger.warning(f"[DIAG] finalize(): generate_summary or extract_appointment_metadata failed: {e}")
                     summary_text = None
+
+        # Check call_payload or call_state fallback if appointment_metadata was not extracted
+        if not appointment_metadata and isinstance(call_payload.get("appointment_metadata"), dict):
+            appointment_metadata = dict(call_payload["appointment_metadata"])
+
+        if not appointment_metadata and isinstance(cc.call_state.get("appointment_metadata"), dict):
+            appointment_metadata = dict(cc.call_state["appointment_metadata"])
+
+        if (
+            not appointment_metadata
+            and (
+                cc.call_state.get("provider_user_id")
+                or cc.call_state.get("selected_product_service")
+                or cc.call_state.get("selected_location")
+                or cc.call_state.get("doctor_name")
+                or cc.call_state.get("appointment_date")
+            )
+        ):
+            appointment_metadata = {
+                "provider_user_id": _as_int(cc.call_state.get("provider_user_id")),
+                "provider_name": cc.call_state.get("doctor_name") or cc.call_state.get("provider_name"),
+                "product_service": cc.call_state.get("selected_product_service"),
+                "location": cc.call_state.get("selected_location"),
+                "preferred_datetime": normalize_datetime(cc.call_state.get("appointment_date") or cc.call_state.get("preferred_datetime")),
+                "appointment_title": cc.call_state.get("appointment_title") or "Scheduled Appointment",
+                "appointment_notes": cc.call_state.get("appointment_notes") or "Appointment requested during call.",
+            }
+
+        if appointment_metadata:
+            appointment_metadata.pop("preferred_end_datetime", None)
+            if appointment_metadata.get("preferred_datetime"):
+                appointment_metadata["preferred_datetime"] = normalize_datetime(appointment_metadata["preferred_datetime"])
+            if appointment_metadata.get("provider_user_id") is not None:
+                appointment_metadata["provider_user_id"] = _as_int(appointment_metadata["provider_user_id"])
+            elif cc.call_state.get("provider_user_id") is not None:
+                appointment_metadata["provider_user_id"] = _as_int(cc.call_state.get("provider_user_id"))
+                logger.info(f"[DIAG] Auto-injected provider_user_id={appointment_metadata['provider_user_id']} into appointment_metadata from call_state")
+
+            if not appointment_metadata.get("provider_name") and cc.call_state.get("doctor_name"):
+                appointment_metadata["provider_name"] = cc.call_state["doctor_name"]
+            if not appointment_metadata.get("product_service") and cc.call_state.get("selected_product_service"):
+                appointment_metadata["product_service"] = cc.call_state["selected_product_service"]
+            if not appointment_metadata.get("location") and cc.call_state.get("selected_location"):
+                appointment_metadata["location"] = cc.call_state["selected_location"]
 
         # Final fallback guarantee for summary_text if missing or empty
         if not summary_text or not str(summary_text).strip():
@@ -291,9 +346,12 @@ async def finalize(cc: CallContext, history_snapshot: list):
                     "provider": (call_payload.get("metadata", {}) or {}).get("provider", ""),
                     "kb_id": primary_kb_id,
                     "kb_ids": used_kb_ids_list,
+                    "appointment_metadata": appointment_metadata,
                 },
             }
         }
+        if appointment_metadata:
+            webhook_payload["data"]["appointment_metadata"] = appointment_metadata
     else:
         event_name = "CALL_RETRY" if call_status in ["No Answer", "Busy", "Failed"] else "CALL_DATA_UPDATE"
         if event_name == "CALL_RETRY":
@@ -321,8 +379,14 @@ async def finalize(cc: CallContext, history_snapshot: list):
                     "stage_id": payload_stage_id,
                     "ai_summary": summary_text,
                     "prompt": call_payload.get("prompt"),
+                    "metadata": {
+                        **(call_payload.get("metadata", {}) or {}),
+                        "appointment_metadata": appointment_metadata,
+                    },
                 },
             }
+            if appointment_metadata:
+                webhook_payload["data"]["appointment_metadata"] = appointment_metadata
 
     # Prominently log the complete generated webhook payload for easy developer copying
     payload_json_str = json.dumps(webhook_payload, indent=2)

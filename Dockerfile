@@ -4,6 +4,7 @@ ARG PYTHON_VERSION=3.12
 FROM ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-bookworm-slim AS base
 
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONWARNINGS=ignore::SyntaxWarning:pydub.utils"
 WORKDIR /app
 
 # --- Build stage ---
