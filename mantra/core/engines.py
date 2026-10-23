@@ -247,7 +247,7 @@ def build_stt_engine(payload: dict | None, call_state: dict, is_inbound: bool, l
         "smart_format": True,
         "punctuate": True,
         "numerals": True,
-        "endpointing_ms": 250,
+        "endpointing_ms": int(os.getenv("DEEPGRAM_ENDPOINTING_MS", "150")),
         "no_delay": True,
     }
     if dynamic_keyterms:

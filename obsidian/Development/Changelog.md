@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-10-19
+
+### Zero Cold-Start Latency & Precomputed Initial Greeting
+
+- **perf & latency:** Eliminated cold-start latency causing a 2–3s delay on the agent's initial response.
+- **perf & prewarm:** Added parallel background pre-warming across all engines: `tts_engine.prewarm()` pre-establishes the WebSocket connection pool for Cartesia / LiveKit inference TTS; `stt_engine.prewarm()` connects Deepgram STT; `llm_engine.prewarm()` resolves DNS and completes the TLS handshake to DeepSeek/OpenAI.
+- **perf & participant detection:** Replaced the 500ms participant polling sleep loop (`while not remote_participants: sleep(0.5)`) with an instant `ctx.room.on("participant_connected")` `asyncio.Event` listener, eliminating up to 500ms of dead wait on caller answer.
+- **perf & greeting:** Implemented background precomputation of the initial greeting via `llm_engine.chat()` while the room connects and phone rings. When the caller answers, the greeting plays out immediately via `session.say(precomputed_text, add_to_chat_ctx=True)` (~150ms playout), skipping LLM generation wait entirely while priming the LLM KV cache with full system prompt instructions and tool definitions for subsequent turns.
+- **Files:** `mantra/agent.py`, `obsidian/Features/Voice Agent.md`, `obsidian/Development/Current Sprint.md`, `obsidian/Development/Changelog.md`.
+
+### Noise Cancellation Latency Optimization & Turnaround Calibration
+
+- **perf & latency:** Diagnosed turnaround latency and eliminated buffer delays introduced by default audio input options. Disabled WebRTC APM AGC (`auto_gain_control=False`) and pre-connect buffering (`pre_connect_audio=False`) in `AudioInputOptions`.
+- **perf & audio:** Added multi-provider noise cancellation support in `mantra/agent.py` (`NOISE_CANCELLATION_PROVIDER="ai_coustics" | "krisp"`). Krisp NC runs natively in C++ with 0ms Python overhead. Benchmarked `ai-coustics` models: `QUAIL_VF_S` executes at 0.89ms/frame (8x faster than `QUAIL_L` at 7.20ms/frame).
+- **perf & endpointing:** Calibrated Silero VAD `min_silence_duration` from 0.30s down to 0.20s (configurable via `VAD_MIN_SILENCE_DURATION`) and Deepgram STT `endpointing_ms` from 250ms down to 150ms (configurable via `DEEPGRAM_ENDPOINTING_MS`), shaving ~200ms off conversational turn response commitment.
+- **Files:** `mantra/agent.py`, `mantra/core/engines.py`, `obsidian/Features/Voice Agent.md`, `obsidian/Architecture/Overview.md`, `obsidian/Development/Current Sprint.md`, `obsidian/Development/Changelog.md`.
+
+### ai-coustics Quail (QUAIL_L) Inbound Noise Cancellation
+
+- **feat & audio:** Integrated LiveKit Cloud's machine-optimized `ai-coustics` audio enhancement plugin (`livekit-plugins-ai-coustics`) to filter environmental background noise (traffic, fans, ambient noise) from inbound caller audio before STT transcription and VAD turn detection.
+- **arch:** Configured `room_io.RoomOptions(audio_input=room_io.AudioInputOptions(noise_cancellation=...))` in `mantra/agent.py` applied during `session.start()`. Added participant selector to filter human callers while bypassing agent tracks.
+- **config:** Added environment variable overrides: `NOISE_CANCELLATION_ENABLED` (default `"1"`) and `AI_COUSTICS_MODEL` (default `"QUAIL_L"`).
+- **Files:** `mantra/agent.py`, `obsidian/Features/Voice Agent.md`, `obsidian/Architecture/Overview.md`, `obsidian/Development/Current Sprint.md`, `obsidian/Development/Changelog.md`.
+
+### VAD Strictness Reduction & Min 5 Words Interruption Threshold
+
+- **perf & vad:** Reduced strictness of VAD barge-in interruption by setting `interruption["min_words"]` in `mantra/agent.py` to `5` (with `VAD_MIN_WORDS` env var support, defaulting to 5). Previously set to 1 word, causing the agent to interrupt immediately on ambient noise, brief listener affirmations ("yeah", "okay", "haan"), or single-word coughs/sighs while speaking. The agent now only yields and interrupts speech playback when the caller articulates at least 5 words. Normal turn detection when the agent is silent/listening remains unaffected.
+- **Files:** `mantra/agent.py`, `obsidian/Features/Voice Agent.md`, `obsidian/Architecture/Overview.md`, `obsidian/Development/Current Sprint.md`, `obsidian/Development/Changelog.md`.
+
 ## 2026-10-12
 
 ### Prompt Forwarding & Bidirectional JEV Stage & Appointment Evaluation
