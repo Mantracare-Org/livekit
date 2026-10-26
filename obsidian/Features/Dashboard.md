@@ -24,10 +24,17 @@ Operations dashboard for monitoring call activity in real time. OpsCraft dark th
 - Each card shows: call_id, room_name, status
 - Data from `GET /v1/dashboard/active-calls` + SSE
 
-### Call History
-- Paginated table of recent calls
+### Call History & Log Details Modal
+- Paginated table of recent calls with filter search and status selectors
 - Columns: call_id, status, client, phone, duration, recording, summary, purpose
 - Data from `GET /v1/dashboard/calls?limit=20&offset=0`
+- **Call Log Details Modal**:
+  - Audio recording playback
+  - AI call summary with dedicated one-click **Copy Summary** button
+  - Turn-by-turn conversation transcript dialogue bubbles with dedicated **Copy Transcript** button (formats conversation dialogue turns into plain text)
+  - Retry & Attempt History timeline with status badges and durations
+  - Raw PostgreSQL JSON log viewer with dedicated **Copy Payload** button
+  - Clipboard feedback with checkmark icon and automatic 2-second reset state
 
 ### Authentication
 - JWT login page (`login.html`)

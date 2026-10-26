@@ -244,6 +244,8 @@ function openCallModalByIndex(index) {
     const call = currentCallHistoryData[index];
     if (!call) return;
 
+    resetCopyButtons();
+
     document.getElementById('modal-call-id').textContent = `#${call.call_id}`;
     document.getElementById('modal-call-status').textContent = call.status || 'Unknown';
     document.getElementById('modal-call-status').className = `status-badge status-${(call.status || 'unknown').toLowerCase().replace(/\s+/g, '-')}`;
@@ -278,6 +280,7 @@ function openCallModalByIndex(index) {
     document.getElementById('modal-call-summary').textContent = summaryText;
 
     const rawTranscript = call.transcript || call.call_log_raw?.call_transcript || call.call_log_raw?.transcript || call.call_log_raw?.conversation;
+    currentModalTranscriptText = formatTranscriptForCopy(rawTranscript);
     renderTranscriptInModal(rawTranscript);
 
     // Render Attempt History & Retries Timeline
@@ -426,6 +429,8 @@ function closeCallModal() {
     if (modal) {
         modal.classList.add('hidden');
     }
+
+    resetCopyButtons();
 }
 
 document.getElementById('btn-close-call-modal')?.addEventListener('click', closeCallModal);
@@ -443,6 +448,133 @@ document.addEventListener('keydown', (e) => {
             closeCallModal();
         }
     }
+});
+
+// ── Copy to Clipboard Helpers ──────────────────────────────────────────────
+let currentModalTranscriptText = '';
+
+function resetCopyButtons() {
+    ['btn-copy-summary', 'btn-copy-transcript', 'btn-copy-payload'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn && btn.dataset.copyTimeout) {
+            clearTimeout(Number(btn.dataset.copyTimeout));
+            btn.classList.remove('copied');
+            if (btn.dataset.originalHtml) {
+                btn.innerHTML = btn.dataset.originalHtml;
+                delete btn.dataset.originalHtml;
+            }
+            delete btn.dataset.copyTimeout;
+        }
+    });
+}
+
+function formatTranscriptForCopy(rawTranscript) {
+    if (!rawTranscript) return '';
+    let items = rawTranscript;
+    if (typeof rawTranscript === 'string') {
+        try {
+            items = JSON.parse(rawTranscript);
+        } catch (e) {
+            return rawTranscript;
+        }
+    }
+    if (typeof items === 'string') {
+        return items;
+    }
+    if (!Array.isArray(items)) {
+        return typeof items === 'object' ? JSON.stringify(items, null, 2) : String(items);
+    }
+    const lines = [];
+    items.forEach(turn => {
+        if (typeof turn === 'object' && turn !== null) {
+            const botText = turn.bot || turn.agent || turn.assistant;
+            const userText = turn.user || turn.customer || turn.caller;
+            if (botText) lines.push(`AI Agent: ${botText}`);
+            if (userText) lines.push(`Caller: ${userText}`);
+            if (turn.role && (turn.content || turn.text)) {
+                const isAssistant = turn.role === 'assistant' || turn.role === 'agent' || turn.role === 'bot';
+                const roleLabel = isAssistant ? 'AI Agent' : 'Caller';
+                lines.push(`${roleLabel}: ${turn.content || turn.text}`);
+            }
+        } else if (typeof turn === 'string') {
+            lines.push(turn);
+        }
+    });
+    return lines.join('\n\n');
+}
+
+function copyToClipboard(text, btnElement) {
+    if (typeof text !== 'string') {
+        text = text ? String(text) : '';
+    }
+    if (!text.trim()) return;
+
+    const onSuccess = () => {
+        if (!btnElement) return;
+        if (btnElement.dataset.copyTimeout) {
+            clearTimeout(Number(btnElement.dataset.copyTimeout));
+        }
+        if (!btnElement.dataset.originalHtml) {
+            btnElement.dataset.originalHtml = btnElement.innerHTML;
+        }
+        btnElement.classList.add('copied');
+        btnElement.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <span>Copied!</span>
+        `;
+        const timeoutId = setTimeout(() => {
+            btnElement.classList.remove('copied');
+            if (btnElement.dataset.originalHtml) {
+                btnElement.innerHTML = btnElement.dataset.originalHtml;
+                delete btnElement.dataset.originalHtml;
+            }
+            delete btnElement.dataset.copyTimeout;
+        }, 2000);
+        btnElement.dataset.copyTimeout = String(timeoutId);
+    };
+
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(onSuccess).catch(() => fallbackCopy(text, onSuccess));
+    } else {
+        fallbackCopy(text, onSuccess);
+    }
+}
+
+function fallbackCopy(text, callback) {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    textarea.style.top = '-9999px';
+    textarea.setAttribute('readonly', '');
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    try {
+        document.execCommand('copy');
+        if (callback) callback();
+    } catch (err) {
+        console.error('Failed to copy text: ', err);
+    }
+    document.body.removeChild(textarea);
+}
+
+document.getElementById('btn-copy-summary')?.addEventListener('click', (e) => {
+    const summaryElem = document.getElementById('modal-call-summary');
+    const text = summaryElem ? summaryElem.textContent.trim() : '';
+    copyToClipboard(text, e.currentTarget);
+});
+
+document.getElementById('btn-copy-transcript')?.addEventListener('click', (e) => {
+    const transcriptElem = document.getElementById('modal-call-transcript');
+    const text = currentModalTranscriptText || (transcriptElem ? transcriptElem.innerText.trim() : '');
+    copyToClipboard(text, e.currentTarget);
+});
+
+document.getElementById('btn-copy-payload')?.addEventListener('click', (e) => {
+    const jsonElem = document.getElementById('modal-raw-json');
+    const text = jsonElem ? jsonElem.textContent.trim() : '';
+    copyToClipboard(text, e.currentTarget);
 });
 
 // ── Knowledge Base ─────────────────────────────────────────────────────────
