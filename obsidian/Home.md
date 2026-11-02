@@ -3,7 +3,7 @@
 > **Version:** 0.5.0  
 > **Package:** `livekit-agent`  
 > **Repository:** `git@github.com:FardeenSK004/livekit.git` (fork of Mantracare-Org/livekit)  
-> **Last Updated:** 2026-09-10
+> **Last Updated:** 2026-10-27
 
 ---
 
@@ -40,12 +40,12 @@ Telephony Provider → Webhook → FastAPI → Agent Dispatch → LiveKit Cloud 
 
 | Metric             | Value                                     |
 | ------------------ | ----------------------------------------- |
-| Python modules     | 14 (`mantra/` incl. `call_duration`, `positive_intent`, `mcp_client`) |
-| Frontend files     | 9 (`static/` incl. `redis.html`, `network.html`, `kb_chat.html`) |
+| Python packages    | `mantra/` (incl. `core/`, `routers/`, `services/`, `dependencies/`, `migrations/`) |
+| Frontend files     | 9 (`static/` incl. `dashboard.html`, `dashboard.js`, `index.html`, `kb_chat.html`) |
 | MCP server         | 1 (`mcp/server.py`, legacy local) + remote `livekit-mcp` (SSE, OAuth) |
-| Total source lines | ~12,500                                   |
-| Core agent file    | `mantra/agent.py` — 3,007 lines           |
-| API server file    | `mantra/ui_server.py` — 4,489 lines       |
+| Total source lines | ~14,000 across core engine and web services |
+| Core agent shim    | `mantra/agent.py` — 901 lines (core logic modularized in `mantra/core/`) |
+| API server shim    | `mantra/ui_server.py` — 225 lines (routes decomposed into `mantra/routers/`) |
 | MCP server file    | `mcp/server.py` — 1,073 lines             |
 | KB module          | `mantra/knowledge_base.py` — 1,120 lines  |
 
@@ -53,6 +53,14 @@ Telephony Provider → Webhook → FastAPI → Agent Dispatch → LiveKit Cloud 
 
 ## Recent Changelog
 
+- **2026-10-26:** Dashboard Call Log Details one-click Copy buttons (Summary, multi-turn formatted dialogue Transcript, raw PostgreSQL JSON Payload) with interactive SVG visual feedback and 2-second timeout state reset
+- **2026-10-19:** Zero Cold-Start Latency & Precomputed Greeting (`tts_engine.prewarm()`, `stt_engine.prewarm()`, `llm_engine.prewarm()`, instant `participant_connected` event listener, background LLM greeting precomputation during phone ringing), ai-coustics Quail (`livekit-plugins-ai-coustics` `QUAIL_L` / `QUAIL_VF_S`) & native C++ Krisp inbound noise cancellation, VAD barge-in strictness reduction (`min_words=5`)
+- **2026-10-12:** Prompt forwarding to `/v1/webhooks/n8n/summary`; bidirectional JEV appointment extraction & stage evaluation in MantraAssist API
+- **2026-10-11:** End Call `StopResponse()` speech suppression, definitive `graceful_disconnect_after_speech()`, recipient `client_name` outbound prompt injection, opening prompt pause adherence, and farewell safety net elimination
+- **2026-10-09:** Marathi (`mr`) language enablement with strict prompt guards and prosody directives
+- **2026-10-06:** Zero-runtime outbound KB pre-fetching and upfront prompt injection during session warmup
+- **2026-09-25 to 2026-09-29:** Natural voice prosody punctuation (em-dashes, semicolons), DeepSeek-V3 low-latency migration (`deepseek-chat`), Zadarma SIP domain fix, geopy hospital branch locator & products/services MCP tools
+- **2026-09-12:** Monolith Split — `mantra/ui_server.py` and `mantra/agent.py` decomposed into modular packages (`mantra/core/`, `mantra/routers/`, `mantra/services/`, `mantra/dependencies/`, `mantra/prompts.py`)
 - **2026-09-10:** Inbound SIP trunk lifecycle — explicit `provider` required (no default), rollback of newly-created trunk/dispatch-rule on provider-forwarding failure, cascading delete (dispatch rules → trunk → `org_configs` → Redis `trunk:provider`)
 - **2026-09-09:** `clarify_medical_department` + availability MCP routing (KB excluded for scheduling, failed department discovery no longer blocks MCP), VAD barge-in (`vad` mode, 0.15s), inbound client recognition metadata (`ai_summaries` + `custom_fields`)
 - **2026-09-08:** Inbound client recognition via LiveKit SIP participant caller number → `recognize_client` (`GET /webhooks/mcp/lead`); `/api/*` → `/v1/*` route prefix migration

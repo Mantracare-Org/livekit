@@ -1,6 +1,6 @@
 # Voice Agent
 
-**File:** `mantra/agent.py` (3,007 lines)
+**File:** `mantra/agent.py` (901 lines) + `mantra/core/` (modular agent architecture)
 
 ## Overview
 
@@ -12,7 +12,7 @@ The core real-time voice AI agent. Connects to LiveKit rooms, handles the full S
 2. **LLM:** Selectable via metadata:
    - `openai` → GPT-4o-mini (default)
    - `gemini` → Gemini 2.5 Flash
-   - `deepseek` → DeepSeek v4 Flash/Pro (via OpenAI-compatible API; 60s streaming read timeouts + `APIConnectOptions` hardening for TTFT)
+   - `deepseek` → DeepSeek-V3 (`deepseek-chat`, official low-latency model via OpenAI-compatible API; 60s streaming read timeouts + `APIConnectOptions` hardening for TTFT)
 3. **TTS:** LiveKit native sonic-3 (no Cartesia dependency)
 4. **VAD:** Silero (`min_speech_duration=0.05s`, `min_silence_duration=0.20s` default via `VAD_MIN_SILENCE_DURATION`, `prefix_padding_duration=0.50s`, `activation_threshold=0.45`)
 5. **Turn Detection:** LiveKit `inference.TurnDetector` (server defaults) with dynamic endpointing (`min_delay: 0.10s`, `max_delay: 0.80s`), VAD barge-in (`min_words: 5`, `min_duration: 0.15s`, `discard_audio_if_uninterruptible: True`, `resume_false_interruption: True`), and preemptive TTS generation

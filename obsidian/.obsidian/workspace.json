@@ -13,46 +13,32 @@
             "state": {
               "type": "canvas",
               "state": {
-                "file": "Outbound Call Walkthrough.canvas",
+                "file": "MCP Architecture.canvas",
                 "viewState": {
-                  "x": 973.0835478175783,
-                  "y": 119.12022237646275,
-                  "zoom": -0.40000000000000013
+                  "x": 650,
+                  "y": 180,
+                  "zoom": -0.34792330342030686
                 }
               },
               "icon": "lucide-layout-dashboard",
-              "title": "Outbound Call Walkthrough"
+              "title": "MCP Architecture"
             }
           },
           {
             "id": "d690e3ae9bac8b77",
             "type": "leaf",
             "state": {
-              "type": "graph",
-              "state": {},
-              "icon": "lucide-git-fork",
-              "title": "Graph view"
-            }
-          },
-          {
-            "id": "210cf3ad49e340a6",
-            "type": "leaf",
-            "state": {
-              "type": "canvas",
+              "type": "markdown",
               "state": {
-                "file": "MCP Architecture.canvas",
-                "viewState": {
-                  "x": -401.6928791476845,
-                  "y": -615.5899848480851,
-                  "zoom": -0.6050883150856595
-                }
+                "file": "00_Agente/SOUL.md",
+                "mode": "source",
+                "source": false
               },
-              "icon": "lucide-layout-dashboard",
-              "title": "MCP Architecture"
+              "icon": "lucide-file",
+              "title": "SOUL"
             }
           }
-        ],
-        "currentTab": 2
+        ]
       }
     ],
     "direction": "vertical"
@@ -213,9 +199,13 @@
       "bases:Create new base": false
     }
   },
-  "active": "210cf3ad49e340a6",
+  "active": "ba89d0ebd22c5ea3",
   "lastOpenFiles": [
     "Outbound Call Walkthrough.canvas",
+    "00_Agente/SOUL.md",
+    "Development/Backlog.md",
+    "04_Herramientas/00 Indice de Herramientas.md",
+    "MCP Architecture.canvas",
     "Untitled.canvas",
     "Features/API Server.md",
     "Features/Dispatcher.md",
@@ -238,9 +228,6 @@
     "Development/Roadmap.md",
     "Development/Current Sprint.md",
     "Development/Release Notes.md",
-    "Development/Changelog.md",
-    "Development/Bugs.md",
-    "Development/Backlog.md",
-    "Context/External Services.md"
+    "Development/Changelog.md"
   ]
 }

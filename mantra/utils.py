@@ -123,6 +123,7 @@ async def save_call_log_to_db(
             "retry_count": max(0, attempt_number - 1),
             "attempted_at": attempted_at,
             "status": final_status,
+            "event": log_data.get("event") or "",
             "ai_call_id": ai_call_id,
             "duration": duration,
             "recording_url": recording_url or "",
@@ -637,9 +638,13 @@ async def send_to_backend(payload: dict, max_retries: int = 3, force: bool = Fal
                 called_num = str(data_obj.get("called_number") or "")
                 trunk_val = str(data_obj.get("trunk_id") or data_obj.get("sip_trunk_id") or "")
 
+                saved_log_data = dict(data_obj)
+                if isinstance(payload, dict) and payload.get("event"):
+                    saved_log_data["event"] = payload.get("event")
+
                 await save_call_log_to_db(
                     call_id=call_id,
-                    call_log=json.dumps(data_obj),
+                    call_log=json.dumps(saved_log_data, indent=2),
                     status=status_val,
                     recording_url=recording_val,
                     caller_number=caller_num,

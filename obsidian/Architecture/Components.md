@@ -2,37 +2,38 @@
 
 ## 1. Voice Agent (`mantra/agent.py`)
 
-The core real-time voice AI agent. ~3,007 lines.
+The core real-time voice AI agent. ~901 lines (modularized over `mantra/core/`).
 
 **Responsibilities:**
 - Connect to LiveKit rooms via `AgentServer`
 - Orchestrate STT (Deepgram Nova-3) → LLM (OpenAI/Gemini/DeepSeek) → TTS (LiveKit native sonic-3, no Cartesia dependency)
 - Hinglish telesales system prompt (short 1-2 sentence turns, flat prosody) with `<!-- LANGUAGE_DIRECTIVE_START/END -->` per-turn alignment via `MantraMultilingualAgent.llm_node`
 - Dynamic STT locale routing (`resolve_stt_language`: `en-IN` for India, `en-US` otherwise, `hi` model for Hindi, `multi` default) + per-call keyterm memory (seeded from context, ≤80 terms, learns names/places per turn, endpointing 100ms)
-- Fast VAD barge-in: `interruption.mode="vad"`, `min_duration=0.15s`, `discard_audio_if_uninterruptible=True`; dynamic endpointing (0.10s–0.80s), preemptive TTS on
+- Fast VAD barge-in: `interruption.mode="vad"`, `min_words=5`, `min_duration=0.15s`, `discard_audio_if_uninterruptible=True`; dynamic endpointing (0.10s–0.80s), preemptive TTS on
 - Dynamic voice selection from `VOICE_MAPPING` dict (13 voices)
 - Call lifecycle: join → converse → goodbye → disconnect
 - Inactivity monitoring (15s nudge, 30s silence disconnect; greeting tracked strictly after TTS finishes)
-- Farewell safety net (auto-disconnect on goodbye without `end_call`, directional inbound vs outbound phrases)
 - Call duration limiter (`mantra/call_duration.py`: 150s farewell / 180s hard; outbound positive-intent extension via `mantra/positive_intent.py` to 270s / 300s)
 - Inbound call KB context resolution (DID → `org_configs` → `org_id`) + live process/stage context injection (≤12k chars) + KB collection expansion
 - Inbound client recognition: pre-greeting bounded (3s) `recognize_client` using LiveKit SIP participant caller number; injects `client_name` + `client_metadata.ai_summaries/custom_fields`; anonymous fallback
+- Inbound noise cancellation: ai-coustics Quail (`livekit-plugins-ai-coustics` `QUAIL_L` / `QUAIL_VF_S`) or native C++ Krisp NC
+- Zero cold-start latency: engine pre-warming (`tts_engine.prewarm()`, `stt_engine.prewarm()`, `llm_engine.prewarm()`) + instant participant event + greeting precomputation
 - `search_knowledge_base` function tool for RAG access (silent, single-turn, scheduling questions excluded)
 - `clarify_medical_department` + `check_doctor_availability(department?)` function tools (MCP-backed, deterministic org-list validation)
-- `end_call` function tool for graceful disconnect (guarded before greeting/user speech)
-- Post-call: recording → S3 → LLM analysis (`appointment_metadata`, `user_intent`, `derived_process_id` + stage reconciliation, UTC ISO-8601) → webhook → DB → TOS telemetry
+- `end_call` function tool for graceful disconnect (definitive `graceful_disconnect_after_speech`, `StopResponse()` suppression)
+- Post-call: recording → S3 → LLM analysis (`appointment_metadata`, `user_intent`, `derived_process_id` + stage reconciliation, UTC ISO-8601) → webhook → DB → delivery ledger outbox
 - `transfer_to_human` tool — code preserved but currently disabled/comment-blocked
 
 **LLM Options:**
 - `openai` — GPT-4o-mini (default)
 - `gemini` — Gemini 2.5 Flash
-- `deepseek` — DeepSeek v4 Flash (via OpenAI-compatible API)
+- `deepseek` — DeepSeek-V3 (`deepseek-chat`, official low-latency model via OpenAI-compatible API)
 
 ---
 
 ## 2. API/UI Server (`mantra/ui_server.py`)
 
-FastAPI-based HTTP server. ~4,489 lines.
+FastAPI-based HTTP server. ~225 lines assembly shim over decomposed `mantra/routers/` and `mantra/services/`.
 
 **Endpoints:**
 - `POST /v1/auth/login` — JWT authentication
