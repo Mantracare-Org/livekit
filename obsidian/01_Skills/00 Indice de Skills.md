@@ -4,7 +4,7 @@ type: antigravity-index
 tags:
   - antigravity/indice
   - antigravity/skills
-updated: 2026-10-26
+updated: 2026-10-31
 ---
 
 # Catalogo de Skills de Antigravity

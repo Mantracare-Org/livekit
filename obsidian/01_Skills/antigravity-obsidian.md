@@ -1,12 +1,21 @@
 ---
-skill: antigravity-obsidian
-version: 1.0
-last_verified: 2026-10-26
-triggers: ["antigravity-obsidian","/global"]
+title: "Skill: antigravity-obsidian"
+type: antigravity-skill
+scope: global
+tags:
+  - antigravity/skill
+  - antigravity/skill/global
+updated: 2026-10-31
 ---
 
-## Procedimiento Operativo
-del Agente
+# Skill: antigravity-obsidian
+
+> [!INFO] **Metadatos de la Skill**
+> - **Nombre**: `antigravity-obsidian`
+> - **Ámbito**: Global (`~/.gemini/config/skills/`)
+> - **Descripción**: Obsidian for Antigravity — Always-active Technical Second Brain, Persistent Memory & Hermes Closed Loop. Active across all development tasks, debugging sessions, project continuity, recalling past sessions (session_recall / session last), retrieving past technical solutions and architecture (obsidian_triage / triage, obsidian_peek / peek), auto-saving session checkpoints and learnings, or using /obsidian commands. Zero emojis, zero fluff, ultra-compact memory retrieval (<80 tokens).
+
+## Instrucciones del Agente
 
 # Obsidian for Antigravity — Technical Second Brain
 
@@ -142,6 +151,3 @@ Users can run quick actions in chat by typing slash commands:
 
 ---
 *Conexiones del Grafo:* [[00 Antigravity Hub]] | [[00 Indice de Skills]]
-
-## Errores Conocidos y Corrección (Aprendidos en Ejecución)
-- Sin incidencias iniciales registradas en ejecución.

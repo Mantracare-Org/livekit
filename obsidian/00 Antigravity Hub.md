@@ -4,7 +4,7 @@ type: antigravity-hub
 tags:
   - antigravity/hub
   - antigravity/second-brain
-updated: 2026-10-26
+updated: 2026-10-31
 ---
 
 # Antigravity Hub — AI Second Brain

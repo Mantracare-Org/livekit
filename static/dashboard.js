@@ -46,7 +46,58 @@ async function loadMetrics() {
     }
 }
 
+async function loadSystemStatus() {
+    const indicator = document.getElementById('system-status');
+    if (!indicator) return;
+
+    try {
+        const data = await apiFetch('/health');
+        const healthy = data.healthy === true;
+        indicator.className = `system-status ${healthy ? 'operational' : 'degraded'}`;
+        indicator.textContent = healthy ? 'All systems operational' : 'Systems degraded';
+        indicator.title = healthy ? 'All service health checks passed' : 'One or more service health checks failed';
+        indicator.disabled = false;
+    } catch (error) {
+        indicator.className = 'system-status unavailable';
+        indicator.textContent = 'Status unavailable';
+        indicator.title = 'Could not reach the service health endpoint';
+        indicator.disabled = true;
+    }
+}
+
+async function toggleSystemStatusDetails() {
+    const popover = document.getElementById('system-status-popover');
+    const indicator = document.getElementById('system-status');
+    if (!popover || !indicator || indicator.disabled) return;
+
+    if (!popover.hidden) {
+        popover.hidden = true;
+        indicator.setAttribute('aria-expanded', 'false');
+        return;
+    }
+
+    popover.innerHTML = '<div class="system-status-title">Service status</div><div class="system-status-check">Checking...</div>';
+    popover.hidden = false;
+    indicator.setAttribute('aria-expanded', 'true');
+
+    try {
+        const data = await apiFetch('/health/details');
+        const checks = Object.entries(data.checks || {});
+        const failed = checks.filter(([, healthy]) => !healthy);
+        popover.innerHTML = `
+            <div class="system-status-title">${failed.length ? 'Services needing attention' : 'All services are healthy'}</div>
+            ${failed.length
+                ? failed.map(([service]) => `<div class="system-status-check failed"><span>${escapeHtml(service)}</span><span>DOWN</span></div>`).join('')
+                : '<div class="system-status-check"><span>No issues detected</span><span>OK</span></div>'}
+        `;
+    } catch (error) {
+        popover.innerHTML = '<div class="system-status-check failed"><span>Health details</span><span>UNAVAILABLE</span></div>';
+    }
+}
+
 // ── Active Calls + Queue ─────────────────────────────────────────────────
+let activeCallIntervalStarted = false;
+
 function renderActiveCalls(activeDetails) {
     const container = document.getElementById('active-calls-list');
     if (!activeDetails || activeDetails.length === 0) {
@@ -57,22 +108,24 @@ function renderActiveCalls(activeDetails) {
     container.innerHTML = activeDetails.map(c => `
         <div class="call-card">
             <div class="call-card-header">
-                <span class="call-id">${c.call_id}</span>
-                <span class="status-badge status-${c.status}">${c.status}</span>
+                <span class="call-id">${escapeHtml(c.call_id)}</span>
+                <span class="status-badge status-${escapeHtml(c.status)}"><span class="active-pulse"></span>${escapeHtml(c.status)}</span>
             </div>
             <div class="call-card-body">
-                <span class="call-room">${c.room_name}</span>
-                <span class="call-time" data-call-start="${c.call_id}">—</span>
+                <span class="call-room">${escapeHtml(c.room_name)}</span>
+                <span class="call-time" data-call-start="${escapeHtml(c.call_id)}">active</span>
             </div>
         </div>
     `).join('');
 
-    // Update elapsed time every second
-    setInterval(() => {
-        document.querySelectorAll('[data-call-start]').forEach(el => {
-            el.textContent = 'active';
-        });
-    }, 1000);
+    if (!activeCallIntervalStarted) {
+        activeCallIntervalStarted = true;
+        setInterval(() => {
+            document.querySelectorAll('[data-call-start]').forEach(el => {
+                el.textContent = 'active';
+            });
+        }, 1000);
+    }
 }
 
 function renderQueueGauge(pending, active, maxConcurrency) {
@@ -171,14 +224,43 @@ function connectSSE() {
 
 // ── Call History Table (Synced with DB) ───────────────────────────────────
 let currentCallHistoryData = [];
+let currentPage = 1;
+let pageSize = 50;
+let totalCallCount = 0;
+let currentModalIndex = -1;
 
-async function loadCallHistory() {
+function updatePaginationControls() {
+    const totalPages = Math.max(1, Math.ceil(totalCallCount / pageSize));
+    if (currentPage > totalPages) currentPage = totalPages;
+
+    const start = totalCallCount === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+    const end = Math.min(totalCallCount, (currentPage - 1) * pageSize + currentCallHistoryData.length);
+
+    const startEl = document.getElementById('pagination-start');
+    const endEl = document.getElementById('pagination-end');
+    const totalEl = document.getElementById('pagination-total');
+    const pageInfoEl = document.getElementById('pagination-page-info');
+    const prevBtn = document.getElementById('btn-prev-page');
+    const nextBtn = document.getElementById('btn-next-page');
+
+    if (startEl) startEl.textContent = start;
+    if (endEl) endEl.textContent = end;
+    if (totalEl) totalEl.textContent = totalCallCount;
+    if (pageInfoEl) pageInfoEl.textContent = `Page ${currentPage} of ${totalPages}`;
+
+    if (prevBtn) prevBtn.disabled = currentPage <= 1;
+    if (nextBtn) nextBtn.disabled = currentPage >= totalPages;
+}
+
+async function loadCallHistory(page = currentPage) {
+    currentPage = Math.max(1, page);
     const searchInput = document.getElementById('call-search-input');
     const statusSelect = document.getElementById('call-status-filter');
     const searchVal = searchInput ? searchInput.value.trim() : '';
     const statusVal = statusSelect ? statusSelect.value : 'all';
+    const offset = (currentPage - 1) * pageSize;
 
-    let url = `/v1/dashboard/calls?limit=50&offset=0`;
+    let url = `/v1/dashboard/calls?limit=${pageSize}&offset=${offset}`;
     if (searchVal) url += `&search=${encodeURIComponent(searchVal)}`;
     if (statusVal && statusVal !== 'all') url += `&status=${encodeURIComponent(statusVal)}`;
 
@@ -186,6 +268,7 @@ async function loadCallHistory() {
     if (data.error) {
         document.getElementById('calls-table-body').innerHTML =
             `<tr><td colspan="7" class="empty-state">Could not load call history</td></tr>`;
+        showToast('Could not load call history', 'error');
         return;
     }
 
@@ -201,16 +284,21 @@ async function loadCallHistory() {
     }
 
     currentCallHistoryData = calls;
-    document.getElementById('calls-total').textContent = data.total || calls.length;
+    totalCallCount = typeof data.total === 'number' ? data.total : (data.total_count || calls.length);
+
+    document.getElementById('calls-total').textContent = totalCallCount;
+    updatePaginationControls();
 
     const tbody = document.getElementById('calls-table-body');
     if (currentCallHistoryData.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="7" class="empty-state">No call logs found matching "${statusVal}"</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" class="empty-state">No call logs found matching current filters</td></tr>`;
         return;
     }
 
     tbody.innerHTML = currentCallHistoryData.map((c, idx) => {
-        const statusClass = `status-${(c.status || 'unknown').toLowerCase().replace(/\s+/g, '-')}`;
+        const rawStatus = c.status || 'Unknown';
+        const statusDisplay = (rawStatus.toLowerCase() === 'none' || rawStatus.toLowerCase() === 'null') ? 'Completed' : rawStatus;
+        const statusClass = `status-${statusDisplay.toLowerCase().replace(/\s+/g, '-')}`;
         const duration = c.duration
             ? `${Math.floor(c.duration / 60)}m ${c.duration % 60}s`
             : '—';
@@ -220,16 +308,25 @@ async function loadCallHistory() {
         const phone = c.caller_number || c.client_phone || c.client_name || '—';
         const trunk = c.trunk_id || '—';
         const attemptsCount = c.attempts_count || (Array.isArray(c.attempts) ? c.attempts.length : 1);
-        const attemptBadge = attemptsCount > 1
-            ? `<span class="badge-count" style="margin-left:6px; font-size:10px; padding:2px 6px; background:var(--accent); color:white; border-radius:10px;" title="${attemptsCount} attempts recorded">Attempt #${attemptsCount} (${attemptsCount - 1} Retries)</span>`
-            : '';
+        let attemptBadge = '';
+        if (attemptsCount > 1) {
+            const retries = attemptsCount - 1;
+            const retryLabel = retries === 1 ? '1 retry' : `${retries} retries`;
+            attemptBadge = `<span class="badge-attempt" title="${attemptsCount} total attempts recorded (${retryLabel})">Attempt #${attemptsCount} (${retryLabel})</span>`;
+        }
 
         return `
             <tr>
-                <td><span class="status-dot-sm ${statusClass}"></span>${c.status || 'Unknown'}${attemptBadge}</td>
-                <td class="cell-mono" style="font-weight:600;">${c.call_id || '—'}</td>
-                <td>${phone}</td>
-                <td class="cell-mono">${trunk}</td>
+                <td class="col-status">
+                    <div class="status-cell-wrap">
+                        <span class="status-dot-sm ${statusClass}"></span>
+                        <span class="status-text">${escapeHtml(statusDisplay)}</span>
+                        ${attemptBadge}
+                    </div>
+                </td>
+                <td class="cell-mono" style="font-weight:600;">${escapeHtml(c.call_id || '—')}</td>
+                <td>${escapeHtml(phone)}</td>
+                <td class="cell-mono">${escapeHtml(trunk)}</td>
                 <td>${duration}</td>
                 <td class="cell-time">${time}</td>
                 <td>
@@ -244,11 +341,33 @@ function openCallModalByIndex(index) {
     const call = currentCallHistoryData[index];
     if (!call) return;
 
+    currentModalIndex = index;
     resetCopyButtons();
 
     document.getElementById('modal-call-id').textContent = `#${call.call_id}`;
-    document.getElementById('modal-call-status').textContent = call.status || 'Unknown';
-    document.getElementById('modal-call-status').className = `status-badge status-${(call.status || 'unknown').toLowerCase().replace(/\s+/g, '-')}`;
+    const modalRawStatus = call.status || 'Unknown';
+    const modalStatus = (modalRawStatus.toLowerCase() === 'none' || modalRawStatus.toLowerCase() === 'null') ? 'Completed' : modalRawStatus;
+    document.getElementById('modal-call-status').textContent = modalStatus;
+    document.getElementById('modal-call-status').className = `status-badge status-${modalStatus.toLowerCase().replace(/\s+/g, '-')}`;
+
+    const eventName = call.event || call.call_log_raw?.event || 'N/A';
+    const eventEl = document.getElementById('modal-call-event');
+    if (eventEl) {
+        eventEl.textContent = eventName;
+        if (eventName === 'CALL_DATA_UPDATE') {
+            eventEl.style.color = 'var(--accent)';
+            eventEl.style.borderColor = 'rgba(88, 101, 242, 0.4)';
+        } else if (eventName === 'CALL_RETRY') {
+            eventEl.style.color = 'var(--warning)';
+            eventEl.style.borderColor = 'rgba(240, 178, 50, 0.4)';
+        } else if (eventName === 'CALL_DATA_INBOUND_UPDATE') {
+            eventEl.style.color = 'var(--success)';
+            eventEl.style.borderColor = 'rgba(35, 165, 90, 0.4)';
+        } else {
+            eventEl.style.color = 'var(--text-primary)';
+            eventEl.style.borderColor = 'var(--border-default)';
+        }
+    }
 
     const dur = call.duration ? `${Math.floor(call.duration / 60)}m ${call.duration % 60}s (${call.duration}s)` : 'N/A';
     document.getElementById('modal-call-duration').textContent = dur;
@@ -261,12 +380,25 @@ function openCallModalByIndex(index) {
     const aiCallId = call.call_log_raw?.ai_call_id || call.call_log_raw?.job_id || 'N/A';
     document.getElementById('modal-ai-call-id').textContent = aiCallId;
 
+    // Navigation and Index info
+    const prevBtn = document.getElementById('btn-prev-modal-call');
+    const nextBtn = document.getElementById('btn-next-modal-call');
+    const indexInfo = document.getElementById('modal-call-index-info');
+    if (prevBtn) prevBtn.disabled = index <= 0;
+    if (nextBtn) nextBtn.disabled = index >= currentCallHistoryData.length - 1;
+    if (indexInfo) indexInfo.textContent = `Call ${index + 1} of ${currentCallHistoryData.length}`;
+
     const audioContainer = document.getElementById('modal-recording-container');
     const audioPlayer = document.getElementById('modal-audio-player');
     if (audioPlayer) {
         audioPlayer.pause();
         audioPlayer.currentTime = 0;
+        audioPlayer.playbackRate = 1;
     }
+    document.querySelectorAll('.speed-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.speed === '1');
+    });
+
     if (call.recording_url) {
         audioPlayer.src = call.recording_url;
         audioPlayer.load();
@@ -299,6 +431,10 @@ function openCallModalByIndex(index) {
     if (attemptsCountElem) {
         attemptsCountElem.textContent = `${attempts.length} ${attempts.length > 1 ? 'Attempts' : 'Attempt'}`;
     }
+    const tabAttemptsBadge = document.getElementById('modal-tab-attempts-badge');
+    if (tabAttemptsBadge) {
+        tabAttemptsBadge.textContent = attempts.length;
+    }
 
     const timelineContainer = document.getElementById('modal-attempts-timeline');
     if (timelineContainer) {
@@ -309,6 +445,7 @@ function openCallModalByIndex(index) {
             const attStatusClass = `status-${attStatus.toLowerCase().replace(/\s+/g, '-')}`;
             const attDur = att.duration ? `${Math.floor(att.duration / 60)}m ${att.duration % 60}s` : '0s';
             const attAiId = att.ai_call_id ? escapeHtml(att.ai_call_id) : '—';
+            const attEvent = att.event || att.payload?.event || '';
             const isLatest = attIdx === attempts.length - 1;
 
             return `
@@ -317,13 +454,14 @@ function openCallModalByIndex(index) {
                         <div style="display:flex; align-items:center; gap:8px;">
                             <span style="font-weight:700; color:var(--accent);">Attempt #${attNum} ${attNum > 1 ? '(Retry)' : ''}</span>
                             <span class="status-badge ${attStatusClass}" style="font-size:10px; padding:2px 8px;">${escapeHtml(attStatus)}</span>
+                            ${attEvent ? `<span style="font-family:var(--font-mono); font-size:10px; background:var(--bg-input); padding:2px 6px; border-radius:4px; border:1px solid var(--border-default); color:var(--text-secondary);">${escapeHtml(attEvent)}</span>` : ''}
                             ${isLatest ? '<span style="font-size:9px; background:#22c55e; color:white; padding:1px 6px; border-radius:4px; font-weight:600;">LATEST</span>' : ''}
                         </div>
-                        <span style="font-family:var(--font-mono); color:var(--text-tertiary); font-size:11px;">⏰ ${escapeHtml(attTime)}</span>
+                        <span style="font-family:var(--font-mono); color:var(--text-tertiary); font-size:11px;">Time: ${escapeHtml(attTime)}</span>
                     </div>
                     <div style="display:flex; gap:16px; color:var(--text-secondary); font-size:11px; margin-top:2px;">
-                        <span>⏱️ Duration: <b style="color:var(--text-primary); font-family:var(--font-mono);">${attDur}</b></span>
-                        <span>🤖 AI Job ID: <b style="color:var(--accent); font-family:var(--font-mono);">${attAiId}</b></span>
+                        <span>Duration: <b style="color:var(--text-primary); font-family:var(--font-mono);">${attDur}</b></span>
+                        <span>AI Job ID: <b style="color:var(--accent); font-family:var(--font-mono);">${attAiId}</b></span>
                     </div>
                     ${att.summary ? `<div style="color:var(--text-secondary); font-size:11px; font-style:italic; margin-top:2px;">Summary: "${escapeHtml(att.summary)}"</div>` : ''}
                 </div>
@@ -368,36 +506,38 @@ function renderTranscriptInModal(rawTranscript) {
     }
 
     let html = '';
-    items.forEach(turn => {
+    items.forEach((turn, turnIdx) => {
         if (typeof turn === 'object' && turn !== null) {
             const botText = turn.bot || turn.agent || turn.assistant;
             const userText = turn.user || turn.customer || turn.caller;
+            const turnTime = turn.timestamp || turn.start_time || turn.start;
+            const seekAttr = (turnTime !== undefined && !isNaN(Number(turnTime))) ? `onclick="seekAudioToTurn(${Number(turnTime)})" title="Click to jump audio"` : '';
 
             if (botText) {
                 html += `
-                    <div style="align-self:flex-start; max-width:85%; background:var(--bg-elevated); border:1px solid var(--border-default); border-radius:6px; border-bottom-left-radius:2px; padding:8px 12px; font-size:var(--text-xs); line-height:1.4;">
-                        <b style="color:var(--accent); font-size:11px; display:block; margin-bottom:2px;">🤖 AI Agent</b>
+                    <div class="transcript-bubble" ${seekAttr} style="align-self:flex-start; max-width:85%; background:var(--bg-elevated); border:1px solid var(--border-default); border-radius:6px; border-bottom-left-radius:2px; padding:8px 12px; font-size:var(--text-xs); line-height:1.4;">
+                        <b style="color:var(--accent); font-size:11px; display:block; margin-bottom:2px;">AI Agent</b>
                         ${escapeHtml(botText)}
                     </div>
                 `;
             }
             if (userText) {
                 html += `
-                    <div style="align-self:flex-end; max-width:85%; background:var(--accent); color:white; border-radius:6px; border-bottom-right-radius:2px; padding:8px 12px; font-size:var(--text-xs); line-height:1.4;">
-                        <b style="color:rgba(255,255,255,0.8); font-size:11px; display:block; margin-bottom:2px;">👤 Caller</b>
+                    <div class="transcript-bubble" ${seekAttr} style="align-self:flex-end; max-width:85%; background:var(--accent); color:white; border-radius:6px; border-bottom-right-radius:2px; padding:8px 12px; font-size:var(--text-xs); line-height:1.4;">
+                        <b style="color:rgba(255,255,255,0.8); font-size:11px; display:block; margin-bottom:2px;">Caller</b>
                         ${escapeHtml(userText)}
                     </div>
                 `;
             }
             if (turn.role && (turn.content || turn.text)) {
                 const isAssistant = turn.role === 'assistant' || turn.role === 'agent' || turn.role === 'bot';
-                const label = isAssistant ? '🤖 AI Agent' : '👤 Caller';
+                const label = isAssistant ? 'AI Agent' : 'Caller';
                 const bgStyle = isAssistant
                     ? 'background:var(--bg-elevated); border:1px solid var(--border-default); align-self:flex-start; border-bottom-left-radius:2px;'
                     : 'background:var(--accent); color:white; align-self:flex-end; border-bottom-right-radius:2px;';
                 const labelColor = isAssistant ? 'color:var(--accent);' : 'color:rgba(255,255,255,0.8);';
                 html += `
-                    <div style="max-width:85%; border-radius:6px; padding:8px 12px; font-size:var(--text-xs); line-height:1.4; ${bgStyle}">
+                    <div class="transcript-bubble" ${seekAttr} style="max-width:85%; border-radius:6px; padding:8px 12px; font-size:var(--text-xs); line-height:1.4; ${bgStyle}">
                         <b style="${labelColor} font-size:11px; display:block; margin-bottom:2px;">${label}</b>
                         ${escapeHtml(turn.content || turn.text || '')}
                     </div>
@@ -503,6 +643,149 @@ function formatTranscriptForCopy(rawTranscript) {
     return lines.join('\n\n');
 }
 
+function showToast(message, type = 'info', duration = 3000) {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    container.appendChild(toast);
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(-6px)';
+        setTimeout(() => toast.remove(), 250);
+    }, duration);
+}
+
+function seekAudioToTurn(approxSeconds) {
+    const audio = document.getElementById('modal-audio-player');
+    if (audio && audio.src && !isNaN(approxSeconds) && approxSeconds >= 0) {
+        audio.currentTime = approxSeconds;
+        audio.play().catch(() => {});
+        showToast(`Seeking audio to ${Math.floor(approxSeconds / 60)}m ${Math.floor(approxSeconds % 60)}s`, 'info');
+    }
+}
+
+function setAudioSpeed(speed) {
+    const audio = document.getElementById('modal-audio-player');
+    if (audio) {
+        audio.playbackRate = speed;
+        document.querySelectorAll('.speed-btn').forEach(btn => {
+            btn.classList.toggle('active', parseFloat(btn.dataset.speed) === speed);
+        });
+        showToast(`Playback speed set to ${speed}x`, 'info');
+    }
+}
+
+function downloadModalAudio() {
+    const audio = document.getElementById('modal-audio-player');
+    const callId = document.getElementById('modal-call-id')?.textContent.replace(/^#/, '').trim() || 'recording';
+    if (!audio || !audio.src) {
+        showToast('No audio recording available for download', 'error');
+        return;
+    }
+    const a = document.createElement('a');
+    a.href = audio.src;
+    a.download = `call_${callId}.mp3`;
+    a.target = '_blank';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    showToast('Starting audio recording download', 'success');
+}
+
+function switchModalTab(tabName) {
+    document.querySelectorAll('.modal-tab-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tabName);
+    });
+    document.querySelectorAll('.modal-tab-panel').forEach(panel => {
+        if (tabName === 'all') {
+            panel.classList.add('active');
+        } else {
+            panel.classList.toggle('active', panel.dataset.panel === tabName);
+        }
+    });
+}
+
+function navigateModalCall(direction) {
+    const newIndex = currentModalIndex + direction;
+    if (newIndex >= 0 && newIndex < currentCallHistoryData.length) {
+        openCallModalByIndex(newIndex);
+    }
+}
+
+async function redialCurrentCall() {
+    if (currentModalIndex < 0 || !currentCallHistoryData[currentModalIndex]) return;
+    const call = currentCallHistoryData[currentModalIndex];
+    const phone = call.caller_number || call.client_phone || call.called_number;
+    if (!phone) {
+        showToast('No valid phone number found for redial', 'error');
+        return;
+    }
+    const confirmed = confirm(`Initiate outbound redial to ${phone}?`);
+    if (!confirmed) return;
+
+    try {
+        const payload = {
+            client_phone: phone,
+            client_name: call.client_name || call.call_log_raw?.client_name || 'Caller',
+            prompt: call.call_log_raw?.metadata?.prompt || call.call_log_raw?.prompt || 'Outbound consultation follow-up',
+            trunk_id: call.trunk_id || undefined
+        };
+        const res = await apiFetch('/v1/webhooks/telephony', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+        if (res.error) {
+            showToast(`Redial failed: ${res.error}`, 'error');
+        } else {
+            showToast(`Redial initiated for ${phone}`, 'success');
+            setTimeout(() => loadCallHistory(1), 1500);
+        }
+    } catch (e) {
+        showToast(`Redial request failed: ${e.message}`, 'error');
+    }
+}
+
+function exportFilteredCalls(format = 'csv') {
+    if (!currentCallHistoryData || currentCallHistoryData.length === 0) {
+        showToast('No call records available to export', 'error');
+        return;
+    }
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    if (format === 'csv') {
+        const headers = ['Call ID', 'Status', 'Phone / Client', 'Trunk', 'Duration Seconds', 'Created At', 'Summary'];
+        const rows = currentCallHistoryData.map(c => [
+            c.call_id || '',
+            c.status || '',
+            c.caller_number || c.client_phone || c.client_name || '',
+            c.trunk_id || '',
+            c.duration || 0,
+            c.created_at || '',
+            (c.summary || c.call_log_raw?.ai_summary || '').replace(/"/g, '""')
+        ]);
+        const csvContent = [headers.join(','), ...rows.map(r => r.map(f => `"${f}"`).join(','))].join('\n');
+        downloadBlob(csvContent, `call_logs_${timestamp}.csv`, 'text/csv');
+        showToast(`Exported ${currentCallHistoryData.length} records to CSV`, 'success');
+    } else if (format === 'json') {
+        const jsonContent = JSON.stringify(currentCallHistoryData, null, 2);
+        downloadBlob(jsonContent, `call_logs_${timestamp}.json`, 'application/json');
+        showToast(`Exported ${currentCallHistoryData.length} records to JSON`, 'success');
+    }
+}
+
+function downloadBlob(content, filename, mimeType) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
 function copyToClipboard(text, btnElement) {
     if (typeof text !== 'string') {
         text = text ? String(text) : '';
@@ -510,6 +793,7 @@ function copyToClipboard(text, btnElement) {
     if (!text.trim()) return;
 
     const onSuccess = () => {
+        showToast('Copied to clipboard', 'success');
         if (!btnElement) return;
         if (btnElement.dataset.copyTimeout) {
             clearTimeout(Number(btnElement.dataset.copyTimeout));
@@ -845,27 +1129,132 @@ document.addEventListener('DOMContentLoaded', () => {
     if (username) document.getElementById('nav-username').textContent = username;
 
     loadMetrics();
-    loadCallHistory();
+    loadSystemStatus();
+    loadCallHistory(1);
     connectSSE();
     addFeedItem('Dashboard connected', 'info');
 
+    document.getElementById('system-status')?.addEventListener('click', toggleSystemStatusDetails);
+    document.addEventListener('click', (event) => {
+        const wrapper = document.querySelector('.system-status-wrap');
+        const popover = document.getElementById('system-status-popover');
+        const indicator = document.getElementById('system-status');
+        if (wrapper && popover && indicator && !wrapper.contains(event.target)) {
+            popover.hidden = true;
+            indicator.setAttribute('aria-expanded', 'false');
+        }
+    });
+
     // Event listeners for DB search & filtering
     document.getElementById('call-search-input')?.addEventListener('input', () => {
-        loadCallHistory();
+        loadCallHistory(1);
     });
 
     document.getElementById('call-status-filter')?.addEventListener('change', () => {
-        loadCallHistory();
+        loadCallHistory(1);
     });
 
     document.getElementById('btn-refresh-history')?.addEventListener('click', () => {
         loadMetrics();
-        loadCallHistory();
+        loadCallHistory(currentPage);
+        showToast('Refreshing metrics and call history', 'info');
+    });
+
+    // Pagination controls
+    document.getElementById('btn-prev-page')?.addEventListener('click', () => {
+        if (currentPage > 1) {
+            loadCallHistory(currentPage - 1);
+        }
+    });
+
+    document.getElementById('btn-next-page')?.addEventListener('click', () => {
+        loadCallHistory(currentPage + 1);
+    });
+
+    document.getElementById('pagination-page-size')?.addEventListener('change', (e) => {
+        pageSize = parseInt(e.target.value, 10) || 50;
+        loadCallHistory(1);
+    });
+
+    // Export buttons
+    document.getElementById('btn-export-csv')?.addEventListener('click', () => {
+        exportFilteredCalls('csv');
+    });
+
+    document.getElementById('btn-export-json')?.addEventListener('click', () => {
+        exportFilteredCalls('json');
+    });
+
+    // Modal tabs
+    document.querySelectorAll('.modal-tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            switchModalTab(btn.dataset.tab);
+        });
+    });
+
+    // Audio player speed controls
+    document.querySelectorAll('.speed-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            setAudioSpeed(parseFloat(btn.dataset.speed));
+        });
+    });
+
+    // Audio download button
+    document.getElementById('btn-download-audio')?.addEventListener('click', () => {
+        downloadModalAudio();
+    });
+
+    // Modal call navigation
+    document.getElementById('btn-prev-modal-call')?.addEventListener('click', () => {
+        navigateModalCall(-1);
+    });
+
+    document.getElementById('btn-next-modal-call')?.addEventListener('click', () => {
+        navigateModalCall(1);
+    });
+
+    document.getElementById('btn-redial-modal-call')?.addEventListener('click', () => {
+        redialCurrentCall();
+    });
+
+    // Global keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+        const modal = document.getElementById('call-detail-modal');
+        const isModalOpen = modal && !modal.classList.contains('hidden');
+        const isInputActive = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+
+        if (e.key === 'Escape' && isModalOpen) {
+            closeCallModal();
+        } else if (e.key === '/' && !isInputActive) {
+            e.preventDefault();
+            const searchInput = document.getElementById('call-search-input');
+            if (searchInput) {
+                searchInput.focus();
+                searchInput.select();
+            }
+        } else if (isModalOpen && !isInputActive) {
+            if (e.key === 'ArrowLeft' || e.key === 'k') {
+                navigateModalCall(-1);
+            } else if (e.key === 'ArrowRight' || e.key === 'j') {
+                navigateModalCall(1);
+            } else if (e.key === ' ') {
+                const audio = document.getElementById('modal-audio-player');
+                if (audio && audio.src) {
+                    e.preventDefault();
+                    if (audio.paused) {
+                        audio.play().catch(() => {});
+                    } else {
+                        audio.pause();
+                    }
+                }
+            }
+        }
     });
 
     // Refresh metrics & sync call history every 15s
     setInterval(() => {
         loadMetrics();
-        loadCallHistory();
+        loadSystemStatus();
+        loadCallHistory(currentPage);
     }, 15000);
 });

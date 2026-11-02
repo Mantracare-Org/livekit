@@ -1,6 +1,6 @@
 # API Server
 
-**File:** `mantra/ui_server.py` (4,489 lines)
+**File:** `mantra/ui_server.py` (225 lines) + decomposed routes in `mantra/routers/` and `mantra/services/`
 
 ## Overview
 

@@ -351,16 +351,25 @@ async def finalize(cc: CallContext, history_snapshot: list):
             caller_number = call_payload.get("call_from") or call_payload.get("caller_number") or cc.call_state.get("caller_phone_number") or ""
             called_number = call_payload.get("client_phone") or call_payload.get("client_phone_number") or call_payload.get("called_number") or ""
             call_trunk_id = call_payload.get("call_from_id") or call_payload.get("trunk_id") or ""
+            # Ensure event name is explicitly preserved in the saved payload log
+            saved_log_data = {
+                "event": webhook_payload.get("event"),
+                **(webhook_payload.get("data", {}) if isinstance(webhook_payload.get("data"), dict) else {})
+            }
+            final_status = call_status
+            if not final_status and (duration > 0 or transcript_data or recording_url):
+                final_status = "Completed"
+
             await save_call_log_to_db(
                 call_id=str(c_id),
-                call_log=json.dumps(webhook_payload.get("data", {}), indent=2),
-                status=call_status,
+                call_log=json.dumps(saved_log_data, indent=2),
+                status=final_status,
                 recording_url=recording_url,
                 caller_number=caller_number,
                 called_number=called_number,
                 trunk_id=call_trunk_id,
             )
-            logger.info(f"[DIAG] finalize(): Call log saved to DB for call_id={c_id}")
+            logger.info(f"[DIAG] finalize(): Call log saved to DB for call_id={c_id} with event={webhook_payload.get('event')}")
         except Exception as db_err:
             logger.error(f"[DIAG] finalize(): Error calling save_call_log_to_db: {db_err}")
 

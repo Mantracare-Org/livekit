@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 from fastapi.responses import FileResponse, JSONResponse
-from mantra.services.health import _run_health_checks
+from mantra.services.health import _run_health_checks, _run_dependency_checks
 import os
 
 import logging
@@ -48,4 +48,26 @@ async def health():
     return JSONResponse(
         content={"healthy": healthy}
     )
+
+@router.get("/health/details")
+async def health_details():
+    try:
+        all_ok, checks = await _run_dependency_checks()
+        formatted_checks = {
+            k: (v is True) for k, v in checks.items()
+        }
+        return JSONResponse(
+            content={
+                "healthy": all_ok,
+                "checks": formatted_checks,
+                "details": {k: str(v) for k, v in checks.items()},
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error checking health details: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"healthy": False, "checks": {}, "error": str(e)},
+        )
+
 

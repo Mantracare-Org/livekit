@@ -1,5 +1,46 @@
 # Changelog
 
+## 2026-10-28
+
+### Status Cell Layout, Attempt Badge Overflow Fix & Completed Call Resolution
+
+- **ui & table:** Fixed the table status column text wrapping and mangled attempt badge rendering in `static/dashboard.html` and `static/dashboard.js`. Wrapped status dot, text, and retry badges into `.status-cell-wrap` (`display: inline-flex; align-items: center; white-space: nowrap;`). Created `.badge-attempt` with `white-space: nowrap !important; flex-shrink: 0;` and subtle bordered badge styling, preventing pills from wrapping onto multiple lines or overlapping text.
+- **backend & status:** Resolved connected call status in `mantra/routers/dashboard.py` and `mantra/core/finalize.py`. Calls with recorded duration, transcripts, or audio recordings that had `status IS NULL` (due to downstream JEV stage delegation) now correctly resolve to `Completed` rather than displaying `Unknown`, both in the call history table and in aggregate today metrics (`completed_calls`, `avg_duration_seconds`).
+- **cleanup:** Purged transient verification test rows from local PostgreSQL database.
+- **Files:** `static/dashboard.html`, `static/dashboard.js`, `mantra/routers/dashboard.py`, `mantra/core/finalize.py`, `obsidian/Development/Changelog.md`.
+
+### System Health Status Indicator & Webhook Payload Event Persistence
+
+- **ui & health:** Restored the live "All systems operational" health badge (`#system-status`) in the dashboard navigation bar with periodic polling (`GET /health`), dynamic operational/degraded state styling, and interactive breakdown popover (`GET /health/details`) displaying per-service statuses.
+- **backend & api:** Added `/health/details` endpoint to `mantra/routers/pages.py` querying `_run_dependency_checks()` across Redis, PostgreSQL, STT (Deepgram), LiveKit, MantraAssist backend, and S3.
+- **core & payload:** Updated `mantra/core/finalize.py` and `mantra/utils.py` to preserve and persist the webhook `event` name (`CALL_DATA_UPDATE`, `CALL_RETRY`, `CALL_DATA_INBOUND_UPDATE`) directly inside `call_logs.call_log` JSON and within the `attempts` history array.
+- **ui & modal:** Exposed `event` attribute in `mantra/routers/dashboard.py` with intelligent backward-compatible fallback for historical records; surfaced the Event badge in the Call Detail Modal overview grid and retry attempt timeline.
+- **Files:** `static/dashboard.html`, `static/dashboard.js`, `mantra/core/finalize.py`, `mantra/utils.py`, `mantra/routers/dashboard.py`, `mantra/routers/pages.py`, `obsidian/Features/Dashboard.md`, `obsidian/Development/Changelog.md`.
+
+## 2026-10-27
+
+### Operations Dashboard UI/UX Modernization & Controls
+
+- **feat & ui:** Added server-side pagination bar to the Call History table with dynamic page size options (`25`, `50`, `100`, `200`), record range indicators (`Showing X to Y of Z calls`), and disabled boundary buttons.
+- **feat & export:** Implemented client-side data export to CSV (`Export CSV`) and formatted JSON (`Export JSON`) with automatic file downloading.
+- **feat & audio:** Added audio recording playback speed selectors (`1x`, `1.25x`, `1.5x`, `2x`), dedicated **Download MP3** button, and transcript click-to-seek synchronization (clicking dialogue turns jumps audio player).
+- **feat & modal:** Added tabbed navigation inside the Call Log Details modal (`Overview & Summary`, `Transcript`, `Retry History`, `Raw Payload`, `All Sections`), inline Previous/Next call navigation buttons (`← Prev`, `Next →`), and an outbound Redial trigger button.
+- **ux & feedback:** Implemented floating toast notification system (`#toast-container`) for copy actions, exports, and audio seek events; added animated green speaking pulse indicator on active call cards.
+- **ux & shortcuts:** Integrated global keyboard navigation: `/` to focus search, `Esc` to close modal, `j`/`k` or arrow keys to browse calls, and `Space` to toggle audio play/pause.
+- **Files:** `static/dashboard.html`, `static/dashboard.js`, `obsidian/Features/Dashboard.md`, `obsidian/Development/Changelog.md`.
+
+## 2026-10-26
+
+### Call Log Modal One-Click Copy & Formatted Dialogue Export
+
+- **feat & ui:** Added dedicated one-click copy buttons in the Call Log Details modal on the operations dashboard (`static/dashboard.html` and `static/dashboard.js`):
+  - **Copy Summary:** Copies the AI-generated call summary directly to the system clipboard.
+  - **Copy Transcript:** Formats multi-turn conversation bubbles into clean plain-text dialogue (`Caller: ...` / `Agent: ...`), handles raw string and structured array payloads, and copies to clipboard.
+  - **Copy Payload:** Copies raw PostgreSQL JSON log payloads to clipboard with formatted indentation.
+- **ux:** Added interactive visual feedback with SVG copy/check icons and automatic 2-second timeout state reset.
+- **docs:** Synchronized feature documentation in `obsidian/Features/Dashboard.md`.
+- **Files:** `static/dashboard.html`, `static/dashboard.js`, `obsidian/Features/Dashboard.md`, `obsidian/Development/Changelog.md`.
+
 ## 2026-10-19
 
 ### Zero Cold-Start Latency & Precomputed Initial Greeting

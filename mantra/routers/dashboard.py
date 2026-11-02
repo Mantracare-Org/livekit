@@ -76,16 +76,23 @@ async def dashboard_metrics(request: Request):
             row = await conn.fetchrow("""
                 SELECT
                     COUNT(*)::int AS total_calls,
-                    COUNT(*) FILTER (WHERE status = 'Completed')::int AS completed_calls,
+                    COUNT(*) FILTER (
+                        WHERE status = 'Completed' 
+                           OR (status IS NULL AND (call_log::json ->> 'call_duration' IS NOT NULL OR call_log::json ->> 'call_duration_seconds' IS NOT NULL))
+                    )::int AS completed_calls,
                     COUNT(*) FILTER (WHERE status = 'Busy')::int AS busy_calls,
                     COUNT(*) FILTER (WHERE status = 'No Answer')::int AS no_answer_calls,
                     COUNT(*) FILTER (WHERE status = 'Error')::int AS error_calls,
                     COUNT(*) FILTER (WHERE status = 'Incomplete')::int AS incomplete_calls,
                     ROUND(
                         AVG(
-                            CAST(NULLIF(call_log::json ->> 'call_duration_seconds', '') AS integer)
+                            COALESCE(
+                                CAST(NULLIF(call_log::json ->> 'call_duration_seconds', '') AS integer),
+                                CAST(NULLIF(call_log::json ->> 'call_duration', '') AS integer)
+                            )
                         ) FILTER (
-                            WHERE call_log::json ->> 'call_duration_seconds' ~ '^\\d+$'
+                            WHERE (call_log::json ->> 'call_duration_seconds' ~ '^\\d+$')
+                               OR (call_log::json ->> 'call_duration' ~ '^\\d+$')
                         )
                     )::int AS avg_duration_seconds
                 FROM call_logs
@@ -141,7 +148,10 @@ async def dashboard_calls(request: Request, limit: int = 20, offset: int = 0, se
 
             if status and status.strip() and status.lower() != "all":
                 st_clean = status.strip().replace(" ", "").replace("_", "").lower()
-                conditions.append(f"REPLACE(REPLACE(LOWER(status), '_', ''), ' ', '') LIKE ${param_idx}")
+                if st_clean == "completed":
+                    conditions.append(f"(REPLACE(REPLACE(LOWER(COALESCE(status, '')), '_', ''), ' ', '') LIKE ${param_idx} OR (status IS NULL AND (call_log::text ILIKE '%call_duration%' OR call_log::text ILIKE '%transcript%')))")
+                else:
+                    conditions.append(f"REPLACE(REPLACE(LOWER(COALESCE(status, '')), '_', ''), ' ', '') LIKE ${param_idx}")
                 params.append(f"%{st_clean}%")
                 param_idx += 1
 
@@ -198,18 +208,43 @@ async def dashboard_calls(request: Request, limit: int = 20, offset: int = 0, se
                 or cl.get("provider")
                 or ""
             )
+
+            status_val = row["status"]
+            if not status_val or str(status_val).lower() in ("none", "null", "unknown"):
+                dur_val = cl.get("call_duration_seconds") if cl.get("call_duration_seconds") is not None else cl.get("call_duration")
+                try:
+                    dur_int = int(dur_val) if dur_val is not None else 0
+                except (ValueError, TypeError):
+                    dur_int = 0
+                if dur_int > 0 or cl.get("call_transcript") or cl.get("call_recording"):
+                    status_val = "Completed"
+                else:
+                    status_val = "Unknown"
+
+            event_val = cl.get("event")
+            if not event_val:
+                if cl.get("kb_id") or cl.get("org_id") or cl.get("client_phone_number"):
+                    event_val = "CALL_DATA_INBOUND_UPDATE"
+                elif status_val in ("No Answer", "Busy"):
+                    event_val = "CALL_RETRY"
+                else:
+                    event_val = "CALL_DATA_UPDATE"
+            if "event" not in cl and event_val:
+                cl["event"] = event_val
+
             calls.append(
                 {
                     "call_id": str(row["call_id"]),
-                    "status": row["status"],
+                    "status": status_val,
                     "recording_url": row["recording_url"] or "",
                     "created_at": row["created_at"].isoformat() if row["created_at"] else None,
                     "caller_number": row["caller_number"] or cl.get("caller_number") or cl.get("client_phone") or "",
                     "called_number": row["called_number"] or cl.get("called_number") or "",
                     "trunk_id": trunk_val,
+                    "event": event_val,
                     "client_name": cl.get("client_name") or cl.get("client_id") or "",
                     "client_phone": cl.get("client_phone") or row["caller_number"] or "",
-                    "duration": cl.get("call_duration_seconds"),
+                    "duration": cl.get("call_duration_seconds") if cl.get("call_duration_seconds") is not None else cl.get("call_duration"),
                     "summary": cl.get("ai_summary") or cl.get("summary") or "",
                     "transcript": cl.get("call_transcript") or cl.get("transcript") or cl.get("conversation") or None,
                     "purpose": (cl.get("prompt") or "")[:120],
