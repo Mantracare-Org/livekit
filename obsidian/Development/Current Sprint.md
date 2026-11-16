@@ -1,8 +1,10 @@
 # Current Sprint
 
 > **Sprint:** N/A (no formal sprint process)  
-> **Last Updated:** 2026-10-06  
-> **Status:** Active maintenance, Zero-Runtime Outbound KB Pre-Fetching & Action Payload Support
+> **Last Updated:** 2026-11-16  
+> **Status:** Active maintenance, Warm Transfer Enablement & 080-456-80727 Target Routing
+
+- [x] **Warm Transfer Enablement & Target Number Configuration (2026-11-16):** Removed conflicting Rule 4 in `CRITICAL OVERRIDING RULES` in `mantra/prompts.py` which previously instructed the LLM to apologize and claim human transfer is unavailable. Added explicit prompt guidance and updated `transfer_to_human` function tool description in `mantra/core/assistant_functions.py` to recognize phonetic STT transcriptions (e.g. "recipient device" for receptionist, "executor" for executive) as transfer requests. Configured target number `080-456-80727` (`+918045680727`) across `.env`, `.env.local`, and normalized in `mantra/core/assistant_functions.py`. Added handoff/silent guards in `inactivity_monitor` and `farewell_safety_net` (`mantra/core/call_monitors.py`) to prevent premature inactivity timeouts during live human calls. Files: `mantra/prompts.py`, `mantra/core/assistant_functions.py`, `mantra/core/call_monitors.py`, `.env`, `.env.local`.
 
 - [x] **Call Transfer Recording Track Overlap Fix (2026-10-08):** Added track start time offset tracking (`self._track_offsets`) in `SessionRecorder` (`mantra/utils.py`). When a new audio track is subscribed (such as a late-joining human manager during call transfer), its start offset relative to `self.start_time` is recorded. In `get_combined_mp3_bytes()`, leading silence samples (`offset_sec * SAMPLE_RATE`) are prepended to each track array before audio mixing, ensuring chronological alignment across all participants without audio overlap. Files: `mantra/utils.py`.
 

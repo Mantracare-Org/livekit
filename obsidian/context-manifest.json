@@ -1,0 +1,603 @@
+{
+  "updatedAt": "2026-11-14T00:14:48.614Z",
+  "vaultName": "obsidian",
+  "stats": {
+    "memories": 0,
+    "skills": 96,
+    "projects": 1,
+    "sessions": 9
+  },
+  "skills": [
+    {
+      "name": "antigravity-obsidian",
+      "scope": "global",
+      "description": "Obsidian for Antigravity — Always-active Technical Second Brain, Persistent Memory & Hermes Closed Loop. Active across all development tasks, debugging sessions",
+      "relPath": "Antigravity/Skills/antigravity-obsidian.md"
+    },
+    {
+      "name": "api-and-interface-design",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/api-and-interface-design.md"
+    },
+    {
+      "name": "api-design",
+      "scope": "project",
+      "description": "REST API design patterns including resource naming, status codes, pagination, filtering, error responses, versioning, and rate limiting for production APIs. Use",
+      "relPath": "Antigravity/Skills/api-design.md"
+    },
+    {
+      "name": "ask-matt",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/ask-matt.md"
+    },
+    {
+      "name": "assist-api-integration",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/assist-api-integration.md"
+    },
+    {
+      "name": "assist-review",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/assist-review.md"
+    },
+    {
+      "name": "browser-testing-with-devtools",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/browser-testing-with-devtools.md"
+    },
+    {
+      "name": "chief-of-staff",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/chief-of-staff.md"
+    },
+    {
+      "name": "ci-cd-and-automation",
+      "scope": "project",
+      "description": "Automates CI/CD pipeline setup. Use when setting up or modifying build and deployment pipelines. Use when you need to automate quality gates, configure test run",
+      "relPath": "Antigravity/Skills/ci-cd-and-automation.md"
+    },
+    {
+      "name": "claude-handoff",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/claude-handoff.md"
+    },
+    {
+      "name": "code-review-and-quality",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/code-review-and-quality.md"
+    },
+    {
+      "name": "code-review",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/code-review.md"
+    },
+    {
+      "name": "code-simplification",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/code-simplification.md"
+    },
+    {
+      "name": "codebase-design",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/codebase-design.md"
+    },
+    {
+      "name": "codebase-mapper",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/codebase-mapper.md"
+    },
+    {
+      "name": "coding-standards",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/coding-standards.md"
+    },
+    {
+      "name": "constraint-driven-development",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/constraint-driven-development.md"
+    },
+    {
+      "name": "context-compressor",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/context-compressor.md"
+    },
+    {
+      "name": "context-engineering",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/context-engineering.md"
+    },
+    {
+      "name": "context-fetch",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/context-fetch.md"
+    },
+    {
+      "name": "context-health-monitor",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/context-health-monitor.md"
+    },
+    {
+      "name": "debugger",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/debugger.md"
+    },
+    {
+      "name": "debugging-and-error-recovery",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/debugging-and-error-recovery.md"
+    },
+    {
+      "name": "deprecation-and-migration",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/deprecation-and-migration.md"
+    },
+    {
+      "name": "diagnosing-bugs",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/diagnosing-bugs.md"
+    },
+    {
+      "name": "documentation-and-adrs",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/documentation-and-adrs.md"
+    },
+    {
+      "name": "domain-modeling",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/domain-modeling.md"
+    },
+    {
+      "name": "doubt-driven-development",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/doubt-driven-development.md"
+    },
+    {
+      "name": "e2e-testing",
+      "scope": "project",
+      "description": "Playwright E2E testing patterns, Page Object Model, configuration, CI/CD integration, artifact management, and flaky test strategies. Use when writing Playwrigh",
+      "relPath": "Antigravity/Skills/e2e-testing.md"
+    },
+    {
+      "name": "empirical-validation",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/empirical-validation.md"
+    },
+    {
+      "name": "executor",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/executor.md"
+    },
+    {
+      "name": "find-skills",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/find-skills.md"
+    },
+    {
+      "name": "frontend-patterns",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/frontend-patterns.md"
+    },
+    {
+      "name": "frontend-ui-engineering",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/frontend-ui-engineering.md"
+    },
+    {
+      "name": "git-guardrails-claude-code",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/git-guardrails-claude-code.md"
+    },
+    {
+      "name": "git-workflow-and-versioning",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/git-workflow-and-versioning.md"
+    },
+    {
+      "name": "grill-me",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/grill-me.md"
+    },
+    {
+      "name": "grill-with-docs",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/grill-with-docs.md"
+    },
+    {
+      "name": "grilling",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/grilling.md"
+    },
+    {
+      "name": "handoff",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/handoff.md"
+    },
+    {
+      "name": "idea-refine",
+      "scope": "project",
+      "description": "Refines raw ideas into sharp, actionable concepts through structured divergent and convergent thinking. Use when an idea is still vague, when you need to stress",
+      "relPath": "Antigravity/Skills/idea-refine.md"
+    },
+    {
+      "name": "implement-spec",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/implement-spec.md"
+    },
+    {
+      "name": "implement",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/implement.md"
+    },
+    {
+      "name": "improve-codebase-architecture",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/improve-codebase-architecture.md"
+    },
+    {
+      "name": "incremental-implementation",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/incremental-implementation.md"
+    },
+    {
+      "name": "interview-me",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/interview-me.md"
+    },
+    {
+      "name": "kiosk-workflow",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/kiosk-workflow.md"
+    },
+    {
+      "name": "langgraph-agent-dev",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/langgraph-agent-dev.md"
+    },
+    {
+      "name": "loop-me",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/loop-me.md"
+    },
+    {
+      "name": "migrate-to-shoehorn",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/migrate-to-shoehorn.md"
+    },
+    {
+      "name": "observability-and-instrumentation",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/observability-and-instrumentation.md"
+    },
+    {
+      "name": "performance-optimization",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/performance-optimization.md"
+    },
+    {
+      "name": "plan-checker",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/plan-checker.md"
+    },
+    {
+      "name": "planner",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/planner.md"
+    },
+    {
+      "name": "planning-and-task-breakdown",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/planning-and-task-breakdown.md"
+    },
+    {
+      "name": "pr",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/pr.md"
+    },
+    {
+      "name": "prisma-cli",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/prisma-cli.md"
+    },
+    {
+      "name": "prisma-client-api",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/prisma-client-api.md"
+    },
+    {
+      "name": "prisma-compute",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/prisma-compute.md"
+    },
+    {
+      "name": "prisma-database-setup",
+      "scope": "project",
+      "description": "Guides for configuring Prisma with different database providers (PostgreSQL, MySQL, SQLite, MongoDB, etc.). Use when setting up a new project, changing database",
+      "relPath": "Antigravity/Skills/prisma-database-setup.md"
+    },
+    {
+      "name": "prisma-driver-adapter-implementation",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/prisma-driver-adapter-implementation.md"
+    },
+    {
+      "name": "prisma-postgres-setup",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/prisma-postgres-setup.md"
+    },
+    {
+      "name": "prisma-postgres",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/prisma-postgres.md"
+    },
+    {
+      "name": "prisma-upgrade-v7",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/prisma-upgrade-v7.md"
+    },
+    {
+      "name": "prod-deployment",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/prod-deployment.md"
+    },
+    {
+      "name": "prototype",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/prototype.md"
+    },
+    {
+      "name": "reception-launch",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/reception-launch.md"
+    },
+    {
+      "name": "research",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/research.md"
+    },
+    {
+      "name": "retro",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/retro.md"
+    },
+    {
+      "name": "scaffold-exercises",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/scaffold-exercises.md"
+    },
+    {
+      "name": "secrets-hygiene",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/secrets-hygiene.md"
+    },
+    {
+      "name": "security-and-hardening",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/security-and-hardening.md"
+    },
+    {
+      "name": "setup-matt-pocock-skills",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/setup-matt-pocock-skills.md"
+    },
+    {
+      "name": "setup-pre-commit",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/setup-pre-commit.md"
+    },
+    {
+      "name": "setup-ts-deep-modules",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/setup-ts-deep-modules.md"
+    },
+    {
+      "name": "shipping-and-launch",
+      "scope": "project",
+      "description": "Prepares production launches. Use when preparing to deploy to production, or when asking what needs to be in place before shipping. Use when you need a pre-laun",
+      "relPath": "Antigravity/Skills/shipping-and-launch.md"
+    },
+    {
+      "name": "source-driven-development",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/source-driven-development.md"
+    },
+    {
+      "name": "spec-driven-development",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/spec-driven-development.md"
+    },
+    {
+      "name": "tdd",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/tdd.md"
+    },
+    {
+      "name": "teach",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/teach.md"
+    },
+    {
+      "name": "test-driven-development",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/test-driven-development.md"
+    },
+    {
+      "name": "to-questionnaire",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/to-questionnaire.md"
+    },
+    {
+      "name": "to-spec",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/to-spec.md"
+    },
+    {
+      "name": "to-tickets",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/to-tickets.md"
+    },
+    {
+      "name": "token-budget",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/token-budget.md"
+    },
+    {
+      "name": "triage",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/triage.md"
+    },
+    {
+      "name": "ui-skills",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/ui-skills.md"
+    },
+    {
+      "name": "using-agent-skills",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/using-agent-skills.md"
+    },
+    {
+      "name": "verifier",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/verifier.md"
+    },
+    {
+      "name": "wait-what",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/wait-what.md"
+    },
+    {
+      "name": "wayfinder",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/wayfinder.md"
+    },
+    {
+      "name": "wizard",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/wizard.md"
+    },
+    {
+      "name": "writing-beats",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/writing-beats.md"
+    },
+    {
+      "name": "writing-for-agents",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/writing-for-agents.md"
+    },
+    {
+      "name": "writing-fragments",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/writing-fragments.md"
+    },
+    {
+      "name": "writing-shape",
+      "scope": "global",
+      "description": "",
+      "relPath": "Antigravity/Skills/writing-shape.md"
+    }
+  ],
+  "memories": [],
+  "projects": [
+    "support-bot"
+  ],
+  "sessions": [
+    "2026-11-02 - lkt",
+    "2026-11-02 - support-bot",
+    "2026-11-03 - support-bot",
+    "2026-11-04 - mantra-mcp",
+    "2026-11-05 - support-bot",
+    "2026-11-10 - assist-ai",
+    "2026-11-10 - assist-monorepo",
+    "2026-11-10 - mantra-mcp",
+    "2026-11-12 - support-bot"
+  ]
+}

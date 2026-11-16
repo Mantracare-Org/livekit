@@ -192,15 +192,17 @@ class AssistantFunctions:
         return result
 
     @llm.function_tool(
-        description="Transfer the call to a human manager (Manager Jignesh) when requested by the caller, "
-                    "when unable to resolve their issue, or when human escalation is requested."
+        description="Warm transfer the call to a human executive, receptionist, representative, or manager when requested by the caller "
+                    "(e.g., asking to talk to an executive, receptionist, human, supervisor, or person), "
+                    "when unable to resolve their issue, or when warm transfer/human escalation is requested."
     )
     async def transfer_to_human(
         self,
-        reason: Annotated[str, "Why the human manager is needed — be specific about the user's request"],
+        reason: Annotated[str, "Why the human transfer is needed — be specific about the user's request"],
         department: Annotated[str, "The department to transfer to (e.g., refund, support, billing, general)"] = "general"
     ):
-        logger.info(f"Warm Transfer requested to Manager Jignesh. Reason: {reason}, Department: {department}")
+        manager_name = os.getenv("MANAGER_NAME", "Executive")
+        logger.info(f"Warm Transfer requested to {manager_name}. Reason: {reason}, Department: {department}")
 
         if self.handoff_triggered:
             logger.warning("Handoff already in progress — ignoring duplicate request")
@@ -212,15 +214,44 @@ class AssistantFunctions:
             self.call_state["handoff_triggered"] = True
             self.call_state["silent_mode"] = True
             self.call_state["transferred"] = True
-            self.call_state["manager_name"] = "Jignesh"
+            self.call_state["manager_name"] = manager_name
+            _force_disconnect_cancelled = self.call_state.get("_force_disconnect_cancelled")
+            if isinstance(_force_disconnect_cancelled, asyncio.Event):
+                _force_disconnect_cancelled.set()
 
         try:
             payload = json.loads(self.job_metadata) if self.job_metadata else {}
         except Exception:
             payload = {}
 
-        manager_number = os.getenv("TRANSFER_DEFAULT_NUMBER") or os.getenv("MANAGER_PHONE_NUMBER") or "+919015982614"
-        trunk_id = os.getenv("TRANSFER_SIP_TRUNK_ID") or payload.get("trunk_id") or payload.get("call_from_id") or ""
+        # Resolve target phone number from department mapping or defaults
+        target_raw = None
+        transfer_numbers_raw = os.getenv("TRANSFER_NUMBERS")
+        if transfer_numbers_raw:
+            try:
+                dept_map = json.loads(transfer_numbers_raw)
+                if isinstance(dept_map, dict):
+                    target_raw = dept_map.get(department.lower().strip())
+            except Exception:
+                pass
+        if not target_raw:
+            target_raw = os.getenv("TRANSFER_DEFAULT_NUMBER") or os.getenv("MANAGER_PHONE_NUMBER") or "+918045680727"
+
+        clean_num = str(target_raw).replace("-", "").replace(" ", "").strip()
+        if clean_num.startswith("+910") and len(clean_num) == 14:
+            manager_number = f"+91{clean_num[4:]}"
+        elif clean_num.startswith("+91") and len(clean_num) == 13:
+            manager_number = clean_num
+        elif clean_num.startswith("0") and len(clean_num) == 11:
+            manager_number = f"+91{clean_num[1:]}"
+        elif len(clean_num) == 10 and not clean_num.startswith("+"):
+            manager_number = f"+91{clean_num}"
+        elif clean_num and not clean_num.startswith("+"):
+            manager_number = f"+{clean_num}"
+        else:
+            manager_number = clean_num or "+918045680727"
+
+        trunk_id = os.getenv("TRANSFER_SIP_TRUNK_ID") or payload.get("trunk_id") or payload.get("call_from_id") or "ST_maHQuSjpJXNZ"
 
         if manager_number and trunk_id:
             try:
@@ -231,22 +262,22 @@ class AssistantFunctions:
                 )
                 timestamp = datetime.datetime.now().strftime("%H%M%S%f")
                 call_id = payload.get("call_id") or payload.get("voice_id") or self.room_name
-                human_identity = f"manager_jignesh_{call_id}_{timestamp}"
+                human_identity = f"transfer_{call_id}_{timestamp}"
                 await lk_api.sip.create_sip_participant(
                     api.CreateSIPParticipantRequest(
                         sip_trunk_id=trunk_id,
                         sip_call_to=manager_number,
                         room_name=self.room_name,
                         participant_identity=human_identity,
-                        participant_name="Manager - Jignesh"
+                        participant_name=f"Transfer - {manager_name}"
                     )
                 )
                 await lk_api.aclose()
-                logger.info(f"Manager Jignesh ({manager_number}) added to room {self.room_name} via SIP trunk {trunk_id}")
+                logger.info(f"Human agent {manager_name} ({manager_number}) added to room {self.room_name} via SIP trunk {trunk_id}")
             except Exception as e:
-                logger.error(f"Failed to add Manager Jignesh via SIP: {e}")
+                logger.error(f"Failed to add human agent via SIP: {e}")
         else:
-            logger.warning(f"Cannot dial Manager Jignesh: missing manager_number ({manager_number}) or trunk_id ({trunk_id}).")
+            logger.warning(f"Cannot dial human agent: missing manager_number ({manager_number}) or trunk_id ({trunk_id}).")
 
         if os.getenv("MANTRAASSIST_BACKEND_URL"):
             try:
@@ -256,7 +287,7 @@ class AssistantFunctions:
                         "room_name": self.room_name,
                         "reason": reason,
                         "department": department,
-                        "manager_name": "Jignesh",
+                        "manager_name": manager_name,
                         "manager_phone": manager_number,
                         "call_id": payload.get("call_id") or payload.get("voice_id"),
                         "lead_id": payload.get("lead_id"),
@@ -273,7 +304,7 @@ class AssistantFunctions:
         except Exception as e:
             logger.debug(f"Agent interrupt unavailable (non-fatal): {e}")
 
-        return f"Transfer initiated to Manager Jignesh ({manager_number}). Agent is now in silent transcript recording mode."
+        return f"Transfer initiated to {manager_name} ({manager_number}). Agent is now in silent transcript recording mode."
 
     @llm.function_tool(
         description=(

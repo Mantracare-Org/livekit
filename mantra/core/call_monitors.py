@@ -146,6 +146,9 @@ async def inactivity_monitor(cc: CallContext):
 
     while cc.ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
         await asyncio.sleep(1.0)
+        # Suppress inactivity disconnect once call is handed off to human or in silent mode
+        if cc.call_state.get("handoff_triggered") or cc.call_state.get("silent_mode"):
+            continue
         # Only monitor inactivity AFTER initial greeting has completed speaking
         if not cc.call_state.get("initial_greeting_done"):
             cc.call_state["last_activity"] = asyncio.get_event_loop().time()
@@ -194,6 +197,8 @@ async def farewell_safety_net(cc: CallContext):
     farewell_phrases = INBOUND_FAREWELL_PHRASES if cc.is_inbound else OUTBOUND_FAREWELL_PHRASES
     while cc.ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
         await asyncio.sleep(3.0)
+        if cc.call_state.get("handoff_triggered") or cc.call_state.get("silent_mode"):
+            continue
         if not (cc.session and hasattr(cc.session, "history") and cc.session.history):
             continue
         try:

@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-11-16
+
+### Warm Transfer Enablement, STT Recognition & 080-456-80727 Target Routing
+
+- **fix:** Removed conflicting Rule 4 in `CRITICAL OVERRIDING RULES` in `mantra/prompts.py` that forced the LLM to apologize and state that human transfer is unavailable whenever callers requested a human or transfer.
+- **feat:** Added explicit instruction in `mantra/prompts.py` and `transfer_to_human` function tool description in `mantra/core/assistant_functions.py` recognizing phonetic speech recognition variants (such as "recipient device" for receptionist and "executor" for executive) as transfer requests.
+- **feat:** Configured warm transfer target number to `+918045680727` (`080-456-80727`) across `.env`, `.env.local`, and `mantra/core/assistant_functions.py` with robust E.164 normalization supporting landline and mobile number formats.
+- **fix:** Added `handoff_triggered` and `silent_mode` guards to `inactivity_monitor` and `farewell_safety_net` in `mantra/core/call_monitors.py` to prevent premature inactivity timeouts and disconnects during live human handoffs.
+- **Files:** `mantra/prompts.py`, `mantra/core/assistant_functions.py`, `mantra/core/call_monitors.py`, `.env`, `.env.local`, `obsidian/Development/Changelog.md`, `obsidian/Development/Current Sprint.md`.
+
 ## 2026-10-08
 
 ### Call Transfer Recording Track Overlap Fix

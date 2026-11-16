@@ -38,21 +38,18 @@
             "id": "210cf3ad49e340a6",
             "type": "leaf",
             "state": {
-              "type": "canvas",
+              "type": "markdown",
               "state": {
-                "file": "MCP Architecture.canvas",
-                "viewState": {
-                  "x": -401.6928791476845,
-                  "y": -615.5899848480851,
-                  "zoom": -0.6050883150856595
-                }
+                "file": "00_Agente/SOUL.md",
+                "mode": "source",
+                "source": false
               },
-              "icon": "lucide-layout-dashboard",
-              "title": "MCP Architecture"
+              "icon": "lucide-file",
+              "title": "SOUL"
             }
           }
         ],
-        "currentTab": 2
+        "currentTab": 1
       }
     ],
     "direction": "vertical"
@@ -213,8 +210,10 @@
       "bases:Create new base": false
     }
   },
-  "active": "210cf3ad49e340a6",
+  "active": "d690e3ae9bac8b77",
   "lastOpenFiles": [
+    "00_Agente/SOUL.md",
+    "MCP Architecture.canvas",
     "Outbound Call Walkthrough.canvas",
     "Untitled.canvas",
     "Features/API Server.md",

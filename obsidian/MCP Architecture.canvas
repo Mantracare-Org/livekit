@@ -1,239 +1,29 @@
 {
-	"nodes": [
-		{
-			"id": "group-lkt",
-			"type": "group",
-			"x": -100,
-			"y": -380,
-			"width": 640,
-			"height": 480,
-			"color": "#00b894",
-			"label": "🤖 1. LiveKit Voice Agent (lkt :8081) [TELEPHONY ENGINE]"
-		},
-		{
-			"id": "group-mcp",
-			"type": "group",
-			"x": 620,
-			"y": -380,
-			"width": 780,
-			"height": 480,
-			"color": "#e17055",
-			"label": "⚙️ 2. LiveKit MCP Server (livekit-mcp :8000) [THE GATEWAY & MIDDLE-MAN]"
-		},
-		{
-			"id": "group-backend",
-			"type": "group",
-			"x": 620,
-			"y": 180,
-			"width": 780,
-			"height": 560,
-			"color": "#0984e3",
-			"label": "📱 3. MantraAssist Backend (MantraAssist-backend :5500) [REST API]"
-		},
-		{
-			"id": "group-caller",
-			"type": "group",
-			"x": -100,
-			"y": 180,
-			"width": 640,
-			"height": 560,
-			"color": "#fdcb6e",
-			"label": "📞 4. Telephony Live Call (Caller & Voice Dialogue)"
-		},
-		{
-			"id": "node-lkt-agent",
-			"type": "text",
-			"text": "🤖 **LiveKit Voice Agent Worker (mantra/agent.py)**\n• STT: Deepgram Nova-3 (Bilingual English/Hindi)\n• LLM: DeepSeek V4 / GPT-4o-Mini\n• TTS: LiveKit native sonic-3\n• VAD: Silero VAD + Turn Detection",
-			"fontSize": 12,
-			"x": -80,
-			"y": -320,
-			"width": 280,
-			"height": 180,
-			"color": "#55efc4"
-		},
-		{
-			"id": "node-lkt-tool",
-			"type": "text",
-			"text": "🧩 **Tool: check_doctor_availability**\n• Mid-call dynamic tool in `AssistantFunctions`\n• Triggered when caller asks about doctor hours\n• Executes: `POST http://localhost:8000/tools/call`",
-			"fontSize": 12,
-			"x": 220,
-			"y": -320,
-			"width": 300,
-			"height": 180,
-			"color": "#55efc4"
-		},
-		{
-			"id": "node-lkt-telephony",
-			"type": "text",
-			"text": "🔌 **SIP Telephony Trunks & LiveKit Cloud**\n• Twilio / Plivo Zentrunk / Zadarma / VoiceLink\n• Real-time WebRTC audio streaming (<400ms latency)",
-			"fontSize": 12,
-			"x": 60,
-			"y": -110,
-			"width": 320,
-			"height": 160,
-			"color": "#55efc4"
-		},
-		{
-			"id": "node-mcp-core",
-			"type": "text",
-			"text": "⚙️ **LiveKit MCP Server Core (:8000)**\n• Starlette ASGI + FastMCP Framework\n• Tool: `receive_doctor_availability`\n• Acts as Intelligent Gateway & Timezone Resolver",
-			"fontSize": 12,
-			"x": 650,
-			"y": -320,
-			"width": 340,
-			"height": 180,
-			"color": "#fab1a0"
-		},
-		{
-			"id": "node-mcp-timezone",
-			"type": "text",
-			"text": "🌍 **International Timezone Engine**\n• Google `phonenumbers` + `zoneinfo`\n• Auto-detects caller country from phone (`+1`, `+91`, `+44`)\n• Converts raw UTC slots ➔ Local 12-hour voice format (EDT/IST)",
-			"fontSize": 12,
-			"x": 1020,
-			"y": -320,
-			"width": 350,
-			"height": 180,
-			"color": "#fab1a0"
-		},
-		{
-			"id": "node-mcp-client",
-			"type": "text",
-			"text": "⚡ **MantraAssistBackendClient (HTTP)**\n• Executes: `GET http://localhost:5500/v1/providers/availability`\n• Automatically passes `org_id`, `date`, `doctor_name`\n• Fallback: Direct PostgreSQL `assist_db` query if API is down",
-			"fontSize": 12,
-			"x": 750,
-			"y": -110,
-			"width": 520,
-			"height": 180,
-			"color": "#ff7675"
-		},
-		{
-			"id": "node-backend-endpoint",
-			"type": "text",
-			"text": "🌐 **GET /v1/providers/availability**\n• Express.js / TypeScript REST Endpoint\n• Query params: `?org_id=68&date=2026-08-25&query=Sharma`\n• Returns JSON with doctor list and UTC slots",
-			"fontSize": 12,
-			"x": 650,
-			"y": 240,
-			"width": 340,
-			"height": 160,
-			"color": "#74b9ff"
-		},
-		{
-			"id": "node-backend-db",
-			"type": "text",
-			"text": "🗄️ **PostgreSQL (assist_db) via Prisma**\n• Queries `user_availability` and `appointments`\n• Computes open working hours in UTC (e.g. `\"14:00 - 15:00\"`)",
-			"fontSize": 12,
-			"x": 1020,
-			"y": 240,
-			"width": 350,
-			"height": 160,
-			"color": "#74b9ff"
-		},
-		{
-			"id": "node-backend-payload",
-			"type": "text",
-			"text": "📦 **Standard JSON Response**\n```json\n{\n  \"status\": \"success\",\n  \"providers\": [{\n    \"user_id\": 101,\n    \"name\": \"Dr. Ananya Sharma\",\n    \"available_slots\": [\"04:30 - 05:30\", \"06:00 - 07:00\"]\n  }]\n}\n```",
-			"fontSize": 11,
-			"x": 750,
-			"y": 430,
-			"width": 520,
-			"height": 270,
-			"color": "#74b9ff"
-		},
-		{
-			"id": "node-caller-dialogue",
-			"type": "text",
-			"text": "💬 **Live Spoken Conversation**\n\n🗣️ **Caller (+91 77951 63421):**\n*\"Is Dr. Ananya Sharma available tomorrow for an appointment?\"*\n\n🤖 **Voice Agent:**\n*\"Dr. Ananya Sharma is available tomorrow, Tuesday, at 10:00 AM and 11:30 AM IST. Which time would you prefer?\"*",
-			"fontSize": 12,
-			"x": -80,
-			"y": 240,
-			"width": 360,
-			"height": 260,
-			"color": "#ffeaa7"
-		},
-		{
-			"id": "node-caller-stats",
-			"type": "text",
-			"text": "⚡ **Turnaround Time (<150ms)**\n1. Speech transcribed (Deepgram)\n2. Agent calls MCP tool\n3. MCP queries MA backend REST API\n4. MCP converts UTC ➔ IST\n5. Agent speaks response (LiveKit sonic-3)",
-			"fontSize": 12,
-			"x": 310,
-			"y": 240,
-			"width": 210,
-			"height": 260,
-			"color": "#ffeaa7"
-		}
+	"nodes":[
+		{"id":"group-lkt","type":"group","x":-100,"y":-380,"width":640,"height":480,"color":"#00b894","label":"🤖 1. LiveKit Voice Agent (lkt :8081) [TELEPHONY ENGINE]"},
+		{"id":"group-mcp","type":"group","x":620,"y":-380,"width":780,"height":480,"color":"#e17055","label":"⚙️ 2. LiveKit MCP Server (livekit-mcp :8000) [THE GATEWAY & MIDDLE-MAN]"},
+		{"id":"group-backend","type":"group","x":620,"y":180,"width":780,"height":560,"color":"#0984e3","label":"📱 3. MantraAssist Backend (MantraAssist-backend :5500) [REST API]"},
+		{"id":"group-caller","type":"group","x":-100,"y":180,"width":640,"height":560,"color":"#fdcb6e","label":"📞 4. Telephony Live Call (Caller & Voice Dialogue)"},
+		{"id":"node-lkt-agent","type":"text","text":"🤖 **LiveKit Voice Agent Worker (mantra/agent.py)**\n• STT: Deepgram Nova-3 (Bilingual English/Hindi)\n• LLM: DeepSeek V4 / GPT-4o-Mini\n• TTS: LiveKit native sonic-3\n• VAD: Silero VAD + Turn Detection","fontSize":12,"x":-80,"y":-320,"width":280,"height":180,"color":"#55efc4"},
+		{"id":"node-lkt-tool","type":"text","text":"🧩 **Tool: check_doctor_availability**\n• Mid-call dynamic tool in `AssistantFunctions`\n• Triggered when caller asks about doctor hours\n• Executes: `POST http://localhost:8000/tools/call`","fontSize":12,"x":220,"y":-320,"width":300,"height":180,"color":"#55efc4"},
+		{"id":"node-lkt-telephony","type":"text","text":"🔌 **SIP Telephony Trunks & LiveKit Cloud**\n• Twilio / Plivo Zentrunk / Zadarma / VoiceLink\n• Real-time WebRTC audio streaming (<400ms latency)","fontSize":12,"x":60,"y":-110,"width":320,"height":160,"color":"#55efc4"},
+		{"id":"node-mcp-core","type":"text","text":"⚙️ **LiveKit MCP Server Core (:8000)**\n• Starlette ASGI + FastMCP Framework\n• Tool: `receive_doctor_availability`\n• Acts as Intelligent Gateway & Timezone Resolver","fontSize":12,"x":650,"y":-320,"width":340,"height":180,"color":"#fab1a0"},
+		{"id":"node-mcp-timezone","type":"text","text":"🌍 **International Timezone Engine**\n• Google `phonenumbers` + `zoneinfo`\n• Auto-detects caller country from phone (`+1`, `+91`, `+44`)\n• Converts raw UTC slots ➔ Local 12-hour voice format (EDT/IST)","fontSize":12,"x":1020,"y":-320,"width":350,"height":180,"color":"#fab1a0"},
+		{"id":"node-mcp-client","type":"text","text":"⚡ **MantraAssistBackendClient (HTTP)**\n• Executes: `GET http://localhost:5500/v1/providers/availability`\n• Automatically passes `org_id`, `date`, `doctor_name`\n• Fallback: Direct PostgreSQL `assist_db` query if API is down","fontSize":12,"x":750,"y":-110,"width":520,"height":180,"color":"#ff7675"},
+		{"id":"node-backend-endpoint","type":"text","text":"🌐 **GET /v1/providers/availability**\n• Express.js / TypeScript REST Endpoint\n• Query params: `?org_id=68&date=2026-08-25&query=Sharma`\n• Returns JSON with doctor list and UTC slots","fontSize":12,"x":650,"y":240,"width":340,"height":160,"color":"#74b9ff"},
+		{"id":"node-backend-db","type":"text","text":"🗄️ **PostgreSQL (assist_db) via Prisma**\n• Queries `user_availability` and `appointments`\n• Computes open working hours in UTC (e.g. `\"14:00 - 15:00\"`)","fontSize":12,"x":1020,"y":240,"width":350,"height":160,"color":"#74b9ff"},
+		{"id":"node-backend-payload","type":"text","text":"📦 **Standard JSON Response**\n```json\n{\n  \"status\": \"success\",\n  \"providers\": [{\n    \"user_id\": 101,\n    \"name\": \"Dr. Ananya Sharma\",\n    \"available_slots\": [\"04:30 - 05:30\", \"06:00 - 07:00\"]\n  }]\n}\n```","fontSize":11,"x":750,"y":430,"width":520,"height":270,"color":"#74b9ff"},
+		{"id":"node-caller-dialogue","type":"text","text":"💬 **Live Spoken Conversation**\n\n🗣️ **Caller (+91 77951 63421):**\n*\"Is Dr. Ananya Sharma available tomorrow for an appointment?\"*\n\n🤖 **Voice Agent:**\n*\"Dr. Ananya Sharma is available tomorrow, Tuesday, at 10:00 AM and 11:30 AM IST. Which time would you prefer?\"*","fontSize":12,"x":-80,"y":240,"width":360,"height":260,"color":"#ffeaa7"},
+		{"id":"node-caller-stats","type":"text","text":"⚡ **Turnaround Time (<150ms)**\n1. Speech transcribed (Deepgram)\n2. Agent calls MCP tool\n3. MCP queries MA backend REST API\n4. MCP converts UTC ➔ IST\n5. Agent speaks response (LiveKit sonic-3)","fontSize":12,"x":310,"y":240,"width":210,"height":260,"color":"#ffeaa7"}
 	],
-	"edges": [
-		{
-			"id": "e1",
-			"fromNode": "node-caller-dialogue",
-			"fromSide": "top",
-			"toNode": "node-lkt-agent",
-			"toSide": "bottom",
-			"label": "1. Caller asks: 'Is Dr. Sharma available?'",
-			"color": "#fdcb6e"
-		},
-		{
-			"id": "e2",
-			"fromNode": "node-lkt-tool",
-			"fromSide": "right",
-			"toNode": "node-mcp-core",
-			"toSide": "left",
-			"label": "2. POST /tools/call (Tool execution)",
-			"color": "#00b894"
-		},
-		{
-			"id": "e3",
-			"fromNode": "node-mcp-client",
-			"fromSide": "bottom",
-			"toNode": "node-backend-endpoint",
-			"toSide": "top",
-			"label": "3. GET /v1/providers/availability",
-			"color": "#e17055"
-		},
-		{
-			"id": "e4",
-			"fromNode": "node-backend-endpoint",
-			"fromSide": "right",
-			"toNode": "node-backend-db",
-			"toSide": "left",
-			"label": "4. Query working hours (UTC)",
-			"color": "#0984e3"
-		},
-		{
-			"id": "e5",
-			"fromNode": "node-backend-payload",
-			"fromSide": "top",
-			"toNode": "node-mcp-client",
-			"toSide": "bottom",
-			"label": "5. Returns UTC slots JSON",
-			"color": "#0984e3"
-		},
-		{
-			"id": "e6",
-			"fromNode": "node-mcp-core",
-			"fromSide": "right",
-			"toNode": "node-mcp-timezone",
-			"toSide": "left",
-			"label": "6. Auto-converts UTC ➔ Caller Local Time",
-			"color": "#e17055"
-		},
-		{
-			"id": "e7",
-			"fromNode": "node-mcp-core",
-			"fromSide": "left",
-			"toNode": "node-lkt-tool",
-			"toSide": "right",
-			"label": "7. Returns speech-ready text",
-			"color": "#00b894"
-		},
-		{
-			"id": "e8",
-			"fromNode": "node-lkt-agent",
-			"fromSide": "bottom",
-			"toNode": "node-caller-dialogue",
-			"toSide": "top",
-			"label": "8. Agent speaks: 'Dr. Sharma is open at 10 AM IST'",
-			"color": "#fdcb6e"
-		}
+	"edges":[
+		{"id":"e1","fromNode":"node-caller-dialogue","fromSide":"top","toNode":"node-lkt-agent","toSide":"bottom","label":"1. Caller asks: 'Is Dr. Sharma available?'","color":"#fdcb6e"},
+		{"id":"e2","fromNode":"node-lkt-tool","fromSide":"right","toNode":"node-mcp-core","toSide":"left","label":"2. POST /tools/call (Tool execution)","color":"#00b894"},
+		{"id":"e3","fromNode":"node-mcp-client","fromSide":"bottom","toNode":"node-backend-endpoint","toSide":"top","label":"3. GET /v1/providers/availability","color":"#e17055"},
+		{"id":"e4","fromNode":"node-backend-endpoint","fromSide":"right","toNode":"node-backend-db","toSide":"left","label":"4. Query working hours (UTC)","color":"#0984e3"},
+		{"id":"e5","fromNode":"node-backend-payload","fromSide":"top","toNode":"node-mcp-client","toSide":"bottom","label":"5. Returns UTC slots JSON","color":"#0984e3"},
+		{"id":"e6","fromNode":"node-mcp-core","fromSide":"right","toNode":"node-mcp-timezone","toSide":"left","label":"6. Auto-converts UTC ➔ Caller Local Time","color":"#e17055"},
+		{"id":"e7","fromNode":"node-mcp-core","fromSide":"left","toNode":"node-lkt-tool","toSide":"right","label":"7. Returns speech-ready text","color":"#00b894"},
+		{"id":"e8","fromNode":"node-lkt-agent","fromSide":"bottom","toNode":"node-caller-dialogue","toSide":"top","label":"8. Agent speaks: 'Dr. Sharma is open at 10 AM IST'","color":"#fdcb6e"}
 	]
 }

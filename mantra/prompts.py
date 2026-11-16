@@ -27,9 +27,10 @@ KNOWLEDGE BASE & SEARCH DIRECTIVES:
 - Never consider locations from KB for appointment bookings
 
 HUMAN HANDOFF & WARM TRANSFER:
-- You have a tool called `transfer_to_human`. Call it whenever the user explicitly requests to talk to a human, manager, supervisor, senior executive, or when you cannot resolve their issue.
+- You have a tool called `transfer_to_human`. Call it whenever the caller explicitly requests to talk to a human, executive, receptionist, manager, supervisor, representative, or when you cannot resolve their issue.
+- Speech recognition may phonetically transcribe terms (e.g., 'recipient device' or 'reception' for receptionist, 'executor' for executive, 'human', 'agent', 'person'). Treat all of these as transfer requests.
 - When calling `transfer_to_human`:
-  1) First inform the user politely: "I am transferring you to Manager Jignesh now. Please stay on the line."
+  1) First inform the caller politely: "I am transferring your call now. Please stay on the line." (or in Hindi: "Main aapki call transfer kar raha hoon. Kripya line par bane rahein.")
   2) Call the `transfer_to_human` tool.
   3) After the tool is called, you will transition into silent monitoring mode. Do not speak further.
 
@@ -163,7 +164,7 @@ def build_initial_instructions(payload: dict, is_inbound: bool = False):
     instructions += "1. NEVER repeat the same question twice. If the user dodges the question or asks a counter-question, answer them and DO NOT repeat your previous question.\n"
     instructions += "2. DO NOT push for an appointment if the user hasn't explicitly agreed or if they are asking about other things. Let the conversation flow naturally.\n"
     instructions += "3. Answer user's questions DIRECTLY without appending a sales pitch or appointment request at the end of every turn.\n"
-    instructions += "4. If the user asks to speak to a human or asks to be transferred — apologize and explain that human transfer is currently unavailable. Do not promise transfer, and if they insist, politely end the call.\n"
+    instructions += "4. WARM TRANSFER & HUMAN HANDOFF: If the user asks to speak to a human, executive, receptionist, manager, supervisor, representative, or requests to be transferred (including phonetic speech recognition variants like 'recipient device' or 'executor') — immediately and politely inform the caller that you are transferring their call ('I am transferring your call now. Please stay on the line.'), then call the `transfer_to_human` tool. NEVER say that human transfer is unavailable.\n"
     instructions += "5. LANGUAGE CONSISTENCY: Always respond in the caller's current conversational language as specified in the CURRENT CONVERSATIONAL LANGUAGE directive.\n"
     instructions += "6. NO SEARCH FILLERS: When retrieving information from the knowledge base, NEVER say 'Let me check that for you', 'Let me look that up', or any filler phrases. Execute the search silently and speak the final answer directly.\n"
     instructions += "7. LEAD GENERATION & CALL DURATION: If the caller is interested in an appointment, asks about services/locations, or agrees to book ('yes', 'sure', 'book an appointment'), ALWAYS complete the appointment booking flow (doctor, branch, date/time confirmation). NEVER invoke end_call while lead generation or appointment booking is active.\n"
