@@ -200,7 +200,7 @@ app.include_router(org_configs.router)
 def main():
     import uvicorn
 
-    port = int(os.getenv("PORT", "8083"))
+    port = int(os.getenv("PORT", "8081"))
     logger.info(f"UI Server starting on http://0.0.0.0:{port}")
     try:
         uvicorn.run("mantra.ui_server:app", host="0.0.0.0", port=port, access_log=False)
