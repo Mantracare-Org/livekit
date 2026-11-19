@@ -22,22 +22,64 @@ from livekit.plugins import deepgram
 
 logger = logging.getLogger("mantra.language_manager")
 
-SUPPORTED_LANGUAGES: Set[str] = {"en", "hi"}
+SUPPORTED_LANGUAGES: Set[str] = {
+    "en", "hi", "es", "fr", "de", "it", "nl", "pl", "pt", "ar",
+    "ja", "ko", "zh", "ms", "id", "th", "vi", "tl", "tr", "sv",
+    "da", "no", "fi", "ru"
+}
 
 LANGUAGE_NAMES: Dict[str, str] = {
     "en": "English",
     "hi": "Hindi",
-    # "kn": "Kannada",
-    # "te": "Telugu",
-    # "mr": "Marathi",
+    "es": "Spanish",
+    "fr": "French",
+    "de": "German",
+    "it": "Italian",
+    "nl": "Dutch",
+    "pl": "Polish",
+    "pt": "Portuguese",
+    "ar": "Arabic",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "zh": "Mandarin Chinese",
+    "ms": "Malay",
+    "id": "Indonesian",
+    "th": "Thai",
+    "vi": "Vietnamese",
+    "tl": "Tagalog / Filipino",
+    "tr": "Turkish",
+    "sv": "Swedish",
+    "da": "Danish",
+    "no": "Norwegian",
+    "fi": "Finnish",
+    "ru": "Russian",
 }
 
 NATIVE_SCRIPTS: Dict[str, str] = {
     "en": "Latin",
     "hi": "Devanagari (हिन्दी)",
-    # "kn": "Kannada (ಕನ್ನಡ)",
-    # "te": "Telugu (తెలుగు)",
-    # "mr": "Devanagari (मराठी)",
+    "es": "Latin",
+    "fr": "Latin",
+    "de": "Latin",
+    "it": "Latin",
+    "nl": "Latin",
+    "pl": "Latin",
+    "pt": "Latin",
+    "ar": "Arabic (العربية)",
+    "ja": "Japanese (日本語)",
+    "ko": "Hangul (한국어)",
+    "zh": "Hanzi (中文)",
+    "ms": "Latin",
+    "id": "Latin",
+    "th": "Thai (ไทย)",
+    "vi": "Latin",
+    "tl": "Latin",
+    "tr": "Latin",
+    "sv": "Latin",
+    "da": "Latin",
+    "no": "Latin",
+    "fi": "Latin",
+    "ru": "Cyrillic (Русский)",
 }
 
 def resolve_stt_keyterms(
@@ -168,16 +210,43 @@ def resolve_stt_language(
 
     # Check country code if provided
     cc = (country_code or "").strip().upper()
-    if cc in ("IN", "IND", "INDIA"):
-        return "en-IN"
-    elif cc in ("US", "USA", "CA", "CAN", "UNITED STATES", "CANADA"):
-        return "en-US"
-    elif cc in ("GB", "GBR", "UK", "UNITED KINGDOM"):
-        return "en-GB"
-    elif cc in ("AU", "AUS", "AUSTRALIA"):
-        return "en-AU"
-    elif cc in ("NZ", "NZL", "NEW ZEALAND"):
-        return "en-NZ"
+    COUNTRY_TO_STT: Dict[str, str] = {
+        "IN": "en-IN", "IND": "en-IN", "INDIA": "en-IN",
+        "US": "en-US", "USA": "en-US", "CA": "en-US", "CAN": "en-US",
+        "GB": "en-GB", "GBR": "en-GB", "UK": "en-GB",
+        "AU": "en-AU", "AUS": "en-AU",
+        "NZ": "en-NZ", "NZL": "en-NZ",
+        "ZA": "en", "ZAF": "en",
+        "SG": "en", "SGP": "en",
+        "MX": "es-419", "MEX": "es-419",
+        "ES": "es-ES", "ESP": "es-ES",
+        "CO": "es-419", "COL": "es-419",
+        "FR": "fr", "FRA": "fr",
+        "DE": "de", "DEU": "de",
+        "AT": "de", "AUT": "de",
+        "IT": "it", "ITA": "it",
+        "NL": "nl", "NLD": "nl",
+        "PL": "pl", "POL": "pl",
+        "PT": "pt-PT", "PRT": "pt-PT",
+        "BR": "pt-BR", "BRA": "pt-BR",
+        "AE": "ar", "ARE": "ar", "SA": "ar", "SAU": "ar", "QA": "ar", "QAT": "ar",
+        "JP": "ja", "JPN": "ja",
+        "KR": "ko", "KOR": "ko",
+        "CN": "zh", "CHN": "zh", "TW": "zh", "TWN": "zh",
+        "MY": "ms", "MYS": "ms",
+        "ID": "id", "IDN": "id",
+        "TH": "th", "THA": "th",
+        "VN": "vi", "VNM": "vi",
+        "PH": "tl", "PHL": "tl",
+        "TR": "tr", "TUR": "tr",
+        "SE": "sv", "SWE": "sv",
+        "DK": "da", "DNK": "da",
+        "NO": "no", "NOR": "no",
+        "FI": "fi", "FIN": "fi",
+        "RU": "ru", "RUS": "ru",
+    }
+    if cc in COUNTRY_TO_STT:
+        return COUNTRY_TO_STT[cc]
 
     # Infer from E.164 phone number prefix
     phone = (phone_number or "").strip()
@@ -186,20 +255,55 @@ def resolve_stt_language(
     if phone.startswith("+"):
         phone = phone[1:]
 
+    # National Indian phone heuristics
     if phone.startswith("91") and len(phone) >= 12:
         return "en-IN"
     elif len(phone) == 10 and phone[0] in ("6", "7", "8", "9"):
         return "en-IN"
     elif phone.startswith("0") and len(phone) in (10, 11) and phone[1] in ("1", "2", "6", "7", "8", "9"):
         return "en-IN"
-    elif phone.startswith("1") and len(phone) >= 11:
-        return "en-US"
-    elif phone.startswith("44") and len(phone) >= 11:
-        return "en-GB"
-    elif phone.startswith("61") and len(phone) >= 10:
-        return "en-AU"
-    elif phone.startswith("64") and len(phone) >= 10:
-        return "en-NZ"
+
+    # International prefixes (ordered by longest prefix first)
+    PREFIX_TO_STT = [
+        ("358", "fi"),    # Finland
+        ("351", "pt-PT"), # Portugal
+        ("971", "ar"),    # UAE
+        ("966", "ar"),    # Saudi Arabia
+        ("974", "ar"),    # Qatar
+        ("886", "zh"),    # Taiwan
+        ("52", "es-419"), # Mexico
+        ("34", "es-ES"),  # Spain
+        ("57", "es-419"), # Colombia
+        ("55", "pt-BR"),  # Brazil
+        ("33", "fr"),     # France
+        ("49", "de"),     # Germany
+        ("43", "de"),     # Austria
+        ("39", "it"),     # Italy
+        ("31", "nl"),     # Netherlands
+        ("48", "pl"),     # Poland
+        ("81", "ja"),     # Japan
+        ("82", "ko"),     # South Korea
+        ("86", "zh"),     # China
+        ("65", "en"),     # Singapore
+        ("60", "ms"),     # Malaysia
+        ("62", "id"),     # Indonesia
+        ("66", "th"),     # Thailand
+        ("84", "vi"),     # Vietnam
+        ("63", "tl"),     # Philippines
+        ("90", "tr"),     # Turkey
+        ("46", "sv"),     # Sweden
+        ("45", "da"),     # Denmark
+        ("47", "no"),     # Norway
+        ("44", "en-GB"),  # UK
+        ("61", "en-AU"),  # Australia
+        ("64", "en-NZ"),  # New Zealand
+        ("27", "en"),     # South Africa
+        ("7", "ru"),      # Russia
+        ("1", "en-US"),   # US / Canada
+    ]
+    for prefix, locale in PREFIX_TO_STT:
+        if phone.startswith(prefix) and len(phone) > len(prefix) + 5:
+            return locale
 
     # Default Indian English locale
     return "en-IN"
@@ -321,11 +425,15 @@ class LanguageManager:
         requested_mode = str(response_mode or normalized_init).lower().strip()
         if requested_mode in {"hi", "hindi", "hi-in"}:
             self.response_mode = "hi"
-        elif requested_mode in {"en", "english", "en-us", "en-in", "en-gb"}:
+        elif requested_mode in {"en", "english", "en-us", "en-in", "en-gb", "en-au"}:
             self.response_mode = "en"
-        else:
+        elif requested_mode in SUPPORTED_LANGUAGES:
+            self.response_mode = requested_mode
+        elif requested_mode in {"multi", "multilingual", "bilingual", "hinglish", "en-hi", "hi-en"}:
             self.response_mode = "hinglish"
-        logger.info(f"[LANG] LanguageManager active with language='{self.tracker.current_language}'")
+        else:
+            self.response_mode = normalized_init
+        logger.info(f"[LANG] LanguageManager active with language='{self.tracker.current_language}' (mode='{self.response_mode}')")
 
     @staticmethod
     def normalize_language_code(code: Optional[str]) -> str:
@@ -333,16 +441,35 @@ class LanguageManager:
         if not code:
             return "en"
         raw = str(code).lower().strip()
-        # if raw in ["kn", "kannada", "kn-in"]:
-        #     return "kn"
-        if raw in ["hi", "hindi", "hi-in"]:
-            return "hi"
-        # elif raw in ["te", "telugu", "te-in"]:
-        #     return "te"
-        # elif raw in ["mr", "marathi", "mr-in"]:
-        #     return "mr"
-        elif raw in ["en", "english", "en-us", "en-in", "en-gb", "multi", "multilingual", "bilingual", "hinglish", "en-hi", "hi-en"]:
-            return "en"
+
+        KNOWN_CODES = {
+            "en": "en", "english": "en", "en-us": "en", "en-in": "en", "en-gb": "en", "en-au": "en",
+            "hi": "hi", "hindi": "hi", "hi-in": "hi",
+            "es": "es", "spanish": "es", "es-419": "es", "es-es": "es",
+            "fr": "fr", "french": "fr", "fr-fr": "fr", "fr-ca": "fr",
+            "de": "de", "german": "de", "de-de": "de",
+            "it": "it", "italian": "it", "it-it": "it",
+            "nl": "nl", "dutch": "nl", "nl-nl": "nl",
+            "pl": "pl", "polish": "pl", "pl-pl": "pl",
+            "pt": "pt", "portuguese": "pt", "pt-br": "pt", "pt-pt": "pt",
+            "ar": "ar", "arabic": "ar", "ar-ae": "ar", "ar-sa": "ar",
+            "ja": "ja", "japanese": "ja", "ja-jp": "ja",
+            "ko": "ko", "korean": "ko", "ko-kr": "ko",
+            "zh": "zh", "chinese": "zh", "mandarin": "zh", "zh-cn": "zh", "zh-tw": "zh",
+            "ms": "ms", "malay": "ms", "ms-my": "ms",
+            "id": "id", "indonesian": "id", "id-id": "id",
+            "th": "th", "thai": "th", "th-th": "th",
+            "vi": "vi", "vietnamese": "vi", "vi-vn": "vi",
+            "tl": "tl", "tagalog": "tl", "filipino": "tl",
+            "tr": "tr", "turkish": "tr", "tr-tr": "tr",
+            "sv": "sv", "swedish": "sv", "sv-se": "sv",
+            "da": "da", "danish": "da", "da-dk": "da",
+            "no": "no", "norwegian": "no", "no-no": "no",
+            "fi": "fi", "finnish": "fi", "fi-fi": "fi",
+            "ru": "ru", "russian": "ru", "ru-ru": "ru",
+        }
+        if raw in KNOWN_CODES:
+            return KNOWN_CODES[raw]
         return "en"
 
     def process_user_utterance(self, text: str) -> Tuple[str, bool]:
@@ -397,6 +524,17 @@ class LanguageManager:
                 f"- Incorporate warm Indian honorifics and speech pauses: 'हाँ जी...', 'अच्छा...', 'बिलकुल जी', 'जी'.\n"
                 f"- Use commas and ellipses (...) for expressive, human phone cadence.\n"
                 f"- Keep commonly understood English product or medical terms when natural.\n"
+                f"- Keep the phone response concise, natural, and polite."
+            )
+
+        if self.response_mode in SUPPORTED_LANGUAGES and self.response_mode not in {"en", "hi"}:
+            return (
+                f"LANGUAGE RULE (FLUENT {lang_name.upper()} TELEPHONY — CRITICAL):\n"
+                f"- CURRENT DETECTED UTTERANCE LANGUAGE: {lang_name} ({lang_code}).\n"
+                f"- You MUST ALWAYS respond entirely and fluently in {lang_name}.\n"
+                f"- Maintain natural, polite, and culturally appropriate conversational cadence for telephone calls.\n"
+                f"- Use natural speech punctuation: commas (,), ellipses (...), and hyphens (-) for natural breathing pauses so the voice sounds like a live human on a phone call, not a monotone robot.\n"
+                f"- Do NOT speak English, Hindi, or any other language unless explicitly requested by the caller.\n"
                 f"- Keep the phone response concise, natural, and polite."
             )
 

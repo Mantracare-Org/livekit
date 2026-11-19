@@ -1,7 +1,7 @@
 ---
 title: "Índice de Herramientas de IA"
 type: tools-index
-last_updated: 2026-11-13
+last_updated: 2026-11-19
 ---
 
 # Catálogo de Herramientas de IA (Tools & MCP Hub)

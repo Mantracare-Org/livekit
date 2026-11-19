@@ -1,11 +1,11 @@
 {
-  "updatedAt": "2026-11-14T00:14:48.614Z",
+  "updatedAt": "2026-11-19T04:02:36.043Z",
   "vaultName": "obsidian",
   "stats": {
-    "memories": 0,
+    "memories": 1,
     "skills": 96,
     "projects": 1,
-    "sessions": 9
+    "sessions": 10
   },
   "skills": [
     {
@@ -585,7 +585,19 @@
       "relPath": "Antigravity/Skills/writing-shape.md"
     }
   ],
-  "memories": [],
+  "memories": [
+    {
+      "title": "Multi-Country Multilingual Telephony Architecture",
+      "category": "telephony",
+      "summary": "Automated country detection, language resolution, and engine alignment across 33+ countries for LiveKit voice agents",
+      "tags": [
+        "antigravity/memoria"
+      ],
+      "bodyExcerpt": "Multi-Country Multilingual Telephony Architecture [!NOTE] Automated country detection, language resolution, and engine alignment across 33+ countries for LiveKit voice agents Solucion Tecnica Implemented FastMCP tool resolve caller country language in livekit-mcp and calibrated lkt voice agent pipeline across 33+ countries. Inbound vs Outbound Telephony Quirks (Learned in Execution) 1. Inbound DID vs Caller Number Discrepancy: - In inbound calls, meta payload.get(\"phone number\") is the dialed DID (trunk number, e.g. +919484959268 ), NOT the customer's phone number! - Guarding entrypoint resolution with is inbound hint : Never pre-resolve caller country from phone number on inbound calls. - The actual caller number is extracted from the LiveKit SIP participant upon connect ( sip +39800957032 ). 2. Caller Resolution Overwrite Protection: - Removed if not call state.get(\"caller country\"): guard when participants join. The participant's caller-ID is the source of truth and must always resolve country and language. 3. Voice Overrides for Non-English Telephony: - When a caller's country language is non-English (e.g. Italian it , Spanish es , German de ), the regional Cartesia voice from the country catalog takes priority over default English voices (e.g. Arushi). 4. India Catalog Entry: - Added India ( IN , +91 , en-IN , Arushi voice 95d51f79-c397-46f9-b49a-23763d3eaa2d , Asia/Kolkata ) to COUNTRY CATALOG . Proyecto: [[lkt]]",
+      "relPath": "Antigravity/Memoria/Multi-Country Multilingual Telephony Architecture.md",
+      "updated": "2026-11-18"
+    }
+  ],
   "projects": [
     "support-bot"
   ],
@@ -598,6 +610,7 @@
     "2026-11-10 - assist-ai",
     "2026-11-10 - assist-monorepo",
     "2026-11-10 - mantra-mcp",
-    "2026-11-12 - support-bot"
+    "2026-11-12 - support-bot",
+    "2026-11-18 - lkt"
   ]
 }

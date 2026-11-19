@@ -13,6 +13,7 @@
 | Test Console | `static/index.html` + `app.js` | Manual agent testing via WebRTC |
 | Knowledge Base | `mantra/knowledge_base.py` + `retriever.py` | PostgreSQL FTS with adaptive chunking, multi-KB collections per org |
 | Doctor Availability Tool | `mantra/agent.py` | Mid-call dynamic doctor availability lookup via `livekit-mcp` with international timezone detection |
+| Multi-Country Telephony | `mantra/language_manager.py` + `agent.py` | [[Multi-Country & Multilingual Telephony]]: 33+ country detection, Deepgram Nova-3 STT, Cartesia TTS fallback, DeepSeek prompts |
 | MCP Backend Guide | `obsidian/Features/MCP Integration Guide for Backend.md` | Complete Node.js / TypeScript integration guide and code samples for backend developers |
 | KB Chat | `static/kb_chat.html` | Text-based KB testing UI |
 | Network Monitor | `static/network.html` | Network monitoring page |

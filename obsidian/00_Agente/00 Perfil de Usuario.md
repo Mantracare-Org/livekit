@@ -4,12 +4,12 @@ type: antigravity-user-profile
 tags:
   - antigravity/profile
   - antigravity/user
-user: "FardeenSK004"
+user: "SK"
 language: en
 updated: 2026-11-02
 ---
 
-# Work Profile — FardeenSK004
+# Work Profile — SK
 
 > [!ABSTRACT] **How the user thinks and works**
 > Defines the preferences, technical habits, and workflow style of FardeenSK004 so the assistant operates with tailor-made precision across every session.

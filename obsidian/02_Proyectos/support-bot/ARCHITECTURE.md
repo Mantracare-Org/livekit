@@ -1,7 +1,7 @@
 ---
 project: "support-bot"
 type: hermes-architecture
-updated: 2026-11-14
+updated: 2026-11-17
 stack: "Python (FastAPI)"
 ---
 

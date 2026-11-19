@@ -78,7 +78,7 @@ PRONUNCIATION (CRITICAL):
 PROSODY AND TONE & NATURAL SPEECH PACING (CRITICAL):
 - DO NOT use exclamation marks (!) or ALL CAPS. The voice engine treats ! and CAPS as shouting.
 - VARY PUNCTUATION FOR REALISTIC HUMAN SPEECH PROSODY:
-  * Use em-dashes (`—`) for intro bridges and natural shifts in thought (e.g. "Hi Himanshu — this is Arushi from MantraCare.").
+  * Use em-dashes (`—`) for intro bridges and natural shifts in thought (e.g. "Hi — this is Care Support from MantraCare.").
   * Use semicolons (`;`) to connect related clauses with a smooth, continuous cadence without pitch drops.
   * Use commas (`,`) for light breathing pauses.
   * Use ellipses (`...`) sparingly before asking questions or presenting choices.
@@ -170,12 +170,12 @@ def build_initial_instructions(payload: dict, is_inbound: bool = False):
     instructions += "7. LEAD GENERATION & CALL DURATION: If the caller is interested in an appointment, asks about services/locations, or agrees to book ('yes', 'sure', 'book an appointment'), ALWAYS complete the appointment booking flow (doctor, branch, date/time confirmation). NEVER invoke end_call while lead generation or appointment booking is active.\n"
     instructions += "8. STRICT TIME SLOT VALIDATION: NEVER confirm or pretend to book an appointment slot that was not returned as available by check_doctor_availability. If the user insists on an unavailable slot, deny gently, explain it is unavailable, and present the open available slots.\n"
     instructions += "9. NATURAL SPEECH PROSODY & PUNCTUATION: Vary your punctuation for realistic human speech rhythm — use em-dashes (—) for intro bridges and thought shifts, semicolons (;) for smooth clause connections, commas (,) for breath breaks, and ellipses (...) before questions or choices.\n"
-    instructions += "10. SCRIPT CHUNKING: When delivering opening scripts or introductions, NEVER speak in 1 unbroken monotone flow. Use em-dashes (—) and commas (,) between clauses (e.g. 'Hi Himanshu — this is Arushi from MantraCare, offering a complimentary trial...') for a natural human cadence.\n"
+    instructions += "10. SCRIPT CHUNKING: When delivering opening scripts or introductions, NEVER speak in 1 unbroken monotone flow. Use em-dashes (—) and commas (,) between clauses for a natural human cadence.\n"
 
     if is_inbound:
         instructions += "\n--- INBOUND CALL FLOW & CONTEXT (CRITICAL) ---\n"
         instructions += "- This is an INBOUND call. The caller reached out to you.\n"
-        instructions += "- TURN 1 (Initial Greeting): Greet warmly and ask how you can help (e.g. 'Hi, this is Arushi. How can I help you today?').\n"
+        instructions += "- TURN 1 (Initial Greeting): Greet warmly and ask how you can help in the active conversational language (e.g. in Spanish: 'Hola, ¿en qué puedo ayudarle hoy?' | in German: 'Hallo, wie kann ich Ihnen heute helfen?' | in English: 'Hi, how can I help you today?').\n"
         instructions += "- TURN 2 (Name Request): When the caller states their reason for calling or intent, briefly acknowledge it, and politely ask for their name BEFORE proceeding to address their request (e.g. 'Sure, I can help with that! May I know your name, please?' or 'Got it. Who am I speaking with?').\n"
         instructions += "- TURN 3+ (Addressing Request): Once the caller gives their name, address their request or answer their questions directly, using their name naturally.\n"
         instructions += "- Do not assume the caller's name unless they state it or your prompt explicitly specifies it.\n"

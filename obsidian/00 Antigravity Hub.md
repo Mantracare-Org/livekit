@@ -4,7 +4,7 @@ type: antigravity-hub
 tags:
   - antigravity/hub
   - antigravity/second-brain
-updated: 2026-11-14
+updated: 2026-11-19
 ---
 
 # Antigravity Hub — AI Second Brain
@@ -26,7 +26,7 @@ All nodes in this vault are bidirectionally linked to light up your **Graph View
 ## Soul, Personality & Profile (Hermes Core)
 Agent identity and working style of FardeenSK004:
 - [[00 Soul de Antigravity]] — Decisive archetype, non-negotiable principles, and autonomy
-- [[00 AI Personality]] — Agent name (Hermes), callsign for you (FardeenSK004), and behavioral tone
+- [[00 AI Personality]] — Agent name (Friday), callsign for you (SK), and behavioral tone
 - [[00 Perfil de Usuario]] — Preferences, technical habits, and accumulated learnings
 
 ---

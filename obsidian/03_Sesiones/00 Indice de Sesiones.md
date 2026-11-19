@@ -4,8 +4,8 @@ type: antigravity-index
 tags:
   - antigravity/sesiones
   - antigravity/index
-created: 2026-11-12
-updated: 2026-11-12
+created: 2026-11-17
+updated: 2026-11-17
 ---
 
 # Índice de Sesiones y Checkpoints — Antigravity
@@ -17,6 +17,7 @@ Total sesiones registradas: **9**
 
 | Fecha | Hora | Proyecto | Resumen | Sesión |
 |---|---|---|---|---|
+| 2026-11-18 | 16:15 | [[Proyecto: lkt]] | Implemented 30+ Country Multi-Language Telephony across LiveKit Agents, FastMCP, and Backend | [[2026-11-18 - lkt]] (1 hito) |
 | 2026-11-12 | 17:09 | [[Proyecto: support-bot]] | Implement Form Reminder Webhook Endpoint (POST /webhook/form-reminder) | [[2026-11-12 - support-bot]] (3 hitos) |
 | 2026-11-10 | 18:28 | [[Proyecto: assist-ai]] | Generated documentation.md and page_structure_template.md for Assist engineering team handover | [[2026-11-10 - assist-ai]] (13 hitos) |
 | 2026-11-10 | 16:57 | [[Proyecto: mantra-mcp]] | Fix Docker build failure on prisma generate caused by missing DATABASE_URL | [[2026-11-10 - mantra-mcp]] |

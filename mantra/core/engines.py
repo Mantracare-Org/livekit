@@ -16,6 +16,7 @@ from mantra.language_manager import (
     CallKeytermMemory,
     LanguageManager,
     MultilingualParallelSTT,  # noqa: F401 (re-exported for parity)
+    SUPPORTED_LANGUAGES,
     resolve_stt_keyterms,
     resolve_stt_language,
 )
@@ -38,6 +39,33 @@ VOICE_MAPPING = {
     "kavita": "56e35e2d-6eb6-4226-ab8b-9776515a7094",
     "katie": "f786b574-daa5-4673-aa0c-cbe3e8534c02",
     "cathy": "e8e5fffb-252c-436d-b842-8879b84445b6",
+}
+
+LANGUAGE_DEFAULT_VOICE = {
+    "en": "katie",
+    "hi": "arushi",
+    "es": "camila",
+    "pt": "renata",
+    "fr": "renata",
+    "de": "alistair",
+    "it": "camila",
+    "nl": "alistair",
+    "pl": "katie",
+    "ar": "katie",
+    "ja": "katie",
+    "ko": "katie",
+    "zh": "katie",
+    "ms": "katie",
+    "id": "katie",
+    "th": "katie",
+    "vi": "katie",
+    "tl": "katie",
+    "tr": "katie",
+    "sv": "katie",
+    "da": "katie",
+    "no": "katie",
+    "fi": "katie",
+    "ru": "katie",
 }
 
 
@@ -89,9 +117,16 @@ def select_model_and_voice(payload: dict | None):
             or payload.get("voice_id")
             or payload.get("voice_name")
             or payload.get("voice")
-            or "arushi"
         )
-        voice_input = "arushi" if _raw_voice in (None, "null", "None") else _raw_voice
+        # Prioritize voice received from backend. Default voice is strictly a fallback if no voice was received.
+        if _raw_voice not in (None, "null", "None", ""):
+            voice_input = _raw_voice
+        else:
+            call_lang = LanguageManager.normalize_language_code(
+                payload.get("language") or payload.get("lang") or ai_p.get("language") or ai_p.get("lang")
+            )
+            voice_input = LANGUAGE_DEFAULT_VOICE.get(call_lang, "katie")
+
         voice_id = VOICE_MAPPING.get(str(voice_input).lower(), voice_input)
 
         voice_speed = ai_p.get("voice_speed") or payload.get("voice_speed") or 1
@@ -170,13 +205,17 @@ def build_language_manager(payload: dict | None):
         )
 
     requested_lang = str(raw_lang or "").strip().lower()
-    response_mode = (
-        "hi"
-        if requested_lang in {"hi", "hindi", "hi-in"}
-        else "en"
-        if requested_lang in {"en", "english", "en-us", "en-in", "en-gb"}
-        else "en"
-    )
+    if requested_lang in {"hi", "hindi", "hi-in"}:
+        response_mode = "hi"
+    elif requested_lang in {"en", "english", "en-us", "en-in", "en-gb", "en-au"}:
+        response_mode = "en"
+    elif requested_lang in SUPPORTED_LANGUAGES:
+        response_mode = requested_lang
+    elif requested_lang in {"multi", "multilingual", "bilingual", "hinglish", "en-hi", "hi-en"}:
+        response_mode = "hinglish"
+    else:
+        response_mode = LanguageManager.normalize_language_code(raw_lang)
+
     language_mgr = LanguageManager(initial_language=raw_lang, response_mode=response_mode)
     return language_mgr, raw_lang, requested_lang, response_mode
 

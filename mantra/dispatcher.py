@@ -49,8 +49,45 @@ async def dispatch_call(lk_client: api.LiveKitAPI, payload: dict):
     call_id = payload.get("call_id") or payload.get("voice_id")
     trunk_id = payload.get("_resolved_trunk_id")
     room_name = payload.get("_resolved_room_name") or (f"call_{trunk_id}_{call_id}" if trunk_id else f"call_{call_id}")
-    trunk_id = payload.get("_resolved_trunk_id")
     sip_number = payload.get("_resolved_sip_number")
+    phone_number = (
+        payload.get("phone_number")
+        or payload.get("client_phone_number")
+        or payload.get("to_phone")
+        or payload.get("caller_phone")
+    )
+
+    # 1. Resolve destination country & primary language via MCP before placement
+    if phone_number and (not payload.get("language") or payload.get("language") in ("en", "default")):
+        try:
+            from mantra.core.inbound import resolve_caller_country_language_via_mcp
+            dest_info = await resolve_caller_country_language_via_mcp(phone_number)
+            if dest_info and isinstance(dest_info, dict):
+                payload["language"] = dest_info.get("primary_language", "en")
+                payload["country_code"] = dest_info.get("country_code", "US")
+
+                # Strictly preserve any voice received from backend; use MCP voice only as fallback if none provided
+                has_backend_voice = bool(
+                    payload.get("voice_id")
+                    or payload.get("voice")
+                    or payload.get("voice_name")
+                    or (isinstance(payload.get("ai_payload"), dict) and (
+                        payload["ai_payload"].get("voice_id")
+                        or payload["ai_payload"].get("voice")
+                        or payload["ai_payload"].get("voice_name")
+                    ))
+                )
+                if not has_backend_voice and dest_info.get("cartesia_voice_id"):
+                    payload["voice_id"] = dest_info.get("cartesia_voice_id")
+
+                if not payload.get("timezone"):
+                    payload["timezone"] = dest_info.get("timezone")
+                logger.info(
+                    f"[Call {call_id}] Outbound metadata configured: country={payload.get('country_code')}, "
+                    f"lang={payload.get('language')}, voice={payload.get('voice_id') or '<backend_voice>'}"
+                )
+        except Exception as e:
+            logger.warning(f"[Call {call_id}] Failed to resolve country/language via MCP: {e}")
 
     try:
         logger.info(f"[Call {call_id}] Creating agent dispatch for room {room_name}")

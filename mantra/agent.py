@@ -80,9 +80,11 @@ from mantra.core.engines import (
 from mantra.core.inbound import (
     _extract_livekit_caller_phone,
     recognize_inbound_client,
+    resolve_caller_country_language_via_mcp,
     resolve_inbound_context,
     resolve_outbound_context,
 )
+from mantra.language_manager import SUPPORTED_LANGUAGES, LANGUAGE_NAMES, resolve_stt_language
 from mantra.core.assistant_functions import AssistantFunctions
 from mantra.core.live_agent import make_multilingual_agent
 from mantra.core.call_monitors import (
@@ -140,6 +142,20 @@ async def entrypoint(ctx: JobContext):
     logger.info(f"[DIAG] ======== ENTRYPOINT STARTED ======== room={ctx.room.name} job_id={ctx.job.id} pid={os.getpid()}")
     logger.info(f"[DIAG] Job metadata: {ctx.job.metadata[:200] if ctx.job.metadata else 'None'}")
 
+    raw_metadata = ctx.job.metadata or getattr(ctx.room, "metadata", "") or ""
+    if not raw_metadata:
+        sim_meta = os.getenv("SIMULATED_METADATA", "")
+        sim_phone = os.getenv("SIMULATED_PHONE_NUMBER", "")
+        if sim_meta:
+            raw_metadata = sim_meta
+            logger.info(f"[DIAG] Using SIMULATED_METADATA from environment: {raw_metadata}")
+        elif sim_phone:
+            raw_metadata = json.dumps({
+                "phone_number": sim_phone,
+                "direction": os.getenv("SIMULATED_DIRECTION", "inbound")
+            })
+            logger.info(f"[DIAG] Generated simulated metadata from SIMULATED_PHONE_NUMBER: {raw_metadata}")
+
     call_state = {
         "user_joined": False,
         "caller_phone_number": None,
@@ -157,9 +173,9 @@ async def entrypoint(ctx: JobContext):
 
     tos_task_id = None
     call_id = ctx.job.id
-    if ctx.job.metadata:
+    if raw_metadata:
         try:
-            payload = json.loads(ctx.job.metadata)
+            payload = json.loads(raw_metadata)
             call_id = payload.get("call_id") or payload.get("voice_id") or ctx.job.id
             tos_task_id = payload.get("metadata", {}).get("tos_task_id")
             tos_task_id = payload.get("tos_task_id") or payload.get("metadata", {}).get("tos_task_id")
@@ -197,7 +213,7 @@ async def entrypoint(ctx: JobContext):
     logger.info(f"--- Starting agent session ---")
     logger.info(f"Room: {ctx.room.name}")
     logger.info(f"Job ID: {ctx.job.id}")
-    logger.info(f"Metadata: {ctx.job.metadata}")
+    logger.info(f"Metadata: {raw_metadata or ctx.job.metadata}")
 
     # ── Inbound Call Context Resolution ──────────────────────────────────
     resolved_context = None
@@ -205,9 +221,71 @@ async def entrypoint(ctx: JobContext):
     kb_tags_list = []
     payload = None
 
-    if ctx.job.metadata:
+    if raw_metadata:
         try:
-            meta_payload = json.loads(ctx.job.metadata)
+            meta_payload = json.loads(raw_metadata)
+
+            # Pre-resolve country, language & STT locale from candidate phone numbers
+            # Inbound calls have routing DID in phone_number; outbound calls have destination caller
+            is_inbound_hint = meta_payload.get("direction") == "inbound"
+            if is_inbound_hint:
+                candidate_phone = (
+                    meta_payload.get("caller_phone")
+                    or meta_payload.get("client_phone_number")
+                    or meta_payload.get("from_number")
+                )
+            else:
+                candidate_phone = (
+                    meta_payload.get("phone_number")
+                    or meta_payload.get("to_phone")
+                    or meta_payload.get("caller_phone")
+                    or meta_payload.get("client_phone_number")
+                )
+            if candidate_phone and not meta_payload.get("language"):
+                # 1. Attempt lookup via MCP tool
+                try:
+                    country_info = await resolve_caller_country_language_via_mcp(candidate_phone)
+                    if country_info and isinstance(country_info, dict):
+                        resolved_lang = country_info.get("primary_language")
+                        resolved_country = country_info.get("country_code")
+                        resolved_stt = country_info.get("stt_locale")
+                        resolved_voice = country_info.get("cartesia_voice_id")
+                        resolved_tz = country_info.get("timezone")
+
+                        meta_payload["language"] = resolved_lang
+                        meta_payload["country_code"] = resolved_country
+                        meta_payload["stt_locale"] = resolved_stt
+                        if not meta_payload.get("voice") and not meta_payload.get("voice_id") and resolved_voice:
+                            meta_payload["voice_id"] = resolved_voice
+                        if resolved_tz and not meta_payload.get("timezone"):
+                            meta_payload["timezone"] = resolved_tz
+
+                        call_state["caller_country"] = resolved_country
+                        call_state["caller_language"] = resolved_lang
+                        logger.info(
+                            f"[LANG-INIT] Country language pre-resolved via MCP from {candidate_phone}: "
+                            f"country={resolved_country}, lang={resolved_lang}, stt={resolved_stt}"
+                        )
+                except Exception as mcp_err:
+                    logger.debug(f"[LANG-INIT] MCP pre-resolve skipped: {mcp_err}")
+
+                # 2. Local fallback if MCP offline or returned nothing
+                if not meta_payload.get("language"):
+                    stt_loc = resolve_stt_language(phone_number=candidate_phone)
+                    derived_lang = "en"
+                    if stt_loc and "-" in stt_loc and stt_loc != "en-in":
+                        derived_lang = stt_loc.split("-")[0].lower()
+                    elif stt_loc in SUPPORTED_LANGUAGES:
+                        derived_lang = stt_loc
+
+                    if derived_lang != "en":
+                        meta_payload["language"] = derived_lang
+                        meta_payload["stt_locale"] = stt_loc
+                        call_state["caller_language"] = derived_lang
+                        logger.info(
+                            f"[LANG-INIT] Country language pre-resolved via dial prefix from {candidate_phone}: "
+                            f"lang={derived_lang}, stt={stt_loc}"
+                        )
 
             if meta_payload.get("direction") == "inbound":
                 # Dispatch metadata contains the org-bound DID. The real caller
@@ -277,7 +355,7 @@ async def entrypoint(ctx: JobContext):
     logger.info(f"KB scope: kb_ids={kb_ids_list}, kb_tags={kb_tags_list}")
 
     fnc_ctx = AssistantFunctions(
-        json.dumps(meta_payload) if ctx.job.metadata else "",
+        json.dumps(meta_payload) if raw_metadata else "",
         ctx.room.name,
         ctx=ctx,
         kb_ids=kb_ids_list,
@@ -323,13 +401,10 @@ async def entrypoint(ctx: JobContext):
     is_inbound = False
     _effective_call_metadata = None
 
-    if ctx.job.metadata:
+    if raw_metadata:
         try:
-            # Use the enriched metadata if inbound context was resolved, otherwise parse fresh
-            if resolved_context is not None:
-                payload = dict(meta_payload)  # Already enriched with MantraAssist data
-            else:
-                payload = json.loads(ctx.job.metadata)
+            # Always use the enriched metadata (country, language, STT locale, and backend DB context)
+            payload = dict(meta_payload)
             _effective_call_metadata = dict(payload)  # keep for finalize()
 
             if payload.get("direction") == "inbound":
@@ -572,15 +647,58 @@ async def entrypoint(ctx: JobContext):
             await _telemetry("Customer joined the call")
             await asyncio.sleep(0.05)
 
-        if is_inbound and call_state.get("org_id"):
-            livekit_caller_phone = _extract_livekit_caller_phone(ctx.room.remote_participants.values())
-            if livekit_caller_phone:
-                call_state["caller_phone_number"] = livekit_caller_phone
-                logger.info(
-                    "[DIAG] LiveKit caller metadata resolved — caller=%s, org_id=%s; recognizing client",
-                    livekit_caller_phone,
-                    call_state["org_id"],
-                )
+        # Resolve caller phone from participant join (SIP participant or playground participant metadata/attributes)
+        livekit_caller_phone = _extract_livekit_caller_phone(ctx.room.remote_participants.values())
+        if not livekit_caller_phone:
+            livekit_caller_phone = call_state.get("caller_phone_number")
+
+        if livekit_caller_phone:
+            call_state["caller_phone_number"] = livekit_caller_phone
+            logger.info(
+                f"[DIAG] LiveKit caller phone resolved: caller={livekit_caller_phone}; resolving country/language"
+            )
+
+            # 1. Resolve caller country & primary language via MCP (independent of org_id)
+            try:
+                country_info = await resolve_caller_country_language_via_mcp(livekit_caller_phone)
+                if country_info and isinstance(country_info, dict):
+                    caller_country = country_info.get("country_code")
+                    caller_lang = country_info.get("primary_language")
+                    call_state["caller_country"] = caller_country
+                    call_state["caller_language"] = caller_lang
+                    logger.info(f"[DIAG] Caller country resolved: {caller_country}, primary_lang: {caller_lang}")
+
+                    # If primary language is a supported non-English language and different from active state, align pipeline
+                    if caller_lang and caller_lang in SUPPORTED_LANGUAGES and caller_lang != cc.language_mgr.current_language:
+                        logger.info(f"[LANG] Aligning call to caller country language: {caller_lang}")
+                        cc.language_mgr.tracker.current_language = caller_lang
+                        cc.language_mgr.response_mode = caller_lang
+                        call_state["current_language"] = caller_lang
+
+                        # For international language calls, use regional voice fallback unless an explicit custom voice was requested
+                        target_voice = country_info.get("cartesia_voice_id") or cc.voice_id
+                        try:
+                            cc.tts_engine.update_options(language=caller_lang, voice=target_voice)
+                            logger.info(f"[LANG] TTS updated for caller country: lang='{caller_lang}' (voice={target_voice})")
+                        except Exception as tts_err:
+                            logger.warning(f"[LANG] Failed to update TTS options for country language: {tts_err}")
+
+                        try:
+                            cur_inst = agent.instructions
+                            if "<!-- LANGUAGE_DIRECTIVE_START -->" in cur_inst and "<!-- LANGUAGE_DIRECTIVE_END -->" in cur_inst:
+                                pref = cur_inst.split("<!-- LANGUAGE_DIRECTIVE_START -->")[0]
+                                suff = cur_inst.split("<!-- LANGUAGE_DIRECTIVE_END -->")[1]
+                                new_directive = cc.language_mgr.get_prompt_directive()
+                                updated_inst = f"{pref}<!-- LANGUAGE_DIRECTIVE_START -->\n{new_directive}\n<!-- LANGUAGE_DIRECTIVE_END -->{suff}"
+                                await agent.update_instructions(updated_inst)
+                                logger.info(f"[LANG] Agent prompt directive aligned to {caller_lang}")
+                        except Exception as inst_err:
+                            logger.warning(f"[LANG] Failed to update agent prompt directive: {inst_err}")
+            except Exception as c_err:
+                logger.warning(f"[DIAG] Failed to resolve country/language for caller: {c_err}")
+
+            # 2. Client recognition (requires org_id)
+            if is_inbound and call_state.get("org_id"):
                 recognized_client = await recognize_inbound_client(
                     phone_number=livekit_caller_phone,
                     org_id=call_state["org_id"],
@@ -675,15 +793,28 @@ async def entrypoint(ctx: JobContext):
 
         logger.info(f"[DIAG] Generating explicit initial greeting for {client_name} (inbound={is_inbound})...")
         try:
+            active_lang = language_mgr.get_current_language()
+            active_lang_name = LANGUAGE_NAMES.get(active_lang, "English")
             if is_inbound:
-                session.generate_reply(
-                    instructions="Initiate the conversation according to your system prompt. Introduce yourself and ask how you can help."
-                )
+                if active_lang not in ("en", "hi"):
+                    greet_instructions = (
+                        f"Initiate the conversation immediately in fluent {active_lang_name} ({active_lang}) according to your system prompt. "
+                        f"Greet warmly in {active_lang_name} and ask how you can help. "
+                        f"Do not introduce yourself as Arushi or say you are calling from India."
+                    )
+                else:
+                    greet_instructions = "Initiate the conversation according to your system prompt. Introduce yourself and ask how you can help."
+                session.generate_reply(instructions=greet_instructions)
             else:
-                session.generate_reply(
-                    instructions=f"Greet the user named {client_name} and follow the opening script in your instructions."
-                )
-            logger.info("[DIAG] Greeting generation requested immediately upon connect.")
+                if active_lang not in ("en", "hi"):
+                    greet_instructions = (
+                        f"Greet the user named {client_name} warmly in fluent {active_lang_name} ({active_lang}) and ask how you can help. "
+                        f"Do not introduce yourself as Arushi or say you are calling from India."
+                    )
+                else:
+                    greet_instructions = f"Greet the user named {client_name} and follow the opening script in your instructions."
+                session.generate_reply(instructions=greet_instructions)
+            logger.info(f"[DIAG] Greeting generation requested in {active_lang_name} ({active_lang}) immediately upon connect.")
         except RuntimeError as e:
             logger.warning(f"[DIAG] Could not generate greeting (session may be closed): {e}")
 

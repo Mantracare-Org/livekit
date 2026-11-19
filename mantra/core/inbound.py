@@ -9,6 +9,7 @@ import os
 from typing import Any
 
 import aiohttp
+from typing import Optional
 
 from mantra.core.common import get_global_kb
 from mantra.utils import format_e164_phone_number
@@ -160,7 +161,7 @@ def _extract_inbound_caller_phone(meta_payload: dict | None, fallback_phone: str
 
 
 def _extract_livekit_caller_phone(participants) -> str:
-    """Extract the inbound caller number from LiveKit SIP participant metadata."""
+    """Extract the inbound caller number from LiveKit SIP participant metadata or attributes."""
     attribute_keys = (
         "sip.phoneNumber",
         "sip.from",
@@ -176,6 +177,27 @@ def _extract_livekit_caller_phone(participants) -> str:
             value = attributes.get(key)
             if value:
                 normalized = _extract_inbound_caller_phone({"phone_number": value})
+                if normalized:
+                    return normalized
+
+        # Check participant metadata (JSON or raw string)
+        meta_str = getattr(participant, "metadata", "") or ""
+        if meta_str:
+            try:
+                meta_json = json.loads(meta_str)
+                if isinstance(meta_json, dict):
+                    p_phone = (
+                        meta_json.get("phone_number")
+                        or meta_json.get("caller_phone")
+                        or meta_json.get("from_number")
+                        or meta_json.get("to_phone")
+                    )
+                    if p_phone:
+                        normalized = _extract_inbound_caller_phone({"phone_number": p_phone})
+                        if normalized:
+                            return normalized
+            except Exception:
+                normalized = _extract_inbound_caller_phone({"phone_number": meta_str})
                 if normalized:
                     return normalized
 
@@ -279,6 +301,43 @@ async def recognize_inbound_client(phone_number: str, org_id: str | int) -> dict
         logger.warning("Client recognition returned malformed MCP data for org_id=%s", org_id)
     except Exception as error:
         logger.warning("Client recognition via MCP failed for org_id=%s: %s", org_id, error)
+
+    return None
+
+
+async def resolve_caller_country_language_via_mcp(
+    phone_number: str,
+    country_code: Optional[str] = None,
+) -> dict[str, Any] | None:
+    """Resolve caller country, primary language, STT locale, Cartesia voice, and timezone via MCP.
+
+    Calls the livekit-mcp tool 'resolve_caller_country_language' over SSE transport.
+    """
+    if not phone_number and not country_code:
+        return None
+
+    try:
+        from mantra.mcp_client import get_mcp_client
+
+        clean_phone = format_e164_phone_number(phone_number) if phone_number else ""
+        async with asyncio.timeout(3.5):
+            result = await get_mcp_client().call_tool(
+                "resolve_caller_country_language",
+                {
+                    "phone_number": clean_phone,
+                    "country_code": country_code or "",
+                },
+            )
+
+        if isinstance(result, str):
+            data = json.loads(result)
+            if isinstance(data, dict) and data.get("data"):
+                return data["data"]
+            return data
+        elif isinstance(result, dict):
+            return result.get("data", result)
+    except Exception as error:
+        logger.warning("resolve_caller_country_language via MCP failed for phone=%s: %s", phone_number, error)
 
     return None
 

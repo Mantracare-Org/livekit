@@ -4,8 +4,8 @@ type: antigravity-index
 tags:
   - antigravity/projects
   - antigravity/index
-created: 2026-11-14
-updated: 2026-11-14
+created: 2026-11-19
+updated: 2026-11-19
 ---
 
 # Unified Projects Index — Antigravity
@@ -17,6 +17,7 @@ updated: 2026-11-14
 |---|---|---|---|---|---|
 | **antigravity** | `/opt/antigravity` | General / No detectado | Proyecto en desarrollo (General / No detectado) | [[antigravity-obsidian]] | [[antigravity]] |
 | **assist-ai-ui-workspaces** | `/home/fardeen/assist-ai` | Python (FastAPI) | Unified frontends workspace for Assist AI | — | [[assist-ai-ui-workspaces]] |
+| **comply-monorepo** | `/home/fardeen/comply-monorepo` | TypeScript | Proyecto en desarrollo (TypeScript) | — | [[comply-monorepo]] |
 | **Downloads** | `/home/fardeen/Downloads` | General / No detectado | Proyecto en desarrollo (General / No detectado) | — | [[Downloads]] |
 | **fardeen** | `/home/fardeen` | General / No detectado | Proyecto en desarrollo (General / No detectado) | — | [[fardeen]] |
 | **lkt** | `/home/fardeen/lkt` | Python (FastAPI) | Production-grade real-time conversational AI voice agent and telephony orchestrator for inbound and outbound healthcare coordination, appoin | — | [[lkt]] |

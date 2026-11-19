@@ -1,7 +1,7 @@
 ---
 project: "antigravity"
 type: hermes-architecture
-updated: 2026-11-10
+updated: 2026-11-19
 stack: "General / No detectado"
 ---
 
