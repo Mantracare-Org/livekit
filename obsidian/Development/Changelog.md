@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-11-20
+
+### Knowledge-Base Inbound Corporate Hotline Gatekeeper Protocol
+
+- **feat & security:** Implemented automated corporate gatekeeper flow for inbound telephone hotlines. Guardrail activates conditionally when `if_hotline=true`, `is_hotline=true`, or `intent='hotline'` is passed in call metadata or prompt directives. Standard inbound calls preserve normal greeting and assistance flows without gatekeeper overhead.
+- **post-call intent:** Added `HOTLINE_AUTHORIZED` and `HOTLINE_REJECTED` user intent classifications in `mantra/utils.py` for call summary analysis and webhook reporting.
+- **opening alignment:** Updated precomputation greeting prompts in `mantra/agent.py` to follow system instructions without forcing a generic "how can I help you" greeting, ensuring Turn 1 always executes the company challenge on hotline calls.
+- **turn flow:** Configured Turn 1 identification challenge ("Thank you for calling the support hotline — which company or organization are you calling from?") and Turn 2 verification against `<!-- UPFRONT_KB_START -->` pre-fetched Knowledge Base context (pre-seeded with Google LLC / Alphabet Inc. and aliases).
+- **authorization & rejection:** Authorized callers (e.g. Google / Alphabet) are immediately confirmed without extra tool latency; unlisted callers receive 1 polite clarification attempt, and upon second failure are delivered the polite rejection statement with immediate `end_call()` invocation.
+- **test verification:** Verified multi-turn conversational responses against DeepSeek with exact authorization, retry, and `end_call` tool invocation execution.
+- **Files:** `mantra/prompts.py`, `mantra/agent.py`, `mantra/utils.py`, `docs/Google_Hotline_Authorized_Directory.md`, `docs/Hotline_Authorized_Organizations_Template.md`, `obsidian/Development/Current Sprint.md`, `obsidian/Development/Changelog.md`.
+
 ## 2026-10-19
 
 ### Zero Cold-Start Latency & Precomputed Initial Greeting

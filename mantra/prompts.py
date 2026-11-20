@@ -187,15 +187,49 @@ def build_initial_instructions(payload: dict, is_inbound: bool = False):
         "invoke `end_call` immediately so the call ends cleanly without lingering in silence.\n"
     )
 
+    # Hotline Gatekeeper Guardrail Activation:
+    # Triggered if if_hotline=true, is_hotline=true, intent='hotline', or if the prompt mentions hotline directives.
+    hotline_intent = str(
+        payload.get("intent")
+        or payload.get("call_intent")
+        or payload.get("user_intent")
+        or ""
+    ).strip().lower()
+
+    is_hotline = (
+        payload.get("if_hotline") is True
+        or str(payload.get("if_hotline", "")).lower() in ("true", "1")
+        or payload.get("is_hotline") is True
+        or str(payload.get("is_hotline", "")).lower() in ("true", "1")
+        or payload.get("hotline") is True
+        or str(payload.get("hotline", "")).lower() in ("true", "1")
+        or hotline_intent == "hotline"
+        or "hotline" in str(payload.get("prompt", "")).lower()
+        or "authorized organizations" in str(payload.get("prompt", "")).lower()
+        or "registered companies" in str(payload.get("prompt", "")).lower()
+    )
+
     if is_inbound:
-        instructions += "\n--- INBOUND CALL FLOW & CONTEXT (CRITICAL) ---\n"
-        instructions += "- This is an INBOUND call. The caller reached out to you.\n"
-        instructions += "- TURN 1 (Initial Greeting): Greet warmly and ask how you can help (e.g. 'Hi, this is Arushi. How can I help you today?').\n"
-        instructions += "- TURN 2 (Name Request): When the caller states their reason for calling or intent, briefly acknowledge it, and politely ask for their name BEFORE proceeding to address their request (e.g. 'Sure, I can help with that! May I know your name, please?' or 'Got it. Who am I speaking with?').\n"
-        instructions += "- TURN 3+ (Addressing Request): Once the caller gives their name, address their request or answer their questions directly, using their name naturally.\n"
-        instructions += "- Do not assume the caller's name unless they state it or your prompt explicitly specifies it.\n"
-        instructions += "- Identify yourself strictly as instructed in your prompt\n"
-        instructions += "- If the caller seems confused, help them understand who you are.\n"
+        if is_hotline:
+            instructions += "\n--- RESTRICTED HOTLINE GATEKEEPER FLOW (MANDATORY) ---\n"
+            instructions += "This is a RESTRICTED CORPORATE HOTLINE. You must verify caller authorization before providing any assistance.\n"
+            instructions += "- TURN 1 (Company Identification): Greet warmly and immediately ask for their organization (e.g. 'Thank you for calling the support hotline — which company or organization are you calling from?'). Do NOT introduce services or offer help yet.\n"
+            instructions += "- TURN 2 (Verification against Knowledge Base):\n"
+            instructions += "  * Review the authorized organizations and aliases listed in your Knowledge Base (under 'Authorized Organizations' or 'Registered Companies', including registered client Google LLC / Alphabet Inc. and its aliases: Google, Google India, Google Cloud, Alphabet, Googler, Google LLC).\n"
+            instructions += "  * IF AUTHORIZED (e.g. Google): Confirm access warmly, ask for their name, and proceed to assist them (e.g. 'Thank you, Google is verified. Who am I speaking with, and how can I help you today?').\n"
+            instructions += "  * IF UNAUTHORIZED / NOT IN KB:\n"
+            instructions += "    - First attempt: Politely ask once for clarification (e.g. 'I could not locate that company on our registered roster. Could you please repeat the exact registered company name?').\n"
+            instructions += "    - Second attempt (or confirmed unauthorized): Speak your polite refusal sentence: 'I apologize, but that company does not have an active registration for this hotline. Please contact your company administrator. Goodbye.' AND invoke the `end_call` tool in that exact same turn.\n"
+            instructions += "- ZERO INFORMATION LEAKAGE: NEVER answer questions, discuss internal topics, or provide assistance until the company is verified.\n"
+        else:
+            instructions += "\n--- INBOUND CALL FLOW & CONTEXT (CRITICAL) ---\n"
+            instructions += "- This is an INBOUND call. The caller reached out to you.\n"
+            instructions += "- TURN 1 (Initial Greeting): Greet warmly and ask how you can help (e.g. 'Hi, this is Arushi. How can I help you today?').\n"
+            instructions += "- TURN 2 (Name Request): When the caller states their reason for calling or intent, briefly acknowledge it, and politely ask for their name BEFORE proceeding to address their request (e.g. 'Sure, I can help with that! May I know your name, please?' or 'Got it. Who am I speaking with?').\n"
+            instructions += "- TURN 3+ (Addressing Request): Once the caller gives their name, address their request or answer their questions directly, using their name naturally.\n"
+            instructions += "- Do not assume the caller's name unless they state it or your prompt explicitly specifies it.\n"
+            instructions += "- Identify yourself strictly as instructed in your prompt\n"
+            instructions += "- If the caller seems confused, help them understand who you are.\n"
 
     return instructions, client_name
 

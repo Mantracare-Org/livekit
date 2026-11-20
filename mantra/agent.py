@@ -525,7 +525,7 @@ async def entrypoint(ctx: JobContext):
                 chat_ctx = llm.ChatContext()
                 chat_ctx.add_message(role="system", content=initial_instructions)
                 prompt_text = (
-                    "Initiate the conversation according to your system prompt. Introduce yourself and ask how you can help."
+                    "Initiate the conversation according to your system prompt and opening instructions."
                     if is_inbound
                     else f"Greet the user named {client_name} and follow the opening script in your instructions."
                 )
@@ -799,7 +799,7 @@ async def entrypoint(ctx: JobContext):
                 try:
                     if is_inbound:
                         session.generate_reply(
-                            instructions="Initiate the conversation according to your system prompt. Introduce yourself and ask how you can help."
+                            instructions="Initiate the conversation according to your system prompt and opening instructions."
                         )
                     else:
                         session.generate_reply(

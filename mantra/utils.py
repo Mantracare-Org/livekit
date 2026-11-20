@@ -1195,6 +1195,10 @@ Provide ONLY the JSON object. Do not include markdown code block syntax or other
                 ui_str = str(user_intent_raw).strip().upper()
                 if ui_str in ["APPOINTMENT_BOOKED", "DEMO_BOOKED", "DEMO_REQUESTED", "POSITIVE_INTENT"]:
                     user_intent = "APPOINTMENT_BOOKED"
+                elif ui_str in ["HOTLINE_AUTHORIZED", "CORPORATE_AUTHORIZED", "AUTHORIZED"]:
+                    user_intent = "HOTLINE_AUTHORIZED"
+                elif ui_str in ["HOTLINE_REJECTED", "CORPORATE_REJECTED", "UNAUTHORIZED"]:
+                    user_intent = "HOTLINE_REJECTED"
                 elif ui_str in ["APPOINTMENT_CANCELLED", "CANCELLED"]:
                     user_intent = "APPOINTMENT_CANCELLED"
                 elif ui_str in ["APPOINTMENT_RESCHEDULED", "RESCHEDULED"]:
